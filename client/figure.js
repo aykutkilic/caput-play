@@ -99,6 +99,31 @@ export function skeleton(p, P, H, wd, x, y, z, face) {
 
 // ---------------------------------------------------------------- body
 
+// A gradient across a limb part, light side to shadow side.
+function limbShade(g, it) {
+  const dx = it.b[0] - it.a[0], dy = it.b[1] - it.a[1], L = Math.hypot(dx, dy) || 1;
+  let nx = -dy / L, ny = dx / L;
+  if (nx + ny > 0) { nx = -nx; ny = -ny; } // n points to the lit (top-left) side
+  const r = (it.ra + it.rb) / 2, mx = (it.a[0] + it.b[0]) / 2, my = (it.a[1] + it.b[1]) / 2;
+  const grad = g.createLinearGradient(mx + nx * r, my + ny * r, mx - nx * r, my - ny * r);
+  grad.addColorStop(0, shade(it.col, 0.2));
+  grad.addColorStop(0.4, it.col);
+  grad.addColorStop(1, shade(it.col, -0.3));
+  return grad;
+}
+
+// A tapered capsule from a (radius ra) to b (radius rb), in screen space.
+function taper(g, a, b, ra, rb) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy);
+  g.beginPath();
+  if (L < 0.5) { g.arc(a[0], a[1], Math.max(ra, rb), 0, TAU); return; }
+  const ang = Math.atan2(dy, dx), nx = -dy / L, ny = dx / L;
+  g.arc(a[0], a[1], ra, ang + Math.PI / 2, ang + Math.PI * 1.5); // round end behind a
+  g.lineTo(b[0] - nx * rb, b[1] - ny * rb);
+  g.arc(b[0], b[1], rb, ang - Math.PI / 2, ang + Math.PI / 2); // round end beyond b
+  g.closePath();
+}
+
 const lerp3 = (a, b, u) => [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u];
 // how much a world vector points towards the viewer
 const toward = (cam, v) => (v[0] * cam.s + v[1] * cam.c) * cam.ce + v[2] * cam.se;
@@ -112,47 +137,58 @@ export function drawFigure(g, cam, J, look, H, wd, alpha = 1) {
   const items = [];
   const seg = (a, b, wm, col, d = (a[2] + b[2]) / 2) => items.push({ k: 0, a, b, w: Math.max(1, wm * H * S), col, d });
   const dot = (a, rm, col, d = a[2]) => items.push({ k: 1, a, r: Math.max(1, rm * H * S), col, d });
+  // a limb part that tapers from radius ra at a to rb at b (radii in heights)
+  const limb = (a, b, ra, rb, col, d = (a[2] + b[2]) / 2) => items.push({ k: 4, a, b, ra: Math.max(0.6, ra * H * S), rb: Math.max(0.6, rb * H * S), col, d });
   const P3 = (k) => P[k];
+  const bulk = 0.85 + 0.3 * (wd - 0.8); // a heavier build has thicker limbs
 
   for (const s of ['L', 'R']) {
     const hip = P3('hip' + s), knee = P3('knee' + s), ankle = P3('foot' + s), toe = P3('toe' + s);
-    seg(hip, lerp3(hip, knee, 0.52), 0.104 * wd, look.shorts);
-    seg(lerp3(hip, knee, 0.42), knee, 0.074 * wd, look.skin);
-    seg(lerp3(knee, ankle, 0.1), ankle, 0.062 * wd, look.socks);
-    if (detail) seg(lerp3(knee, ankle, 0.1), lerp3(knee, ankle, 0.2), 0.066 * wd, look.trim);
-    seg(ankle, toe, 0.058, look.boots, Math.max(ankle[2], toe[2]) + 0.01);
+    // thigh: shorts down to mid-thigh, then the bare thigh narrowing to the knee
+    limb(hip, lerp3(hip, knee, 0.55), 0.062 * bulk, 0.055 * bulk, look.shorts);
+    limb(lerp3(hip, knee, 0.5), knee, 0.047 * bulk, 0.033 * bulk, look.skin);
+    // calf in the sock: swells below the knee, slim at the ankle
+    const calf = lerp3(knee, ankle, 0.34);
+    limb(lerp3(knee, ankle, 0.06), calf, 0.033 * bulk, 0.04 * bulk, look.socks);
+    limb(calf, ankle, 0.04 * bulk, 0.023 * bulk, look.socks);
+    if (detail) limb(lerp3(knee, ankle, 0.1), lerp3(knee, ankle, 0.14), 0.0345 * bulk, 0.0355 * bulk, look.trim); // sock band
+    // boot: from the heel to a rounded toe
+    const heel = lerp3(ankle, toe, -0.18), bd = Math.max(ankle[2], toe[2]) + 0.01;
+    limb(heel, toe, 0.031, 0.025, look.boots, bd);
   }
   for (const s of ['L', 'R']) {
     const sh = P3('sh' + s), el = P3('el' + s), hand = P3('hand' + s);
+    // shoulder: a rounded cap where the sleeve starts
+    dot(sh, 0.044 * bulk, look.shirt, sh[2] - 0.002);
     if (look.longSleeves) {
-      seg(sh, el, 0.064 * wd, look.shirt);
-      seg(el, hand, 0.054 * wd, look.shirt);
+      limb(sh, el, 0.04 * bulk, 0.031 * bulk, look.shirt);
+      limb(el, hand, 0.032 * bulk, 0.024 * bulk, look.shirt);
     } else {
-      seg(sh, lerp3(sh, el, 0.56), 0.07 * wd, look.shirt);
-      seg(lerp3(sh, el, 0.5), el, 0.05 * wd, look.skin);
-      seg(el, hand, 0.044 * wd, look.skin);
+      limb(sh, lerp3(sh, el, 0.55), 0.041 * bulk, 0.034 * bulk, look.shirt);
+      limb(lerp3(sh, el, 0.5), el, 0.029 * bulk, 0.023 * bulk, look.skin);
+      limb(el, hand, 0.024 * bulk, 0.018 * bulk, look.skin);
     }
     // the hand, along the line of the forearm: a keeper's big padded glove
     // with a dark cuff, otherwise a small bare hand
     const tip = lerp3(hand, lerp3(el, hand, 1.42), 1), d = Math.max(hand[2], tip[2]) + 0.006;
     if (look.gloves) {
-      seg(lerp3(el, hand, 0.9), hand, 0.052 * wd, shade(look.gloves, -0.45), d);
-      seg(hand, tip, 0.06, look.gloves, d + 0.001);
+      limb(lerp3(el, hand, 0.9), hand, 0.027 * bulk, 0.028 * bulk, shade(look.gloves, -0.45), d);
+      limb(hand, tip, 0.031, 0.029, look.gloves, d + 0.001);
       if (detail) seg(lerp3(hand, tip, 0.55), lerp3(hand, tip, 0.95), 0.03, shade(look.gloves, -0.12), d + 0.002); // palm
     } else {
-      seg(hand, lerp3(hand, tip, 0.75), 0.034, look.skin, d);
+      limb(hand, lerp3(hand, tip, 0.75), 0.019, 0.016, look.skin, d);
     }
   }
   // pelvis / shorts block and torso
   seg(P.hipL, P.hipR, 0.12 * wd, look.shorts, P.hc[2] - 0.01);
   items.push({ k: 2, d: (P.hc[2] + P.neck[2]) / 2, w: 0.085 * H * wd * S });
-  seg(P.neck, lerp3(P.neck, P.head, 0.55), 0.058, look.skin, P.neck[2] + 0.004);
+  limb(P.neck, lerp3(P.neck, P.head, 0.6), 0.036 * bulk, 0.03 * bulk, look.skin, P.neck[2] + 0.004);
   items.push({ k: 3, d: P.head[2] + 0.01 });
   items.sort((a, b) => a.d - b.d);
 
   // shirt: shoulders tapering to the waist, which sits just over the shorts
   const waistR = lerp3(lerp3(P.hipR, P.shR, 0.16), P.hc, -0.05), waistL = lerp3(lerp3(P.hipL, P.shL, 0.16), P.hc, -0.05);
-  const torsoPts = [lerp3(P.shL, P.shR, -0.06), lerp3(P.shR, P.shL, -0.06), waistR, waistL];
+  const torsoPts = [lerp3(P.shL, P.shR, -0.09), lerp3(P.shR, P.shL, -0.09), lerp3(waistR, P.hc, 0.08), lerp3(waistL, P.hc, 0.08)];
   const torsoPath = () => {
     g.beginPath();
     g.moveTo(torsoPts[0][0], torsoPts[0][1]);
@@ -168,6 +204,7 @@ export function drawFigure(g, cam, J, look, H, wd, alpha = 1) {
     if (it.k === 0) { g.lineWidth = it.w + 2; g.beginPath(); g.moveTo(it.a[0], it.a[1]); g.lineTo(it.b[0], it.b[1]); g.stroke(); }
     else if (it.k === 1) { g.beginPath(); g.arc(it.a[0], it.a[1], it.r + 1, 0, TAU); g.fill(); }
     else if (it.k === 2) { g.lineWidth = it.w + 2; torsoPath(); g.stroke(); g.fill(); }
+    else if (it.k === 4) { taper(g, it.a, it.b, it.ra + 1, it.rb + 1); g.fill(); }
   }
   // 2) colours, back to front, with a soft highlight from the top-left
   for (const it of items) {
@@ -182,6 +219,11 @@ export function drawFigure(g, cam, J, look, H, wd, alpha = 1) {
     } else if (it.k === 1) {
       g.fillStyle = it.col;
       g.beginPath(); g.arc(it.a[0], it.a[1], it.r, 0, TAU); g.fill();
+    } else if (it.k === 4) {
+      // rounded: lit along the side facing the light (top-left), in shadow on
+      // the other, so a limb reads as a cylinder rather than a flat strip
+      g.fillStyle = detail && it.ra > 1.4 ? limbShade(g, it) : it.col;
+      taper(g, it.a, it.b, it.ra, it.rb); g.fill();
     } else if (it.k === 2) {
       drawTorso(g, cam, J, P, torsoPts, torsoPath, it.w, look, H, S, detail);
     } else {
