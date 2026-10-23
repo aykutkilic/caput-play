@@ -280,7 +280,7 @@ function mixSeed(seed) {
 }
 export function makeMatch(seed) {
   return {
-    phase: PHASE.WARMUP, phT: 0, live: 0, s0: 0, s1: 0, clock: 0, half: 1, dir0: 1, ko: 0, koFirst: 0,
+    phase: PHASE.WARMUP, phT: 0, live: 0, wr: 0, s0: 0, s1: 0, clock: 0, half: 1, dir0: 1, ko: 0, koFirst: 0,
     spType: 0, spTeam: 0, spTaker: -1, spX: 0, spY: 0, matchLen: 240, rng: mixSeed(seed), goalS: 0, ai: 1,
     lastGoalTeam: -1, scorer: -1, req0: -1, req0T: 0, req1: -1, req1T: 0, gkc0: 0, gkc1: 0, cd: 0,
   };
@@ -451,11 +451,12 @@ function keeperRestart(w, team, humansToo = false) {
   Object.assign(b, { x: gk.x, y: gk.y, z: 1.0, vx: 0, vy: 0, vz: 0, spin: 0, owner: gk.id, held: 1, last: gk.id, lastTeam: gk.team,
     kt: 255, tgt: -1, sh: -1, dl: 0, nut: -1, atk: -1, atT: 0 });
   b.px = b.x; b.py = b.y; b.pz = b.z;
-  w.m.spTaker = -1;
+  w.m.spTaker = -1; w.m.wr = 0;
   resumePhase(w);
   return true;
 }
 
+const WARM_OUT = 36; // ticks a ball out of play in the warm-up is left to roll away
 // The warm-up has no set pieces or kick-offs: a keeper (that team's after a
 // goal, else the nearest) has the ball straight away; with no keeper on the
 // pitch it's dropped back in at (x, y).
@@ -465,7 +466,7 @@ function warmRestart(w, team, x, y) {
   Object.assign(b, { x: clamp(x, -pit.L / 2 + 1, pit.L / 2 - 1), y: clamp(y, -pit.W / 2 + 0.5, pit.W / 2 - 0.5), z: BALL_R,
     vx: 0, vy: 0, vz: 0, spin: 0, owner: -1, held: 0, kt: 255, tgt: -1, sh: -1, dl: 0, nut: -1, atk: -1, atT: 0 });
   b.px = b.x; b.py = b.y; b.pz = b.z;
-  w.m.spTaker = -1;
+  w.m.spTaker = -1; w.m.wr = 0;
   resumePhase(w);
 }
 
@@ -1861,6 +1862,25 @@ function tackleContact(w, p, ps) {
   }
 }
 
+// A keeper with a high ball coming straight at him jumps to take it at the top
+// of his jump (a ball wide of him is a dive, see beginDive).
+function keeperJump(w, p, s) {
+  const b = w.ball;
+  if (p.role !== ROLE.GK || p.z > 0 || p.vz !== 0 || !isFree(p) || b.owner >= 0 || p.kcd > 0) return;
+  if (!keeperHands(w, p) || !inOwnBox(w, p.team, p.x, p.y, 0.6) || (b.last === p.id && b.kt < 20)) return;
+  const rvx = b.vx - p.vx, rvy = b.vy - p.vy, v2 = rvx * rvx + rvy * rvy;
+  if (v2 < 4) return;
+  const tc = ((p.x - b.x) * rvx + (p.y - b.y) * rvy) / v2; // when it's closest
+  if (tc <= 0 || tc > 0.6) return;
+  const miss = Math.hypot(b.x + rvx * tc - p.x, b.y + rvy * tc - p.y);
+  const zc = b.z + b.vz * tc - 0.5 * G * tc * tc;
+  if (miss > 0.9 || zc < s.H + 0.05 || zc > s.H + 0.3 + s.jump + 0.3) return;
+  const rise = clamp(zc - s.H - 0.05, 0.12, s.jump), vz = Math.sqrt(2 * G * rise);
+  if (tc > vz / G + DT) return; // not yet: go up so as to be at the top as it arrives
+  p.vz = vz;
+  w.events.push({ k: 'jump', x: p.x, y: p.y, id: p.id });
+}
+
 function updatePlayer(w, p) {
   const m = w.m, b = w.ball, s = stOf(p), pit = pitchOf(w);
   if (p.kcd > 0) p.kcd--;
@@ -1879,6 +1899,7 @@ function updatePlayer(w, p) {
     if (p.st === ST.STUMBLE && p.stT >= p.stDur) { p.st = ST.IDLE; p.stT = 0; }
     movement(w, p, s);
     if (!tryQueued(w, p)) tryControl(w, p);
+    keeperJump(w, p, s);
   }
 
   // a player who is no longer able to dribble loses the ball (a keeper keeps
@@ -2311,6 +2332,7 @@ function possession(w) {
 function interact(w) {
   const m = w.m, b = w.ball;
   if (m.phase !== PHASE.PLAY && m.phase !== PHASE.WARMUP) return;
+  if (m.wr) return; // a warm-up ball gone out: dead until a keeper has the next one
   slideContacts(w);
   if (m.phase !== PHASE.PLAY && m.phase !== PHASE.WARMUP) return;
   blockContacts(w);
@@ -2355,13 +2377,13 @@ function checkBall(w) {
     }
     const defending = teamDir(w, 0) === -side ? 0 : 1;
     const ys = Math.sign(b.y) || 1;
-    if (!m.live) { warmRestart(w, -1, b.x, b.y); return; } // warm-up: no corners or goal kicks
+    if (!m.live) { if (!m.wr) m.wr = WARM_OUT; return; } // warm-up: no corners or goal kicks (see rules)
     if (b.lastTeam === defending) startSetPiece(w, SP.CORNER, 1 - defending, side * (hx - 0.3), ys * (hy - 0.3));
     else startSetPiece(w, SP.GOALKICK, defending, side * (hx - pit.areaD), ys * pit.areaW * 0.3);
     return;
   }
   if (Math.abs(b.y) > hy + BALL_R) {
-    if (!m.live) { warmRestart(w, -1, b.x, b.y); return; } // warm-up: no throw-ins
+    if (!m.live) { if (!m.wr) m.wr = WARM_OUT; return; } // warm-up: no throw-ins (see rules)
     const team = b.lastTeam === 0 ? 1 : 0;
     startSetPiece(w, SP.THROWIN, team, clamp(b.x, -hx + 0.5, hx - 0.5), Math.sign(b.y) * hy);
   }
@@ -2377,6 +2399,9 @@ function rules(w) {
   const halfTicks = Math.round(m.matchLen * 30);
   switch (m.phase) {
     case PHASE.WARMUP: case PHASE.PLAY:
+      // warm-up, ball out: it rolls away for a moment, then a keeper has one
+      if (m.wr && --m.wr === 0) { warmRestart(w, -1, b.x, b.y); break; }
+      if (m.wr) break;
       checkBall(w);
       if (m.phase === PHASE.PLAY && m.live) {
         m.clock++;

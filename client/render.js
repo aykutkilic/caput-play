@@ -205,6 +205,10 @@ export function poseFor(p, ctx) {
     else { P.rsh = 2.6 + 0.3 * Math.sin(t * 9); P.rel = 1.2; P.lsh = 0.3; P.lel = 1.3; P.bob += 0.1 * j; } // fist pump
   }
 
+  if ((p.st === ST.IDLE || p.st === ST.STUMBLE) && p.z > 0.04) {
+    const u = clamp(p.z / 0.22, 0, 1);
+    P.lh = mix(P.lh, 1.1, u); P.lk = mix(P.lk, 1.7, u); P.rh = mix(P.rh, 0.15, u); P.rk = mix(P.rk, 0.55, u);
+  }
   const k = p.stT;
   switch (p.st) {
     case ST.KICK: {
@@ -482,11 +486,29 @@ export class Renderer {
     // poses first: a ball in someone's hands is drawn where his hands are
     const Js = new Map();
     for (const p of w.players) { const [x, y, z] = ppos.get(p.id); Js.set(p.id, this.posePlayer(w, p, x, y, z, info, dt)); }
-    if (w.ball.owner >= 0 && w.ball.held) {
+    const heldNow = w.ball.owner >= 0 && w.ball.held;
+    this.ballScale = 1;
+    if (heldNow) {
       const h = w.players.find((p) => p.id === w.ball.owner);
       const hb = h && this.heldBallAt(w, h, Js.get(h.id), ppos.get(h.id));
       if (hb) ball = hb;
+      const pop = h && this.anim.get(h.id)?.pop;
+      if (pop !== undefined && this.time - pop < 0.25) {
+        this.ballScale = ease(clamp((this.time - pop) / 0.25, 0, 1));
+        if (this.time - pop < 0.02) this.trail = [];
+      }
     }
+    // the moment it leaves someone's hands (a throw, a punt) it goes on from
+    // where it was drawn – the hand – easing onto its real flight
+    if (this.wasHeld && !heldNow && w.ball.owner < 0 && w.ball.kt < 8 && this.lastBall) {
+      this.relOff = { off: [this.lastBall[0] - ball[0], this.lastBall[1] - ball[1], this.lastBall[2] - ball[2]], t0: this.time };
+    }
+    if (this.relOff) {
+      const u = (this.time - this.relOff.t0) / 0.15;
+      if (u >= 1 || heldNow) this.relOff = null;
+      else { const k = 1 - ease(u), o = this.relOff.off; ball = [ball[0] + o[0] * k, ball[1] + o[1] * k, Math.max(BALL_R, ball[2] + o[2] * k)]; }
+    }
+    this.wasHeld = heldNow;
     this.lastBall = ball; // where it was drawn: a catch next frame starts from here
 
     // camera: follow the ball with a little look-ahead, biased towards me
@@ -773,7 +795,7 @@ export class Renderer {
     const g = this.g, cam = this.cam;
     const sp = Math.hypot(w.ball.vx, w.ball.vy, w.ball.vz);
     const X = cam.px(x, y, z), Y = cam.py(x, y, z);
-    const r = Math.max(3, BALL_R * 1.75 * cam.scale);
+    const r = Math.max(3, BALL_R * 1.75 * cam.scale) * (this.ballScale ?? 1);
     // trail: shows speed, and the bend of a ball with spin (aftertouch / finesse)
     const curving = Math.abs(w.ball.spin) > 0.1 && w.ball.owner < 0;
     const len = curving ? 16 : 7;
@@ -873,6 +895,7 @@ export class Renderer {
       const cf = Math.cos(p.face), sf = Math.sin(p.face);
       const f = (lx - x) * cf + (ly - y) * sf, r = -(lx - x) * sf + (ly - y) * cf;
       if (Math.hypot(f, r, lz - z - s.H * 0.6) < 2.2) a.carry = { t0: this.time, f, r, z: lz, dive: p.st === ST.DIVE };
+      else a.pop = this.time; // not a catch – a new ball (a warm-up restart): it appears in his hands
     }
     a.held = holding;
     if (a.carry && (!holding || this.time - a.carry.t0 > (a.carry.dive ? 0.5 : 0.3))) a.carry = null;
