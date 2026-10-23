@@ -257,7 +257,7 @@ export function makePlayer(id, team, role, human, hgt = 180, bld = 50) {
     st: 0, stT: 0, stDur: 0, stA: 0, stB: 0, hit: 0,
     kk: 0, kp: 0, kx: 0, ky: 0, kt: -1, kv: 0, kh: 0,
     chg: 0, chgBtn: 0, stam: 1, pb: 0, kcd: 0, tcd: 0, tap: 0, tapT: 255, tapK: 0, tapH: 0, spr: 0,
-    bot: 0, miss: 0, tm: 0,
+    bot: 0, miss: 0, tm: 0, qk: 0,
     qa: 0, qt: 0, qp: 0, dph: 0, hold: 0,
     ai: 0, aiT: 0, aiX: 0, aiY: 0,
     ia: 0, im: 0, ib: 0,
@@ -541,6 +541,7 @@ function foul(w, offender, victim) {
   if (w.ball.owner === victim.id) { w.ball.owner = -1; w.ball.held = 0; }
   w.events.push({ k: 'foul', x: victim.x, y: victim.y });
   if (m.phase !== PHASE.PLAY && m.phase !== PHASE.WARMUP) return;
+  if (!m.live) return; // the warm-up plays on: no free kicks or penalties
   const pit = pitchOf(w);
   if (inOwnBox(w, offender.team, victim.x, victim.y)) {
     const dir = teamDir(w, victim.team);
@@ -636,9 +637,14 @@ export function planKick(w, p, kind, power, tx, ty, tid = -1, kh) {
   const ax = sm > 0.3 ? sx : Math.cos(p.face), ay = sm > 0.3 ? sy : Math.sin(p.face);
   if (kind === KICK.SHOT || kind === KICK.FINESSE) {
     const gx = dir * pit.L / 2;
-    let aimY;
-    if (sm > 0.3 && Math.abs(sy) > 0.2) aimY = Math.sign(sy) * Math.min(1, Math.abs(sy) * 1.4) * (pit.goalW / 2 - 0.35);
-    else aimY = (Math.abs(b.y) < 0.8 ? (p.id % 2 ? 1 : -1) : -Math.sign(b.y)) * pit.goalW * 0.2;
+    // aimed where the stick points: the spot on the goal line along it (kept
+    // inside the posts); pointing away from goal, the corner on that side
+    const half = pit.goalW / 2 - 0.35;
+    let aimY = (Math.abs(b.y) < 0.8 ? (p.id % 2 ? 1 : -1) : -Math.sign(b.y)) * pit.goalW * 0.2;
+    if (sm > 0.3) {
+      if (sx * dir > 0.15) aimY = clamp(b.y + sy / sx * (gx - b.x), -half, half);
+      else if (Math.abs(sy) > 0.2) aimY = Math.sign(sy) * half;
+    }
     p.kx = gx; p.ky = aimY;
     return;
   }
@@ -1679,7 +1685,14 @@ function movement(w, p, s) {
   }
 
   const taker = m.spTaker === p.id;
-  if (taker) sm = 0;
+  if (taker) {
+    // A dead ball: he turns on the spot. A free kick or a corner can be taken
+    // quickly, though – hold a direction and he plays it on and runs with it.
+    const quick = byPerson(p) && (m.spType === SP.FREEKICK || m.spType === SP.CORNER) && !b.held && sm0 > 0.5;
+    p.qk = quick ? Math.min(255, p.qk + 1) : 0;
+    if (p.qk > 20) { m.spTaker = -1; p.qk = 0; w.events.push({ k: 'kick', x: b.x, y: b.y, z: b.z, v: 2, id: p.id }); }
+    else sm = 0;
+  } else p.qk = 0;
 
   if (byPerson(p)) updateMeet(w, p, sx, sy, sm0);
   const assist = byPerson(p) && !own && !pressing && !jockey && !charging ? receiveAssist(w, p, sx, sy, sm0) : null;
@@ -1762,7 +1775,7 @@ function movement(w, p, s) {
     turnToward(p, Math.atan2(sy, sx), taker ? rate * 0.6 : rate);
   }
 
-  if (taker) { p.vx = 0; p.vy = 0; }
+  if (taker && m.spTaker === p.id) { p.vx = 0; p.vy = 0; }
 
   if (pressing && p.tcd === 0) {
     const bd = Math.hypot(b.x - p.x, b.y - p.y);

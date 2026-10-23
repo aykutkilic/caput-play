@@ -27,7 +27,7 @@ export function stats(heightCm, build) {
   s = {
     H, h, b,
     mass: bmi * H * H,
-    sprint: 8.0 + 0.3 * hc - 1.0 * bc,          // m/s
+    sprint: 8.8 + 0.3 * hc - 1.0 * bc,          // m/s (8.2 .. 9.4 – 30-34 km/h)
     jog: 5.6 + 0.15 * hc - 0.6 * bc,            // m/s
     accel: 13 - 4.0 * hc - 3.5 * bc,            // m/s^2
     turn: 11 - 4.5 * hc - 2.0 * bc,             // rad/s

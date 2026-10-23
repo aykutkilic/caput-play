@@ -607,6 +607,8 @@ function controlMode(w) {
   const me = w && pById(w, state.myId);
   if (!me) return 'attack';
   if (performance.now() < bendHintUntil && w.ball.owner < 0) return 'after';
+  if (w.m.spTaker === me.id) return w.m.spType === SP.THROWIN ? 'throwin' : w.m.spType === SP.PENALTY ? 'penalty'
+    : w.m.spType === SP.FREEKICK || w.m.spType === SP.CORNER ? 'freekick' : 'restart';
   const b = w.ball, owner = b.owner >= 0 ? pById(w, b.owner) : null;
   if (owner && owner.team !== me.team) return me.role === ROLE.GK && inOwnBox(w, me.team, me.x, me.y, 2) ? 'keeper' : 'defend';
   if (!owner && wantsBlock(w, me)) return 'block';
@@ -615,7 +617,7 @@ function controlMode(w) {
 let shownMode = '';
 function showControlMode(w) {
   const mode = w ? controlMode(w) : 'attack';
-  touch.setMode(mode === 'after' ? 'attack' : mode);
+  touch.setMode(['after', 'throwin', 'penalty', 'freekick', 'restart'].includes(mode) ? 'attack' : mode);
   if (mode === shownMode) return;
   shownMode = mode;
   const k = (name) => `<b>${esc(keyName(input.keys[name]))}</b>`;
@@ -624,6 +626,10 @@ function showControlMode(w) {
     keeper: `Keeper: ${k('goalG')} dive · ${k('runG')} rush out · ${k('mateG')} press · ${k('selfG')} jockey`,
     block: 'Hard ball coming: any kick key <b>blocks</b> it',
     after: 'Aftertouch – now push the stick <b>sideways</b> to bend it · <b>back</b> lifts it · <b>forward</b> dips it',
+    freekick: 'Your free kick – turn with the stick, a kick key plays it · or <b>hold a direction</b> to take it quickly and run with it',
+    throwin: 'Your throw-in – aim with the stick, a kick key throws it',
+    penalty: 'Penalty – aim with the stick (it picks the spot), Goal key shoots',
+    restart: 'Your kick – turn with the stick, a kick key plays it',
   };
   $('ctxHint').innerHTML = lines[mode] || '';
   $('ctxHint').hidden = !lines[mode];
