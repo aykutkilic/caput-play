@@ -4,7 +4,7 @@
 
 import { GOAL_DEPTH, BALL_R, ST, ROLE, PHASE, KICK, SP, SKILL, KH, PART } from '../shared/constants.js';
 import { stats } from '../shared/physique.js';
-import { CHG_MAX, pitchOf } from '../shared/sim.js';
+import { CHG_MAX, pitchOf, DIVE_BASE, DIVE_SPAN, diveReach } from '../shared/sim.js';
 import { skeleton, drawFigure } from './figure.js';
 
 export { skeleton, drawFigure };
@@ -321,11 +321,24 @@ export function poseFor(p, ctx) {
       break;
     }
     case ST.DIVE: {
-      const env = clamp(k / 7, 0, 1) * lieEnv(p, 16);
-      const rel = ctx.diveRel;
-      P.roll = Math.sin(rel) * 1.4 * env;
-      P.pitch = Math.cos(rel) * 1.2 * env;
-      P.drop = (p.z <= 0.02 && k > 10 ? hipH * 0.72 : hipH * 0.2) * env;
+      // How big a dive (from its length, see DIVE_BASE in the sim): a quick
+      // hop tilts him a little and he's straight back on his feet; a full
+      // stretch takes him horizontal in the air, he lands on his side, stays
+      // down a moment, then pushes himself up – to his knees, then his feet.
+      const rel = ctx.diveRel, air = p.z > 0.02;
+      const big = p.spr ? 1 : clamp((p.stDur - 2 * DIVE_BASE) / DIVE_SPAN, 0, 1);
+      const lieMax = 0.3 + 0.7 * big, upT = Math.round(10 + 14 * big), left = p.stDur - k;
+      let lie = (air ? clamp(k / 9, 0, 1) : clamp(k / 5, 0, 1)) * lieMax;
+      if (left < upT) lie *= ease(left / upT);
+      const up = left < upT ? 1 - left / upT : 0;        // getting up (0 .. 1)
+      const env = clamp(k / 7, 0, 1) * (left < upT ? ease(left / upT) : 1);
+      // in the air on the line of his reach (a diagonal for a high ball), flat once down
+      const tilt = air ? ctx.diveEl || 0 : 0;
+      P.roll = Math.sin(rel) * (1.5 - tilt) * lie;
+      P.pitch = Math.cos(rel) * (1.25 - 0.8 * tilt) * lie;
+      // on the ground lying on his side the hips are down at the grass; while
+      // getting up he is on one knee for a moment
+      P.drop = (air ? hipH * 0.2 * lie : hipH * 0.8 * lie) + (up > 0 && up < 0.8 ? hipH * 0.25 * Math.sin(up / 0.8 * Math.PI) : 0);
       // arms at full stretch towards the ball, gloves together; once he has
       // it, it's pulled in to his chest
       P.lsh = mix(P.lsh, 2.8, env); P.rsh = mix(P.rsh, 2.95, env); P.lab = P.rab = mix(P.lab, -0.06, env); P.lel = P.rel = 0.1;
@@ -335,6 +348,12 @@ export function poseFor(p, ctx) {
         P.lsh = P.rsh = mix(mix(P.lsh, 2.2, env), 0.85, hug); P.lel = P.rel = mix(0.5 * env, 2.1, hug); P.lab = P.rab = mix(-0.1, 0.15, hug);
       }
       P.lk = 0.25; P.rk = mix(P.rk, 0.9, env); P.rh = 0.5 * env;
+      if (up > 0) {
+        // pushing himself up off the grass: a hand down, a knee under him
+        const u = Math.sin(up * Math.PI);
+        P.lsh = mix(P.lsh, 0.7, u); P.lab = mix(P.lab, 0.9, u); P.lel = mix(P.lel, 0.3, u);
+        P.lh = mix(P.lh, 1.2, u); P.lk = mix(P.lk, 1.9, u); P.rk = mix(P.rk, 0.6, u);
+      }
       if (p.spr) {
         // spread at the shooter's feet: arms and legs out wide, a star on its side
         P.lsh = P.rsh = mix(P.lsh, 1.7, env); P.lab = P.rab = 0.9 * env;
@@ -917,6 +936,7 @@ export class Renderer {
       diveHold: p.st === ST.DIVE && holding,
       celebrate: info.celebrateTeam === p.team && p.st === ST.IDLE,
       diveRel: angDiff(p.face, p.stA),
+      diveEl: p.st === ST.DIVE && !p.spr ? diveReach(p, s)[1] : 0, // a high dive: body on a diagonal
       block: null, reach: null, windup: null, gkSet: 0,
     };
     if (ctx.gkStance) {
@@ -942,7 +962,9 @@ export class Renderer {
       const tc = v2 > 1 ? ((x - bx) * b.vx + (y - by) * b.vy) / v2 : -1; // time to its closest point
       const near = Math.hypot(bx - x, by - y) < 1.4;
       if (tc > -0.05 || near) {
-        const t = clamp(tc, 0, 0.7);
+        // the hands go out to meet it on its way in, ~0.45 m before it would
+        // reach his body – a catch with the hands, not the chest
+        const t = clamp(tc - 0.45 / Math.sqrt(v2), 0, 0.7);
         let pz = bz + b.vz * t - 0.5 * 9.81 * t * t;
         if (pz < 0.11) pz = 0.11 + Math.min(0.3, -pz * 0.3); // it'll have bounced
         const [df, dr] = local(bx + b.vx * t, by + b.vy * t);

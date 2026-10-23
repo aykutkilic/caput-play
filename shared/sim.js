@@ -874,13 +874,40 @@ export function beginDive(w, p, ang, height, tArr = 0.45, dist = Infinity) {
   // or the wrong way) can't push off properly
   const v = Math.hypot(p.vx, p.vy);
   if (v > 0.5) cap *= clamp(1 - 0.07 * (v - (p.vx * Math.cos(ang) + p.vy * Math.sin(ang))), 0.6, 1.05);
+  // the body goes up at most ~0.75 m; the rest of the height is reached by
+  // diving diagonally – hands up, feet low (see diveReach) – which costs
+  // sideways reach, so he has to travel that much further
+  const rise = clamp((p.stB - 0.6) * 0.5, 0, Math.min(0.75, 0.25 + s.jump));
   let spd = cap;
   if (Number.isFinite(dist)) spd = clamp(Math.max(0, dist - 0.5) / t * 1.1, 1.5, cap);
   p.vx = Math.cos(ang) * spd; p.vy = Math.sin(ang) * spd; p.spr = 0;
-  const rise = clamp(p.stB - 0.6, 0, 0.9 + s.jump);
-  p.vz = rise > 0.05 ? Math.min(6.5, rise / t + 0.5 * G * t) : 1.2;
+  p.vz = rise > 0.05 ? Math.min(4.2, rise / t + 0.5 * G * t) : 1.2;
+  // in the air for the flight, then on the ground: a full-stretch or high
+  // dive puts him down for longer than a quick hop (the renderer reads how
+  // big a dive it was from stDur – see DIVE_BASE)
+  const big = Math.max(spd / s.diveSpeed, clamp(rise / 1.2, 0, 1));
+  p.stDur = Math.round(2 * p.vz / G * 60) + DIVE_BASE + Math.round(DIVE_SPAN * big);
   p.chgBtn = 0; p.qa = 0;
   w.events.push({ k: 'dive', x: p.x, y: p.y });
+}
+
+export const DIVE_BASE = 18, DIVE_SPAN = 34; // ticks down after a dive: quick hop .. full stretch
+
+// A diving keeper's reach, from his hips to his fingertips, in the plane of
+// his dive: [hip height, angle of the line above horizontal, its length]. For
+// a high ball the line tilts up so his hands get to the ball's height (the
+// body itself only goes up so far); he levels out as he lands. Given the ball,
+// the arms swing up to ~35 degrees up or down from that towards it.
+export function diveReach(p, s, ball) {
+  const reach = 0.55 * s.H + s.diveReach * 0.5;
+  const z0 = p.z + 0.35;
+  const level = p.stT < 6 ? 1 : clamp(p.z / 0.12, 0, 1); // levels out as he lands
+  let el = Math.asin(clamp((p.stB + 0.05 - z0) / reach, 0.03, 0.85)) * level;
+  if (ball) {
+    const along = (ball.x - p.x) * Math.cos(p.stA) + (ball.y - p.y) * Math.sin(p.stA);
+    el = clamp(Math.atan2(ball.z - z0, Math.max(0.1, along)), el - 0.6, el + 0.6);
+  }
+  return [z0, el, reach];
 }
 
 // AI kick accuracy and keeper handling by the room's AI level (Casual / Normal / Pro)
@@ -2127,9 +2154,9 @@ function gkSave(w, p) {
     tol = 0.45;
   } else if (p.st === ST.DIVE) {
     const ca = Math.cos(p.stA), sa = Math.sin(p.stA);
-    const reach = 0.55 * s.H + s.diveReach * 0.5;
-    const z = p.z + 0.35 + Math.min(p.stB, 1.8) * 0.15;
-    seg = [p.x - ca * 0.5, p.y - sa * 0.5, z, p.x + ca * reach, p.y + sa * reach, z + 0.1];
+    const [z0, el, reach] = diveReach(p, s, b);
+    const hr = reach * Math.cos(el);
+    seg = [p.x - ca * 0.5, p.y - sa * 0.5, Math.max(0.15, z0 - 0.5 * Math.sin(el)), p.x + ca * hr, p.y + sa * hr, Math.max(0.15, z0 + reach * Math.sin(el))];
     tol = 0.45;
   } else {
     const fx = Math.cos(p.face) * 0.2, fy = Math.sin(p.face) * 0.2;
