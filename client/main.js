@@ -705,6 +705,7 @@ function onPhaseChange(prev, m) {
   const teamCol = (t) => TEAM_COLORS[t] ? TEAM_COLORS[t].ui : '#fff';
   switch (m.phase) {
     case PHASE.GOAL: {
+      if (!m.live) { sfx.net(); break; } // a warm-up goal: no celebration
       const scorer = state.names.get(m.scorer) || '';
       banner('GOAL!', `${TEAM_NAMES[m.lastGoalTeam] || ''}${scorer ? ' · ' + scorer : ''}`, teamCol(m.lastGoalTeam));
       sfx.net(); sfx.roar();
@@ -803,7 +804,7 @@ function loop(now) {
         if (state.lastPhase !== -1) onPhaseChange(state.lastPhase, auth.m);
         state.lastPhase = auth.m.phase;
       }
-      const celebrateTeam = auth && auth.m.phase === PHASE.GOAL ? auth.m.lastGoalTeam : -1;
+      const celebrateTeam = auth && auth.m.phase === PHASE.GOAL && auth.m.live ? auth.m.lastGoalTeam : -1;
       const bubbles = new Map();
       for (const [pid, bb] of state.bubbles) { if (bb.until > now) bubbles.set(pid, bb.text); else state.bubbles.delete(pid); }
       if (state.replayAt && now >= state.replayAt) {

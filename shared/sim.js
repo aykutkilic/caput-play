@@ -435,13 +435,14 @@ export function shootingPractice(w) {
   }
   return outfield > 0 && aiKeeper;
 }
-// The ball in an AI keeper's hands to restart practice: that team's keeper,
-// or the one nearest the ball. False if there's none.
-function keeperRestart(w, team) {
+// The ball in a keeper's hands to restart practice / the warm-up: that team's
+// keeper, or the one nearest the ball (AI keepers only unless humansToo).
+// False if there's none.
+function keeperRestart(w, team, humansToo = false) {
   const b = w.ball;
   let gk = null, bd = 1e9;
   for (const p of w.players) {
-    if (p.role !== ROLE.GK || p.human) continue;
+    if (p.role !== ROLE.GK || (p.human && !humansToo)) continue;
     const d = p.team === team ? -1 : Math.hypot(p.x - b.x, p.y - b.y);
     if (d < bd) { bd = d; gk = p; }
   }
@@ -453,6 +454,19 @@ function keeperRestart(w, team) {
   w.m.spTaker = -1;
   resumePhase(w);
   return true;
+}
+
+// The warm-up has no set pieces or kick-offs: a keeper (that team's after a
+// goal, else the nearest) has the ball straight away; with no keeper on the
+// pitch it's dropped back in at (x, y).
+function warmRestart(w, team, x, y) {
+  if (keeperRestart(w, team, true)) return;
+  const b = w.ball, pit = pitchOf(w);
+  Object.assign(b, { x: clamp(x, -pit.L / 2 + 1, pit.L / 2 - 1), y: clamp(y, -pit.W / 2 + 0.5, pit.W / 2 - 0.5), z: BALL_R,
+    vx: 0, vy: 0, vz: 0, spin: 0, owner: -1, held: 0, kt: 255, tgt: -1, sh: -1, dl: 0, nut: -1, atk: -1, atT: 0 });
+  b.px = b.x; b.py = b.y; b.pz = b.z;
+  w.m.spTaker = -1;
+  resumePhase(w);
 }
 
 function startSetPiece(w, type, team, x, y) {
@@ -2339,11 +2353,13 @@ function checkBall(w) {
     }
     const defending = teamDir(w, 0) === -side ? 0 : 1;
     const ys = Math.sign(b.y) || 1;
+    if (!m.live) { warmRestart(w, -1, b.x, b.y); return; } // warm-up: no corners or goal kicks
     if (b.lastTeam === defending) startSetPiece(w, SP.CORNER, 1 - defending, side * (hx - 0.3), ys * (hy - 0.3));
     else startSetPiece(w, SP.GOALKICK, defending, side * (hx - pit.areaD), ys * pit.areaW * 0.3);
     return;
   }
   if (Math.abs(b.y) > hy + BALL_R) {
+    if (!m.live) { warmRestart(w, -1, b.x, b.y); return; } // warm-up: no throw-ins
     const team = b.lastTeam === 0 ? 1 : 0;
     startSetPiece(w, SP.THROWIN, team, clamp(b.x, -hx + 0.5, hx - 0.5), Math.sign(b.y) * hy);
   }
@@ -2370,13 +2386,13 @@ function rules(w) {
       }
       break;
     case PHASE.GOAL:
-      if (m.phT >= (m.live ? GOAL_TICKS_LIVE : 110)) {
+      // (a warm-up goal: no celebration – just long enough to see it hit the net)
+      if (m.phT >= (m.live ? GOAL_TICKS_LIVE : 36)) {
         if (m.live && m.clock >= halfTicks * m.half) {
           setPhase(w, m.half === 1 ? PHASE.HALFTIME : PHASE.FULLTIME);
           w.events.push({ k: 'whistle', n: m.half === 1 ? 2 : 3 });
-        } else if (!(shootingPractice(w) && keeperRestart(w, m.lastGoalTeam >= 0 ? 1 - m.lastGoalTeam : -1))) {
-          startKickoff(w, m.lastGoalTeam >= 0 ? 1 - m.lastGoalTeam : 0);
-        }
+        } else if (!m.live) warmRestart(w, m.lastGoalTeam >= 0 ? 1 - m.lastGoalTeam : -1, 0, 0);
+        else startKickoff(w, m.lastGoalTeam >= 0 ? 1 - m.lastGoalTeam : 0);
       }
       break;
     case PHASE.SETPIECE:

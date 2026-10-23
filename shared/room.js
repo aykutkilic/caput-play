@@ -68,6 +68,7 @@ export class Room {
     startKickoff(this.world, 0);
     this.inputs = new Map();  // playerId -> Map(tick -> input)
     this.skips = new Set();   // members who skipped the current goal replay
+    this.addAI(1, ROLE.GK);   // someone to shoot at from the start (Team A's first player: shooting practice)
   }
 
   // ------------------------------------------------------------ membership
@@ -80,8 +81,8 @@ export class Room {
     this.members.set(client.id, m);
     client.room = this;
     if (this.hostId === null) this.hostId = client.id;
-    // auto-assign to the team with fewer players
-    const c0 = this.teamCount(0), c1 = this.teamCount(1);
+    // auto-assign to the team with fewer outfield players (keepers don't count)
+    const c0 = this.teamCount(0, true), c1 = this.teamCount(1, true);
     const team = c0 <= c1 ? 0 : 1;
     if (this.teamCount(team) < MAX_PER_TEAM && this.world.players.length < MAX_PLAYERS) this.setTeam(m, team, ROLE.OUT, true);
     this.system(`${m.name} joined`);
@@ -102,9 +103,9 @@ export class Room {
     this.broadcastRoom();
   }
 
-  teamCount(team) {
+  teamCount(team, outfield = false) {
     let n = 0;
-    for (const p of this.world.players) if (p.team === team) n++;
+    for (const p of this.world.players) if (p.team === team && !(outfield && p.role === ROLE.GK)) n++;
     return n;
   }
 
@@ -319,7 +320,8 @@ export class Room {
     this.skips = new Set();
     const scorer = this.nameOf(e.scorer);
     const w = this.world;
-    const score = w.m.live ? `  ${w.m.s0}-${w.m.s1}` : '';
+    if (!w.m.live) return; // warm-up goals aren't announced
+    const score = `  ${w.m.s0}-${w.m.s1}`;
     this.system(`GOAL ${TEAM_NAMES[e.team]}${scorer ? ' - ' + scorer : ''}${e.own ? ' (own goal)' : ''}${score}`);
   }
 
