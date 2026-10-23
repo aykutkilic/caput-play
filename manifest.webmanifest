@@ -1,0 +1,20 @@
+{
+  "id": "./",
+  "name": "CAPUT – minimal isometric football",
+  "short_name": "CAPUT",
+  "description": "Online small-sided football, Team A vs Team B. Create a room and play with friends.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "landscape",
+  "background_color": "#0e1a14",
+  "theme_color": "#0e1a14",
+  "categories": ["games", "sports"],
+  "icons": [
+    { "src": "client/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "client/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "client/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "client/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

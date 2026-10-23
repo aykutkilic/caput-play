@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0e1a14">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="CAPUT">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="client/icons/apple-touch-icon.png">
+  <title>CAPUT · Team A vs Team B</title>
+  <link rel="stylesheet" href="client/style.css">
+  <link rel="icon" href="client/icons/icon.svg" type="image/svg+xml">
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <!-- in-game HUD -->
+  <div id="hud" hidden>
+    <div id="scorebar">
+      <span class="team a"><i></i>TEAM A</span>
+      <b id="s0">0</b><span class="sep">–</span><b id="s1">0</b>
+      <span class="team b">TEAM B<i></i></span>
+      <span id="clock">WARM-UP</span>
+    </div>
+    <div id="banner"><div id="bannerText"></div><div id="bannerSub"></div></div>
+    <div id="replayBadge" hidden><i></i>REPLAY <small>press any button to skip</small></div>
+    <div id="netstats"></div>
+    <canvas id="radar" width="200" height="128"></canvas>
+    <div id="chatbox">
+      <div id="chatlog"></div>
+      <div id="quick"></div>
+    </div>
+    <button id="quickToggle" title="Quick chat">💬</button>
+    <div id="hint"><kbd>Esc</kbd> room &amp; teams · <kbd>F1</kbd> controls · <kbd>1</kbd>–<kbd>5</kbd> quick chat</div>
+    <div id="ctxHint" hidden></div>
+    <div id="rotateHint">Turn your phone sideways for a wider view</div>
+  </div>
+
+  <!-- minimized room panel -->
+  <button id="panelPill" hidden title="Room, teams &amp; settings (Esc)">
+    <span id="pillName">Room</span> <b id="pillCode"></b> <span class="pillOpen">▾</span>
+  </button>
+
+  <!-- room panel -->
+  <aside id="panel" hidden>
+    <header>
+      <div>
+        <div id="roomName">Room</div>
+        <div class="muted">Code <b id="roomCode">----</b> · <span id="roomStatus">Warm-up</span></div>
+      </div>
+      <div class="hbtns">
+        <button id="copyLink" class="ghost" title="Copy invite link">Copy invite</button>
+        <button id="minBtn" class="ghost icon" title="Minimize (Esc)" aria-label="Minimize room panel">–</button>
+      </div>
+    </header>
+    <div class="teams">
+      <div class="teamcol" data-team="0">
+        <h3 class="a">TEAM A</h3>
+        <ul></ul>
+        <div class="btns">
+          <button data-act="join" data-role="0">Play</button>
+          <button data-act="join" data-role="1">Keeper</button>
+          <button data-act="ai" data-role="0" class="ghost">+ AI</button>
+          <button data-act="ai" data-role="1" class="ghost">+ AI keeper</button>
+        </div>
+      </div>
+      <div class="teamcol" data-team="1">
+        <h3 class="b">TEAM B</h3>
+        <ul></ul>
+        <div class="btns">
+          <button data-act="join" data-role="0">Play</button>
+          <button data-act="join" data-role="1">Keeper</button>
+          <button data-act="ai" data-role="0" class="ghost">+ AI</button>
+          <button data-act="ai" data-role="1" class="ghost">+ AI keeper</button>
+        </div>
+      </div>
+    </div>
+    <div class="spec">
+      <span class="muted">Spectators:</span> <span id="specList">–</span>
+      <button id="spectate" class="ghost small">Spectate</button>
+    </div>
+    <div class="section host">
+      <h4>Match <span class="muted" id="hostNote"></span></h4>
+      <label>Length
+        <select id="matchLen">
+          <option value="120">2 min</option><option value="240">4 min</option><option value="360">6 min</option>
+          <option value="600">10 min</option><option value="900">15 min</option>
+        </select>
+      </label>
+      <label>Pitch
+        <select id="pitchSel">
+          <option value="auto">Auto (by team size)</option><option value="0">Small</option><option value="1">Medium</option><option value="2">Large</option>
+        </select>
+      </label>
+      <label>Goals
+        <select id="goalSel">
+          <option value="0">Normal</option><option value="1">Large</option><option value="2">Huge</option>
+        </select>
+      </label>
+      <label>AI level
+        <select id="aiSel">
+          <option value="0">Casual</option><option value="1">Normal</option><option value="2">Pro</option>
+        </select>
+      </label>
+      <button id="startBtn" class="primary">Start match</button>
+    </div>
+    <div class="section">
+      <h4>View</h4>
+      <label>Camera <select id="camSel"></select></label>
+      <label>Zoom <input id="zoom" type="range" min="0.55" max="1.8" step="0.05" value="1"></label>
+      <label class="check"><input id="netChk" type="checkbox"> Net stats</label>
+      <label class="check"><input id="touchChk" type="checkbox"> Touch controls</label>
+      <button id="fsBtn" class="ghost small">Fullscreen</button>
+    </div>
+    <div class="section">
+      <h4>Sound</h4>
+      <div class="mixer"></div>
+    </div>
+    <footer>
+      <button id="editBtn2" class="ghost">Edit player</button>
+      <button id="controlsBtn" class="ghost">Controls</button>
+      <button id="leaveBtn" class="danger">Leave</button>
+    </footer>
+  </aside>
+
+  <!-- home screen -->
+  <section id="home">
+    <div class="brand">
+      <div class="logo">CAPUT</div>
+      <div class="tag">minimal isometric football · Team A vs Team B</div>
+      <div class="pwa">
+        <button id="soundBtn" class="ghost small" title="Music &amp; sound">🔊 Sound</button>
+        <button id="installBtn" class="primary small" hidden>⬇ Install app</button>
+        <span id="iosHint" class="muted small" hidden>Install on your phone/tablet: tap <b>Share</b> → <b>Add to Home Screen</b></span>
+      </div>
+    </div>
+    <div id="homeMixer" class="mixer pop" hidden></div>
+    <div class="homegrid">
+      <div class="card me">
+        <canvas id="homePreview" width="200" height="240"></canvas>
+        <div class="who">
+          <div id="homeName">Player</div>
+          <div class="muted" id="homeMeta"></div>
+          <button id="editBtn" class="ghost">Edit player</button>
+        </div>
+      </div>
+      <div class="card lobby">
+        <h3 id="roomsTitle">Rooms</h3>
+        <ul id="roomList"><li class="muted">Connecting…</li></ul>
+        <div class="row">
+          <input id="newRoomName" placeholder="Room name (optional)" maxlength="28">
+          <button id="createBtn" class="primary">Create room</button>
+        </div>
+        <div class="row">
+          <input id="joinCode" placeholder="Code" maxlength="4" style="text-transform:uppercase;width:90px">
+          <button id="joinBtn">Join</button>
+        </div>
+        <div id="homeStatus" class="muted small"></div>
+      </div>
+    </div>
+    <div class="foot muted">Arrows move · kick keys are a grid – columns <b>Q/A/Z</b> run path · <b>W/S/X</b> team-mate ·
+      <b>E/D/C</b> goal · <b>R/F/V</b> self; rows high · ground · mid; hold for power, double / triple press for more ·
+      <b>Shift</b> sprint · <b>Space</b> precision dribble — or a gamepad, or touch on phones &amp; tablets<br>
+      After kicking, steer to bend, lift or dip the ball (aftertouch)</div>
+  </section>
+
+  <!-- avatar editor -->
+  <div id="editor" class="modal" hidden>
+    <div class="sheet wide">
+      <h2>Your player</h2>
+      <div class="edgrid">
+        <div class="prev">
+          <canvas id="edPreview" width="260" height="330"></canvas>
+          <div class="kitswitch"><button data-kit="0" class="small">Team A kit</button><button data-kit="1" class="small ghost">Team B kit</button></div>
+        </div>
+        <div class="fields">
+          <div class="row2">
+            <label>Name <input id="edName" maxlength="16"></label>
+            <label>Number <input id="edNum" type="number" min="1" max="99"></label>
+          </div>
+          <div class="lbl">Skin</div><div class="swatches" id="edSkin"></div>
+          <div class="lbl">Hair</div><div class="chips" id="edHair"></div>
+          <div class="lbl">Hair colour</div><div class="swatches" id="edHairCol"></div>
+          <div class="lbl">Facial hair</div><div class="chips" id="edBeard"></div>
+          <div class="lbl">Boots</div><div class="swatches" id="edBoots"></div>
+          <div class="lbl">Height <b id="edHval"></b></div>
+          <input id="edH" type="range" min="160" max="200" step="1">
+          <div class="lbl">Build <b id="edBval"></b></div>
+          <input id="edB" type="range" min="0" max="100" step="1">
+          <div class="tradeoff muted">Tall → aerial reach, keeper reach, stride · costs acceleration, agility, stamina.<br>Heavy → tackles, shielding, shot power · costs speed, agility, jump, stamina.</div>
+        </div>
+        <div class="statsbox">
+          <div class="lbl">Attributes</div>
+          <div id="edStats"></div>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="edCancel" class="ghost">Cancel</button>
+        <button id="edSave" class="primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- controls -->
+  <div id="controls" class="modal" hidden>
+    <div class="sheet">
+      <h2>Controls</h2>
+      <p class="muted small ctrlLead">Every kick has a <b>target</b> (column) and a <b>height</b> (row); how long you hold it sets the <b>power</b>
+        – press twice to fill the gauge twice as fast, three times for full power (a big clearance). Click a key to rebind it.</p>
+      <table id="ctrlTable"></table>
+      <div class="ctxhelp muted">
+        <p><b>Targets:</b> <b>Team-mate</b> plays it to where he is now, <b>Run path</b> into the space ahead of him,
+          <b>Goal</b> shoots, <b>Self</b> plays it to yourself. The stick picks which team-mate (or where the shot goes).
+          <b>Heights:</b> ground = along the grass to his feet (a low shot), mid = chest-high (a driven ball), high =
+          head-high for a header (a shot under the bar; little power + high = a chip).</p>
+        <p><b>Shooting:</b> power is pace, not height – a full-power shot is hard to keep down and less accurate.
+          R2 + Goal = finesse (curled). When the ball is in the air, a Goal key volleys, heads or – facing away – bicycle-kicks it.</p>
+        <p><b>Self:</b> ground = knock it on and chase it (sideways / back on the stick: step-over feint, drag-back), mid =
+          pop it up to chest height, high = flick it up / scoop it over a challenge. When the ball comes to you, it controls
+          it towards the stick with foot, chest or head.</p>
+        <p><b>Aftertouch</b> (Sensible Soccer style): right after a kick, push the stick <b>left/right</b> of the ball's flight
+          to bend it, <b>back</b> to lift it, <b>forward</b> to dip it.</p>
+        <p><b>Defence:</b> hold a Team-mate key to press the ball carrier (auto standing tackle), hold a Self key to
+          <b>jockey</b> (stay goal-side at arm's length, facing him, no lunge), Goal = slide tackle (from behind may be a
+          foul; keeper: dive), Run path = send your keeper out. When a shot or pass comes at you, press any kick key to block
+          it – your player throws out a leg, his body or jumps to head it (the keeper uses his hands). The touch bars and an
+          on-screen hint switch to these whenever you're defending.</p>
+        <p><b>Keeper with the ball:</b> a ground key throws it, mid / high punts it.</p>
+        <p><b>Team-mates:</b> a Team-mate or Run key while an AI team-mate has the ball calls for it.</p>
+        <p><b>Receive assist:</b> when the ball is played to you your player is guided to meet it; a ring on the grass marks
+          the spot (yellow = header height). Hold a kick key as it arrives for a first-time pass, volley or header.</p>
+        <p><b>Touch:</b> drag anywhere on the left half for the stick (push to the rim to sprint). On the right are four tall
+          bars – Run, Pass, Shoot, Self: where you press on a bar sets the height (top = head, middle = chest, bottom = feet;
+          slide to change it), how long you hold sets the power.</p>
+        <p><b>Quick chat:</b> keys 1–5 (or 💬 on touch) – Pass! · Shoot! · Nice one! · Sorry! · Good game!</p>
+      </div>
+      <div class="actions">
+        <button id="ctrlReset" class="ghost">Reset keys</button>
+        <button id="ctrlClose" class="primary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+  <button id="updateBtn" hidden>New version ready – tap to update</button>
+  <div id="verTag"></div>
+  <script type="module" src="client/main.js"></script>
+</body>
+</html>

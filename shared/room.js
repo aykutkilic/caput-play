@@ -1,0 +1,409 @@
+// A room: one authoritative world, the people in it and their AI helpers.
+// Runs either inside the Node server or inside the browser of the player who
+// hosts a serverless (peer-to-peer) room; it only talks to `client` objects
+// that expose sendText(string) and sendBinary(bytes).
+//
+// Netcode (authority side):
+//  * fixed 60 Hz simulation, snapshots at 30 Hz carrying the full state
+//  * clients run *ahead* of the server and send inputs stamped with the tick they
+//    are meant for (+ the previous 7 ticks for loss resilience). The server keeps a
+//    small per-player jitter buffer keyed by tick and consumes exactly the input
+//    for the tick it is simulating; a missing input repeats the last one.
+//  * every snapshot tells each client how many ticks early its inputs arrive
+//    ("lead"); the client speeds up/slows down its clock to keep that lead small
+//    but positive, i.e. minimal added latency with no dropped inputs.
+//  * the server re-quantises its own state after each snapshot so clients
+//    re-simulating from it reproduce the server bit-for-bit.
+//  * each snapshot also carries the inputs already received for the ticks
+//    after it, so clients replay the other humans with their real inputs
+//    (less guessing, smaller corrections) instead of repeating the last one.
+//  * snapshots go out as deltas against the newest one each client has
+//    acknowledged (falling back to a full one), ~4x smaller.
+//  * a human whose inputs stop arriving is played by the AI after a moment
+//    (sim BOT_AFTER) until they resume, instead of running on blindly.
+
+import {
+  createWorld, addPlayer, removePlayer, updatePlayerSpec, step, startMatch, stopMatch, startKickoff, pById, GOAL_TICKS_LIVE,
+} from './sim.js';
+import { SNAP_EVERY, ROLE, PHASE, autoPitch, MAX_PLAYERS, TEAM_NAMES, QUICK_CHAT } from './constants.js';
+import {
+  worldBytes, encodeFuture, fullSnapshot, deltaSnapshot, patchSnapshotHeader, readWorld, decodeInputs,
+} from './protocol.js';
+
+const MAX_PER_TEAM = 8;
+const LEAD_WINDOW = 30;
+export const MAX_MEMBERS = 16;
+
+const clampInt = (v, lo, hi, d) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; };
+const hex = (v, d) => (typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v) ? v : d);
+export function sanitizeProfile(p) {
+  const a = (p && p.avatar) || {};
+  const name = String((p && p.name) || 'Player').replace(/[^\p{L}\p{N} _.\-]/gu, '').trim().slice(0, 16) || 'Player';
+  return {
+    name,
+    avatar: {
+      skin: hex(a.skin, '#e0ac69'), hair: clampInt(a.hair, 0, 9, 1), hairColor: hex(a.hairColor, '#2b1b10'),
+      beard: clampInt(a.beard, 0, 4, 0),
+      boots: hex(a.boots, '#111111'), number: clampInt(a.number, 1, 99, 10),
+      phys: { h: clampInt(a.phys && a.phys.h, 160, 200, 180), b: clampInt(a.phys && a.phys.b, 0, 100, 50) },
+    },
+  };
+}
+
+const AI_SKINS = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#a26b45'];
+const AI_HAIR = ['#1b1b1b', '#3b2416', '#7a4a1f', '#d9b25f', '#9c9c9c', '#b5532d'];
+
+export class Room {
+  constructor(code, name, onEmpty) {
+    this.code = code;
+    this.name = name;
+    this.onEmpty = onEmpty;
+    this.members = new Map(); // clientId -> member
+    this.ai = new Map();      // playerId -> ai spec
+    this.hostId = null;
+    this.settings = { matchLen: 240, pitch: 'auto', goals: 0, ai: 1 };
+    this.world = createWorld(1, (Math.random() * 2 ** 31) | 0);
+    this.world.auth = true; // inputs that don't arrive are missing here (see BOT_AFTER)
+    this.world.m.matchLen = this.settings.matchLen;
+    startKickoff(this.world, 0);
+    this.inputs = new Map();  // playerId -> Map(tick -> input)
+    this.skips = new Set();   // members who skipped the current goal replay
+  }
+
+  // ------------------------------------------------------------ membership
+
+  join(client) {
+    const m = {
+      client, id: client.id, name: client.profile.name, avatar: client.profile.avatar,
+      team: -1, role: ROLE.OUT, playerId: -1, leads: [], lead: 0, lastAck: 0,
+    };
+    this.members.set(client.id, m);
+    client.room = this;
+    if (this.hostId === null) this.hostId = client.id;
+    // auto-assign to the team with fewer players
+    const c0 = this.teamCount(0), c1 = this.teamCount(1);
+    const team = c0 <= c1 ? 0 : 1;
+    if (this.teamCount(team) < MAX_PER_TEAM && this.world.players.length < MAX_PLAYERS) this.setTeam(m, team, ROLE.OUT, true);
+    this.system(`${m.name} joined`);
+    this.broadcastRoom();
+    this.sendSnapshotTo(m, this.encode());
+  }
+
+  leave(client) {
+    const m = this.members.get(client.id);
+    if (!m) return;
+    if (m.playerId >= 0) this.removeWorldPlayer(m.playerId);
+    this.members.delete(client.id);
+    client.room = null;
+    if (this.hostId === client.id) this.hostId = this.members.size ? this.members.keys().next().value : null;
+    if (this.members.size === 0) { this.onEmpty(this); return; }
+    this.system(`${m.name} left`);
+    this.refreshPitch();
+    this.broadcastRoom();
+  }
+
+  teamCount(team) {
+    let n = 0;
+    for (const p of this.world.players) if (p.team === team) n++;
+    return n;
+  }
+
+  freeId() {
+    const used = new Set(this.world.players.map((p) => p.id));
+    for (let i = 0; i < 120; i++) if (!used.has(i)) return i;
+    return -1;
+  }
+
+  hasKeeper(team, exceptId = -1) {
+    return this.world.players.some((p) => p.team === team && p.role === ROLE.GK && p.id !== exceptId);
+  }
+
+  setTeam(m, team, role, silent = false) {
+    if (team !== -1 && team !== 0 && team !== 1) return;
+    role = role === ROLE.GK ? ROLE.GK : ROLE.OUT;
+    if (team === -1) {
+      if (m.playerId >= 0) this.removeWorldPlayer(m.playerId);
+      m.playerId = -1; m.team = -1;
+    } else {
+      // a human taking the keeper spot replaces an AI keeper
+      if (role === ROLE.GK && this.hasKeeper(team, m.playerId)) {
+        const aiGk = [...this.ai.values()].find((a) => a.team === team && a.role === ROLE.GK);
+        if (aiGk) this.removeAI(aiGk.playerId, true);
+        else return this.whisper(m, 'That team already has a keeper.');
+      }
+      const switching = m.team !== team;
+      if (switching && this.teamCount(team) >= MAX_PER_TEAM) return this.whisper(m, 'Team is full.');
+      const phys = m.avatar.phys;
+      if (m.playerId < 0) {
+        if (this.world.players.length >= MAX_PLAYERS) return this.whisper(m, 'Room is full.');
+        m.playerId = this.freeId();
+        addPlayer(this.world, { id: m.playerId, team, role, human: 1, hgt: phys.h, bld: phys.b });
+      } else {
+        updatePlayerSpec(this.world, { id: m.playerId, team, role, human: 1, hgt: phys.h, bld: phys.b });
+      }
+      m.team = team; m.role = role;
+      this.inputs.set(m.playerId, new Map());
+    }
+    this.refreshPitch();
+    if (!silent) this.broadcastRoom();
+  }
+
+  removeWorldPlayer(id) {
+    removePlayer(this.world, id);
+    this.inputs.delete(id);
+  }
+
+  addAI(team, role) {
+    if (team !== 0 && team !== 1) return;
+    role = role === ROLE.GK ? ROLE.GK : ROLE.OUT;
+    if (role === ROLE.GK && this.hasKeeper(team)) return;
+    if (this.teamCount(team) >= MAX_PER_TEAM || this.world.players.length >= MAX_PLAYERS) return;
+    const id = this.freeId();
+    const r = (k) => (id * 2654435761 + k * 40503) >>> 0;
+    const spec = {
+      playerId: id, team, role,
+      name: role === ROLE.GK ? 'AI Keeper' : `AI ${id}`,
+      avatar: {
+        skin: AI_SKINS[r(1) % AI_SKINS.length], hair: r(2) % 10, hairColor: AI_HAIR[r(3) % AI_HAIR.length],
+        beard: r(7) % 3 === 0 ? 1 + (r(8) % 4) : 0,
+        boots: '#222222', number: role === ROLE.GK ? 1 : 2 + (r(4) % 20),
+        phys: { h: role === ROLE.GK ? 186 + (r(5) % 10) : 168 + (r(5) % 22), b: 30 + (r(6) % 45) },
+      },
+    };
+    this.ai.set(id, spec);
+    addPlayer(this.world, { id, team, role, human: 0, hgt: spec.avatar.phys.h, bld: spec.avatar.phys.b });
+    this.refreshPitch();
+    this.broadcastRoom();
+  }
+
+  removeAI(id, silent = false) {
+    if (!this.ai.has(id)) return;
+    this.ai.delete(id);
+    this.removeWorldPlayer(id);
+    this.refreshPitch();
+    if (!silent) this.broadcastRoom();
+  }
+
+  updateProfile(m, profile) {
+    m.name = profile.name; m.avatar = profile.avatar;
+    if (m.playerId >= 0) {
+      updatePlayerSpec(this.world, { id: m.playerId, team: m.team, role: m.role, human: 1, hgt: profile.avatar.phys.h, bld: profile.avatar.phys.b });
+    }
+    this.broadcastRoom();
+  }
+
+  refreshPitch() {
+    if (this.world.m.live) return;
+    const want = this.settings.pitch === 'auto'
+      ? autoPitch(Math.max(this.teamCount(0), this.teamCount(1)))
+      : Number(this.settings.pitch);
+    if (want !== this.world.pitchId) {
+      this.world.pitchId = want;
+      startKickoff(this.world, 0);
+    }
+  }
+
+  // ------------------------------------------------------------ host controls
+
+  applySettings(m, s) {
+    if (m.id !== this.hostId) return;
+    if ([120, 240, 360, 600, 900].includes(s.matchLen)) this.settings.matchLen = s.matchLen;
+    if (['auto', '0', '1', '2', 0, 1, 2].includes(s.pitch)) this.settings.pitch = String(s.pitch);
+    if ([0, 1, 2].includes(Number(s.goals))) this.settings.goals = Number(s.goals);
+    if ([0, 1, 2].includes(Number(s.ai))) this.settings.ai = Number(s.ai);
+    if (!this.world.m.live) {
+      this.world.m.matchLen = this.settings.matchLen;
+      this.world.m.goalS = this.settings.goals; // the goals don't change size mid-match
+    }
+    this.world.m.ai = this.settings.ai;
+    this.refreshPitch();
+    this.broadcastRoom();
+  }
+
+  start(m) {
+    if (m.id !== this.hostId) return;
+    if (this.teamCount(0) === 0 || this.teamCount(1) === 0) return this.whisper(m, 'Both teams need at least one player.');
+    this.world.m.live = 0;
+    this.refreshPitch();
+    this.world.m.goalS = this.settings.goals; this.world.m.ai = this.settings.ai;
+    startMatch(this.world, this.settings.matchLen);
+    this.system('Kick-off! ' + TEAM_NAMES[0] + ' vs ' + TEAM_NAMES[1]);
+    this.broadcastRoom();
+  }
+
+  stop(m) {
+    if (m.id !== this.hostId) return;
+    stopMatch(this.world);
+    this.refreshPitch();
+    this.system('Match stopped - back to warm-up');
+    this.broadcastRoom();
+  }
+
+  // ------------------------------------------------------------ client messages
+
+  // Messages a member can send once inside the room (lobby-level messages such
+  // as create/join/list are handled by whoever hosts the room).
+  handleText(client, msg) {
+    const m = this.members.get(client.id);
+    if (!m) return;
+    switch (msg.t) {
+      case 'hello':
+      case 'profile':
+        client.profile = sanitizeProfile(msg.profile);
+        this.updateProfile(m, client.profile);
+        break;
+      case 'team': this.setTeam(m, Number(msg.team), Number(msg.role)); break;
+      case 'addAI': this.addAI(Number(msg.team), Number(msg.role)); break;
+      case 'removeAI': this.removeAI(Number(msg.id)); break;
+      case 'settings': this.applySettings(m, msg); break;
+      case 'start': this.start(m); break;
+      case 'stop': this.stop(m); break;
+      case 'skip': {
+        // once every player on the pitch has skipped the replay, restart sooner
+        const w = this.world;
+        if (w.m.phase !== PHASE.GOAL || !w.m.live) break;
+        this.skips.add(m.id);
+        const players = [...this.members.values()].filter((x) => x.playerId >= 0);
+        if (players.every((x) => this.skips.has(x.id))) w.m.phT = Math.max(w.m.phT, GOAL_TICKS_LIVE - 45);
+        break;
+      }
+      case 'chat': {
+        // quick chat only: a number from the fixed list, at most one every 1.5 s
+        const i = Number(msg.id);
+        const now = Date.now();
+        if (!Number.isInteger(i) || i < 0 || i >= QUICK_CHAT.length || now - (m.lastChat || 0) < 1500) break;
+        m.lastChat = now;
+        this.say(m.name, QUICK_CHAT[i], m.playerId);
+        break;
+      }
+    }
+  }
+
+  // ------------------------------------------------------------ inputs
+
+  onInput(m, dv) {
+    if (dv.byteLength < 10 || dv.byteLength < 10 + dv.getUint8(1) * 3) return;
+    const { latest, ack, inputs } = decodeInputs(dv);
+    if (ack > (m.snapAck || 0) && ack <= this.world.tick) m.snapAck = ack;
+    if (m.playerId < 0) return; // spectators only acknowledge snapshots
+    const buf = this.inputs.get(m.playerId);
+    if (!buf) return;
+    const next = this.world.tick + 1;
+    for (const it of inputs) {
+      if (it.tick < next || it.tick > next + 120) continue;
+      if (!buf.has(it.tick)) buf.set(it.tick, it);
+    }
+    // how many ticks before it is needed did the newest input arrive?
+    m.leads.push(latest - next);
+    if (m.leads.length > LEAD_WINDOW) m.leads.shift();
+    m.lastAck = Math.max(m.lastAck, latest);
+  }
+
+  // ------------------------------------------------------------ simulation
+
+  tick() {
+    const w = this.world;
+    const t = w.tick + 1;
+    const frame = new Map();
+    for (const [pid, buf] of this.inputs) {
+      const it = buf.get(t);
+      if (it) { frame.set(pid, it); buf.delete(t); }
+      for (const k of buf.keys()) if (k < t) buf.delete(k);
+    }
+    step(w, frame);
+    for (const e of w.events) if (e.k === 'goal') this.onGoal(e);
+    if (w.tick % SNAP_EVERY === 0) this.broadcastSnapshot();
+  }
+
+  onGoal(e) {
+    this.skips = new Set();
+    const scorer = this.nameOf(e.scorer);
+    const w = this.world;
+    const score = w.m.live ? `  ${w.m.s0}-${w.m.s1}` : '';
+    this.system(`GOAL ${TEAM_NAMES[e.team]}${scorer ? ' - ' + scorer : ''}${e.own ? ' (own goal)' : ''}${score}`);
+  }
+
+  nameOf(pid) {
+    for (const m of this.members.values()) if (m.playerId === pid) return m.name;
+    const a = this.ai.get(pid);
+    return a ? a.name : '';
+  }
+
+  // inputs already here for the coming ticks, in order (contiguous from the next tick)
+  future() {
+    const future = new Map();
+    const t0 = this.world.tick + 1;
+    for (const [pid, buf] of this.inputs) {
+      const list = [];
+      for (let t = t0; buf.has(t) && list.length < 16; t++) list.push(buf.get(t));
+      if (list.length) future.set(pid, list.map((it, i) => ({ tick: t0 + i, a: it.a, m: it.m, b: it.b })));
+    }
+    return future;
+  }
+
+  encode() { return fullSnapshot(worldBytes(this.world), encodeFuture(this.world.tick, this.future())); }
+
+  broadcastSnapshot() {
+    const world = worldBytes(this.world);
+    const fut = encodeFuture(this.world.tick, this.future());
+    // Adopt the f32-quantised state so the server and every client continue
+    // from bit-identical numbers.
+    const [qw] = readWorld(new DataView(world.buffer), 0);
+    qw.replay = false;
+    qw.auth = true;
+    this.world = qw;
+    // keep recent snapshots as delta bases (about 2 s)
+    if (!this.sent) this.sent = new Map();
+    this.sent.set(qw.tick, world);
+    for (const t of this.sent.keys()) if (t < qw.tick - 120) this.sent.delete(t);
+    let full = null;
+    for (const m of this.members.values()) {
+      const base = m.snapAck ? this.sent.get(m.snapAck) : null;
+      let bytes;
+      if (base && base.length === world.length) bytes = deltaSnapshot(world, base, m.snapAck, fut);
+      else bytes = full || (full = fullSnapshot(world, fut));
+      this.sendSnapshotTo(m, bytes);
+    }
+  }
+
+  sendSnapshotTo(m, bytes) {
+    const copy = new Uint8Array(bytes);
+    let lead = 0;
+    if (m.leads.length) lead = Math.min(...m.leads);
+    else if (m.playerId >= 0) lead = -100; // no inputs yet
+    patchSnapshotHeader(copy, lead, m.lastAck);
+    m.client.sendBinary(copy);
+  }
+
+  // ------------------------------------------------------------ messaging
+
+  roomState() {
+    const members = [...this.members.values()].map((m) => ({
+      id: m.id, name: m.name, avatar: m.avatar, team: m.team, role: m.role, playerId: m.playerId,
+    }));
+    const ai = [...this.ai.values()];
+    return {
+      t: 'room', code: this.code, name: this.name, hostId: this.hostId, settings: this.settings,
+      members, ai, live: this.world.m.live,
+    };
+  }
+
+  broadcastRoom() {
+    const msg = JSON.stringify(this.roomState());
+    for (const m of this.members.values()) m.client.sendText(msg);
+  }
+
+  system(text) { this.say(null, text); }
+
+  say(from, text, pid = -1) {
+    const msg = JSON.stringify({ t: 'chat', from, text, pid, at: Date.now() });
+    for (const m of this.members.values()) m.client.sendText(msg);
+  }
+
+  whisper(m, text) { m.client.sendText(JSON.stringify({ t: 'chat', from: null, text, at: Date.now() })); }
+
+  summary() {
+    const humans = [...this.members.values()].length;
+    return { code: this.code, name: this.name, humans, ai: this.ai.size, live: this.world.m.live, score: [this.world.m.s0, this.world.m.s1] };
+  }
+}
