@@ -14,10 +14,11 @@ import { stats } from './physique.js';
 import { aiThink } from './ai.js';
 
 export const CHG_MAX = 40;          // ticks to fill the power gauge
-// Pressing the same kick key again right after letting go: a double press fills
-// the gauge twice as fast, a triple press is full power at once (a big clearance).
+// Pressing the same kick key again right after letting go, while the ball is
+// on its way to you: a double press fills the gauge twice as fast, a triple
+// press is full power at once (a big first-time clearance). With the ball at
+// your feet a release always kicks at once – no waiting for a second press.
 export const TAP_GAP = 8;           // max ticks between release and the next press
-const TAP_SHORT = 10;               // a press shorter than this may be the first of a double press
 export const GOAL_TICKS_LIVE = 520;  // goal pause in a match: celebration + replay (can be skipped)
 
 // Aftertouch (Sensible Soccer style): for a short window after a human kicks
@@ -206,7 +207,7 @@ export function makePlayer(id, team, role, human, hgt = 180, bld = 50) {
     x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, face: 0,
     st: 0, stT: 0, stDur: 0, stA: 0, stB: 0, hit: 0,
     kk: 0, kp: 0, kx: 0, ky: 0, kt: -1, kv: 0, kh: 0,
-    chg: 0, chgBtn: 0, stam: 1, pb: 0, kcd: 0, tcd: 0, tap: 0, tapT: 255, tapK: 0, tapH: 0, pend: 0, spr: 0,
+    chg: 0, chgBtn: 0, stam: 1, pb: 0, kcd: 0, tcd: 0, tap: 0, tapT: 255, tapK: 0, tapH: 0, spr: 0,
     bot: 0, miss: 0,
     qa: 0, qt: 0, qp: 0, dph: 0, hold: 0,
     ai: 0, aiT: 0, aiX: 0, aiY: 0,
@@ -340,7 +341,7 @@ export function startKickoff(w, team) {
 function resetPlayerState(p) {
   p.vx = p.vy = p.vz = p.z = 0; p.st = ST.IDLE; p.stT = 0; p.hit = 0;
   p.chg = 0; p.chgBtn = 0; p.qa = 0; p.qt = 0; p.kcd = 0; p.tcd = 0; p.hold = 0; p.ai = 0; p.aiT = 0;
-  p.tap = 0; p.tapT = 255; p.pend = 0;
+  p.tap = 0; p.tapT = 255;
 }
 
 function placeKickoff(w) {
@@ -604,7 +605,9 @@ export function planKick(w, p, kind, power, tx, ty, tid = -1, kh) {
   }
 }
 
-export function startKick(w, p, kind, power, quick = false, tx, ty, tid = -1, kh) {
+// wound: ticks of wind-up already shown while the key was held – the foot
+// comes through that much sooner (straight away after a proper hold).
+export function startKick(w, p, kind, power, quick = false, tx, ty, tid = -1, kh, wound = 0) {
   const b = w.ball;
   const fromHands = b.owner === p.id && b.held === 1;
   planKick(w, p, kind, power, tx, ty, tid, kh);
@@ -613,6 +616,7 @@ export function startKick(w, p, kind, power, quick = false, tx, ty, tid = -1, kh
   else if (kind === KICK.SHOT || kind === KICK.FINESSE) contact = quick ? 3 : 7;
   else if (kind === KICK.LONG || kind === KICK.CLEAR) contact = quick ? 3 : 6;
   else contact = quick ? 2 : 4;
+  if (!fromHands && wound > 0) contact = Math.max(1, contact - wound);
   p.st = fromHands && kind !== KICK.PUNT ? ST.THROW : ST.KICK;
   p.stT = 0; p.stA = contact; p.stDur = contact + (fromHands ? 12 : 11); p.stB = 0; p.hit = 0;
   p.chgBtn = 0; p.chg = 0; p.qa = 0; p.qt = 0;
@@ -632,7 +636,10 @@ function beginOwnKick(w, p, packed, power, quick) {
   else if (pen) kind = (p.ib & BTN.R2) ? KICK.FINESSE : KICK.SHOT;
   else kind = kickKind(p, target);
   if (kind === KICK.PUNT) kh = KH.HIGH;
-  startKick(w, p, kind, power, quick, undefined, undefined, -1, kh);
+  // the wind-up is played while the key is held (see the renderer), so on
+  // release the foot meets the ball almost at once
+  const wound = p.chgBtn && b.owner === p.id && !held ? p.tapH : 0;
+  startKick(w, p, kind, power, quick, undefined, undefined, -1, kh, wound);
 }
 
 // ---------------------------------------------------------------- technique moves
@@ -1151,17 +1158,15 @@ function handleButtons(w, p) {
   const oppHas = owner && owner.team !== p.team;
   const free = isFree(p);
   const live = m.phase === PHASE.PLAY || m.phase === PHASE.WARMUP;
-  if (!live) { p.chgBtn = 0; p.chg = 0; p.qa = 0; p.pend = 0; p.tap = 0; return; }
+  if (!live) { p.chgBtn = 0; p.chg = 0; p.qa = 0; p.tap = 0; return; }
 
   const code = btn & KICK_MASK;                   // kick target held (0 = none)
   const packed = code | (((btn >> 3) & 3) << 3);  // ... with its height
   const pressed = code && code !== (p.pb & KICK_MASK) ? code : 0;
   if (p.tapT < 255) p.tapT++;
-  if (p.pend && !p.chgBtn) p.pend = 0; // the charge was used up elsewhere (e.g. a skill)
   const fire = (k, power) => {
     if ((k & KICK_MASK) === KT.SELF && !b.held && m.spTaker !== p.id) beginLift(w, p, power, (k >> 3) & 3);
     else beginOwnKick(w, p, k, power, false);
-    p.pend = 0;
   };
 
   // calling for the ball: CALL, or a team-mate key while a team-mate has it
@@ -1171,20 +1176,6 @@ function handleButtons(w, p) {
   if (pressed === KT.SELF && mine && free && !b.held && m.spTaker !== p.id && !p.chgBtn) {
     const kind = skillFromStick(p);
     if (kind) { beginSkill(w, p, kind); return; }
-  }
-
-  // A quick tap with the ball at the feet waits a moment for a second press;
-  // without one it is played with the power it had.
-  if (p.pend) {
-    if (pressed && pressed === (p.chgBtn & KICK_MASK) && mine && free) {
-      p.pend = 0; p.tap = Math.min(3, p.tap + 1); p.tapH = 0; p.chgBtn = packed;
-      if (p.tap >= 3) { p.chg = CHG_MAX; fire(packed, 1); }
-      return;
-    }
-    if (pressed || p.tapT > TAP_GAP || !(mine && free)) {
-      if (mine && free) fire(p.chgBtn, p.chg / CHG_MAX);
-      p.pend = 0; p.chgBtn = 0; p.chg = 0;
-    } else return;
   }
 
   if (p.chgBtn) {
@@ -1199,7 +1190,6 @@ function handleButtons(w, p) {
       p.tapT = 0; p.tapK = p.chgBtn & KICK_MASK;
       const power = p.chg / CHG_MAX;
       if (mine && free) {
-        if (!code && p.tapH < TAP_SHORT && p.tap < 3) { p.pend = 1; return; } // maybe a double press
         fire(p.chgBtn, power);
       } else if (p.qa) { p.qp = power; p.qt = 24; }
       p.chgBtn = 0; p.chg = 0;
@@ -1933,7 +1923,7 @@ function possession(w) {
     b.vx *= 0.45; b.vy *= 0.45; b.vz = Math.abs(b.vz) * 0.3 + 0.5;
     b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.kt = 0; b.tgt = -1;
     p.kcd = 8;
-    w.events.push({ k: 'bounce', x: b.x, y: b.y, v: 4 });
+    w.events.push({ k: 'block', x: b.x, y: b.y, z: b.z, v: rs, id: p.id }); // too hot to control: it comes off him
     return;
   }
   if (zone === 3) {
@@ -2091,7 +2081,7 @@ export function step(w, inputs) {
       else if (w.auth && p.miss < 255 && ++p.miss > BOT_AFTER && !p.bot) {
         // only the authoritative side decides an input is missing; clients learn
         // it from the snapshot and keep predicting the AI until inputs return
-        p.bot = 1; p.chgBtn = 0; p.chg = 0; p.qa = 0; p.pend = 0;
+        p.bot = 1; p.chgBtn = 0; p.chg = 0; p.qa = 0;
       }
     }
   }

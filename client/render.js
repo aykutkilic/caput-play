@@ -162,6 +162,14 @@ export function poseFor(p, ctx) {
   }
   if (ctx.holding) { P.lsh = P.rsh = 1.0; P.lel = P.rel = 0.95; P.lab = P.rab = 0.15; }
   if (ctx.reach) { const r = ctx.reach; armsIK(P, r.df, r.dr, r.du, H, r.e); }
+  if (ctx.windup) {
+    // holding a pass / shot: the kicking leg draws back as the gauge fills, so
+    // on release the foot comes straight through
+    const { u, big } = ctx.windup;
+    P.rh = mix(P.rh, -0.8 * big, u); P.rk = mix(P.rk, 0.2 + 1.4 * big, u); P.tw = mix(P.tw, 0.3, u);
+    P.lsh = mix(P.lsh, 0.55, u); P.lab = mix(P.lab, 0.9, u); P.rsh = mix(P.rsh, -0.35, u); P.rab = mix(P.rab, 0.45, u);
+    P.lean = mix(P.lean, 0.02 - 0.1 * big, u);
+  }
   if (ctx.throwIn) { P.lsh = P.rsh = 2.9; P.lel = P.rel = 1.6; P.lab = P.rab = 0.25; }
   if (ctx.celebrate) {
     const j = Math.abs(Math.sin(t * 7 + p.id));
@@ -177,7 +185,8 @@ export function poseFor(p, ctx) {
       const big = p.kk === KICK.PASS || p.kk === KICK.THROUGH ? 0.6 : 1;
       const cT = Math.max(1, p.stA), dT = Math.max(cT + 1, p.stDur);
       let rh, rk;
-      if (k < cT) { const u = ease(k / cT); rh = -0.8 * big * u; rk = 0.2 + 1.4 * big * u; P.tw = 0.3 * u; }
+      // (a kick released from a held wind-up starts already drawn back)
+      if (k < cT) { const u = cT <= 2 ? 1 : ease(k / cT); rh = -0.8 * big * u; rk = 0.2 + 1.4 * big * u; P.tw = 0.3 * u; }
       else {
         const u = clamp((k - cT) / (dT - cT), 0, 1);
         const f = u < 0.35 ? u / 0.35 : 1 - (u - 0.35) / 0.65;
@@ -744,8 +753,13 @@ export class Renderer {
       fromHands: p.st === ST.KICK && p.kk === KICK.PUNT,
       celebrate: info.celebrateTeam === p.team && p.st === ST.IDLE,
       diveRel: angDiff(p.face, p.stA),
-      block: null, reach: null,
+      block: null, reach: null, windup: null,
     };
+    // winding up a kick with the ball at the feet (not the lift / skill key)
+    const kicking = p.chgBtn & 7;
+    if (kicking && kicking !== 4 && b.owner === p.id && !b.held && (p.st === ST.IDLE || p.st === ST.STUMBLE)) {
+      ctx.windup = { u: Math.min(1, p.tapH / 6), big: kicking === 3 ? 1 : 0.6 };
+    }
     const cf = Math.cos(p.face), sf = Math.sin(p.face);
     const local = (wx, wy) => [(wx - x) * cf + (wy - y) * sf, -(wx - x) * sf + (wy - y) * cf];
     if (p.st === ST.BLOCK) {
