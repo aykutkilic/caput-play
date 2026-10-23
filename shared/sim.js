@@ -829,7 +829,10 @@ export function beginLift(w, p, power, kh = KH.HIGH) {
   if (kh === KH.GROUND) {
     // knock-on: push it ahead along the ground and burst after it
     p.stA = SKILL.KNOCK; p.stDur = 8;
-    const v = sp * 0.8 + 0.6 + (11 - 4.5 * power) * power; // a tap just nudges it ahead of him
+    // a tap just nudges it ahead of him; a long hold sends it on further than
+    // he can sprint (scaled with how quick he is)
+    const quick = Math.pow(s.sprint / 8.8, 1.6); // a quicker player needs it knocked further
+    const v = sp * 0.8 + 0.6 + (11 - 4.5 * power) * power * (1 + (quick - 1) * power);
     b.vx = ux * v; b.vy = uy * v; b.vz = 0.4;
     p.kcd = 14;
     const burst = Math.min(s.sprint * 1.06, sp + 1.6);
@@ -1251,11 +1254,12 @@ export function tryControl(w, p) {
 function beginControl(w, p, part, bx, by, bz, self, tk = C_CONTACT[part]) {
   const s = stOf(p);
   if (self) {
-    // the touch goes where the stick points – or, with it neutral, the way he
-    // was facing before turning to the ball (kx, ky: that direction)
+    // the touch goes where the stick points – or, with it neutral, forwards,
+    // towards the goal he's attacking (kx, ky: that direction)
     const [sx, sy, sm] = stickOf(p);
     p.kk = KICK.SELF; p.kp = clamp(p.chgBtn ? p.chg / CHG_MAX : p.qp, 0, 1); p.kh = (p.qa >> 3) & 3;
-    p.kx = sm > 0.3 ? sx : Math.cos(p.face); p.ky = sm > 0.3 ? sy : Math.sin(p.face);
+    const gdx = teamDir(w, p.team) * pitchOf(w).L / 2 - p.x, gdy = -p.y, gl = Math.hypot(gdx, gdy) || 1;
+    p.kx = sm > 0.3 ? sx : gdx / gl; p.ky = sm > 0.3 ? sy : gdy / gl;
   } else { p.kk = 0; p.kp = 0; }
   if (Math.hypot(bx - p.x, by - p.y) > 0.25) p.face = Math.atan2(by - p.y, bx - p.x);
   p.st = ST.CONTROL; p.stB = part; p.stT = 0; p.stA = tk; p.stDur = p.stA + C_AFTER[part]; p.hit = 0;
@@ -1642,8 +1646,10 @@ function receiveAssist(w, p, sx, sy, sm) {
   if (aerial && p.tm) {
     // he has chosen how to meet it: the stick no longer steers
   } else if (sm > 0.25) {
+    // the stick is his: the assist only helps while he's heading for the ball
+    // anyway (even one played to him – he may want to run elsewhere)
     const c = d > 1e-3 ? (sx * dx + sy * dy) / d : 1;
-    if (d > 0.5 && c < (mine || aerial ? -0.2 : 0.5)) return null;
+    if (d > 0.5 && c < (mine || aerial ? 0.35 : 0.5)) return null;
   } else if (!mine && !aerial) return null;
   return { x: at.x, y: at.y, z: at.z, t: at.t, d, ux: d > 1e-3 ? dx / d : 0, uy: d > 1e-3 ? dy / d : 0, dive: at.dive || 0 };
 }
