@@ -746,7 +746,7 @@ function gkThink(w, p, c) {
   if (shotOnGoal) { p.im = 0; return; }
 
   // 3. positioning
-  let tx, ty, set = false;
+  let tx, ty, set = false, rush = false;
   if (owner && owner.team !== p.team) {
     const dGoal = Math.hypot(owner.x - ogx, owner.y);
     // a breakaway: nobody between him and goal, and running at it (closing
@@ -761,6 +761,7 @@ function gkThink(w, p, c) {
     // close in, in the box: come off the line at him to make the goal small,
     // whether or not he's running at it
     const close = dGoal < 11 && inOwnBox(w, p.team, owner.x, owner.y, 0);
+    rush = close; // closing him down: quick off the line
     // smother: the attacker has let the ball run away from him, or walked into
     // the keeper; spread: he's about to shoot from close in – no time to react,
     // so throw yourself at the ball as he strikes it
@@ -794,10 +795,11 @@ function gkThink(w, p, c) {
   if (lv.angle < 1) { const cx = ogx + dir * Math.abs(tx - ogx); tx = tx * lv.angle + cx * (1 - lv.angle); ty *= lv.angle; }
   if ((tx - ogx) * dir < 0.3) tx = ogx + dir * 0.3;
   const d = Math.hypot(tx - p.x, ty - p.y);
-  if (set) {
+  if (set && !(rush && d > 1)) {
     // set: no rushing in or out, but quick side-steps to stay on the angle
+    // (closing a man down close in, he gets out there first, then sets)
     if (d < 0.2) p.im = 0; else setMove(p, tx - p.x, ty - p.y, Math.min(0.65, d));
-  } else moveTo(p, tx, ty, 3.5, 0.12);
+  } else moveTo(p, tx, ty, rush ? 1.5 : 3.5, 0.12);
 }
 
 // ------------------------------------------------------------ entry

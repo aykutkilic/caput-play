@@ -105,8 +105,10 @@ export function byPerson(p) { return p.human && !p.bot; }
 // Ground pass maths (closed form of the rolling model above)
 function rollDist(v) { return (v - (MU / CF) * Math.log(1 + CF * v / MU)) / CF; }
 export function rollTime(v0, v1) { return Math.log((v0 + MU / CF) / (Math.max(0, v1) + MU / CF)) / CF; }
+// (pace the ball still has when it reaches the man: brisk, but not so hot he
+// can't control it)
 export function passEndSpeed(kind, d, power) {
-  return kind === KICK.THROUGH ? 2 + 0.05 * d + 1.5 * power : 5 + 0.22 * d + 4 * power;
+  return kind === KICK.THROUGH ? 2.6 + 0.065 * d + 2 * power : Math.min(16, 6.5 + 0.28 * d + 5 * power);
 }
 // The pace a ball rolled at v0 still has after covering a metres (0: it stops short).
 function rollSpeedAt(v0, a) {
@@ -574,7 +576,8 @@ function kickKind(p, target) {
 // grows with distance: high balls float, mid-height ones are driven; power
 // adds pace (a flatter, quicker ball).
 export function loftTime(d, kh, power) {
-  const vh = kh === KH.HIGH ? clamp(7 + 0.2 * d, 7, 14) + 2.5 * power : clamp(9 + 0.3 * d, 9, 16) + 2 * power;
+  // (a little brisker than before, but still a pace a man can take down)
+  const vh = kh === KH.HIGH ? clamp(7.7 + 0.22 * d, 7.7, 14.8) + 2.5 * power : clamp(9.9 + 0.33 * d, 9.9, 16.5) + 2 * power;
   return Math.max(0.35, d / vh);
 }
 
@@ -692,8 +695,8 @@ export function planKick(w, p, kind, power, tx, ty, tid = -1, kh) {
         const v0 = (d + K * t) * CF / (1 - Math.exp(-CF * t)) - K;
         vEnd = (v0 + K) * Math.exp(-CF * t) - K;
         const want = kind === KICK.THROUGH
-          ? Math.max(2.5 + 0.05 * d + 1.5 * power, (0.7 + 0.3 * power) * sp)
-          : Math.max(Math.min(12, 4 + 0.25 * d) + 3 * power, 0.9 * sp);
+          ? Math.max(3.2 + 0.065 * d + 2 * power, (0.75 + 0.3 * power) * sp)
+          : Math.max(Math.min(15, 5 + 0.31 * d) + 3.75 * power, 0.95 * sp);
         if (v0 <= 28 && vEnd > 0 && vEnd <= want) { fb = null; break; }
         const e = Math.abs(vEnd - want) + (v0 > 28 ? 100 : 0);
         if (e < fbErr) { fbErr = e; fb = [lx, ly, vEnd]; }
