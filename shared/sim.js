@@ -622,7 +622,7 @@ function runAhead(q, t) {
   const sp = Math.hypot(q.vx, q.vy);
   if (sp < 1.5) return [q.x + q.vx * t, q.y + q.vy * t];
   const s = stOf(q);
-  const vmax = Math.max(sp, (q.ib & BTN.SPRINT) ? s.sprint : s.jog);
+  const vmax = Math.max(sp, byPerson(q) || (q.ib & BTN.SPRINT) ? s.sprint : s.jog);
   const t1 = (vmax - sp) / s.accel;
   const d = t <= t1 ? sp * t + s.accel * t * t / 2 : sp * t1 + s.accel * t1 * t1 / 2 + vmax * (t - t1);
   return [q.x + q.vx / sp * d, q.y + q.vy / sp * d];
@@ -1406,7 +1406,7 @@ function launch(w, p, tech) {
       else vz = Math.min(14, vzToReach(speed, b.z, d, tz)); // low pace + high target = a chip
       const techErr = { [ST.KICK]: 0, [ST.VOLLEY]: 0.035, [ST.HEADER]: 0.03, [ST.OVERHEAD]: 0.06, [ST.DIVEHEAD]: 0.04 }[tech] || 0;
       const mis = tech === ST.KICK ? (misalign > 1.0 ? (misalign - 1.0) * 0.07 : 0) : 0;
-      const sprint = (p.ib & BTN.SPRINT) && Math.hypot(p.vx, p.vy) > 6 ? 0.015 : 0;
+      const sprint = Math.hypot(p.vx, p.vy) > s.jog * 1.15 ? 0.015 : 0; // struck at full tilt
       // the further out, the wider the spread (and a full-power strike is wilder)
       err = 0.035 + 0.0016 * d + 0.00011 * d * d + 0.06 * pw * pw + techErr + mis + pressure + sprint;
       if (kind === KICK.FINESSE) {
@@ -1664,16 +1664,20 @@ function movement(w, p, s) {
   const own = b.owner === p.id;
   const owner = b.owner >= 0 ? pById(w, b.owner) : null;
   const oppHas = owner && owner.team !== p.team;
-  const sprint = (p.ib & BTN.SPRINT) && p.stam > 0.02 && sm > 0.2;
+  // A person moves at full pace – dribbling too – with nothing to manage (the
+  // AI chooses when to sprint with BTN.SPRINT). For a person that button is
+  // "get the ball": run to it and take it, or close down whoever has it.
+  const person = byPerson(p);
+  const chase = person && (p.ib & BTN.SPRINT) && !own && !(owner && owner.team === p.team);
+  const sprint = person ? sm > 0.2 : (p.ib & BTN.SPRINT) && sm > 0.2;
   const prec = (p.ib & BTN.R2) && own;
   let dx = sx, dy = sy;
   let speed = sprint ? s.sprint : s.jog;
   if (own) speed *= sprint ? 0.93 : 0.96;
   if (prec) speed = s.jog * 0.55;
-  if (p.stam < 0.25) speed *= 0.8 + 0.8 * p.stam;
   if (p.st === ST.STUMBLE) speed *= 0.45;
 
-  const pressing = oppHas && (p.ib & KICK_MASK) === KT.MATE && !owner.held && p.chgBtn === 0;
+  const pressing = oppHas && !owner.held && p.chgBtn === 0 && ((p.ib & KICK_MASK) === KT.MATE || chase);
   // jockeying (contain): stay goal-side of the dribbler at arm's length, facing
   // him, matching his moves – no lunge, so he has to beat you
   const jockey = oppHas && !pressing && (p.ib & KICK_MASK) === KT.SELF && !owner.held && p.chgBtn === 0;
@@ -1682,7 +1686,7 @@ function movement(w, p, s) {
     const tx = b.x + b.vx * 0.15, ty = b.y + b.vy * 0.15;
     const ddx = tx - p.x, ddy = ty - p.y, dd = Math.hypot(ddx, ddy) || 1;
     dx = ddx / dd; dy = ddy / dd; sm = dd < 0.6 ? 0.3 : 1;
-    speed = (p.ib & BTN.SPRINT) ? s.sprint * 0.95 : s.jog * 1.08;
+    speed = person || (p.ib & BTN.SPRINT) ? s.sprint * 0.95 : s.jog * 1.08;
   } else if (jockey) {
     const gx = -teamDir(w, p.team) * pitchOf(w).L / 2;
     let ux = gx - owner.x, uy = -owner.y;
@@ -1690,7 +1694,17 @@ function movement(w, p, s) {
     const tx = owner.x + owner.vx * 0.2 + ux * 1.6, ty = owner.y + owner.vy * 0.2 + uy * 1.6;
     const ddx = tx - p.x, ddy = ty - p.y, dd = Math.hypot(ddx, ddy) || 1;
     dx = ddx / dd; dy = ddy / dd; sm = dd < 0.15 ? 0 : Math.min(1, dd / 0.8);
-    speed = (p.ib & BTN.SPRINT) ? s.sprint * 0.9 : s.jog;
+    speed = person || (p.ib & BTN.SPRINT) ? s.sprint * 0.9 : s.jog;
+  }
+  // get the ball, loose: flat out to where he can first reach it, then it's
+  // taken like any other ball coming to him
+  let fetching = false;
+  if (chase && b.owner < 0 && m.spTaker < 0) {
+    const me = meetBall(w, p);
+    const tx = me ? me.x : b.x, ty = me ? me.y : b.y, ddx = tx - p.x, ddy = ty - p.y, dd = Math.hypot(ddx, ddy);
+    if (dd > 0.05) { dx = ddx / dd; dy = ddy / dd; }
+    sm = dd < 0.25 ? 0 : Math.min(1, dd / 0.6);
+    speed = s.sprint; fetching = true;
   }
 
   const taker = m.spTaker === p.id;
@@ -1704,19 +1718,17 @@ function movement(w, p, s) {
   } else p.qk = 0;
 
   if (byPerson(p)) updateMeet(w, p, sx, sy, sm0);
-  const assist = byPerson(p) && !own && !pressing && !jockey && !charging ? receiveAssist(w, p, sx, sy, sm0) : null;
+  const assist = byPerson(p) && !own && !pressing && !jockey && !charging && !fetching ? receiveAssist(w, p, sx, sy, sm0) : null;
   p._as = assist; // for the renderer's landing marker (not part of the state)
-  let assistSprint = false;
   if (assist) {
     dx = assist.ux; dy = assist.uy;
     // run just fast enough to be there in time (sprint if needed or asked for)
     const need = assist.d / Math.max(assist.t, 0.05) * 1.15;
-    const cap = s.sprint * (p.stam < 0.25 ? 0.8 + 0.8 * p.stam : 1);
+    const cap = s.sprint;
     // running with a ball in the air means running – not dawdling to arrive just in time
     const run = p.tm === MEET.WITH && assist.d > 0.4 ? s.jog : 0;
-    speed = clamp(Math.max(need, run, (p.ib & BTN.SPRINT) ? cap : 0), 1, cap);
+    speed = clamp(Math.max(need, run), 1, cap); // (to go flat out for it, there's "get the ball")
     sm = assist.d < 0.3 ? 0 : assist.d < 1 ? Math.max(0.35, assist.d) : 1;
-    assistSprint = speed > s.jog * 1.05;
   }
 
   // with the ball near a line it may not cross: no running on out with it –
@@ -1778,7 +1790,7 @@ function movement(w, p, s) {
     const gx = teamDir(w, p.team) * pitchOf(w).L / 2 - p.x, gy = -p.y, gl = Math.hypot(gx, gy) || 1;
     const fx = bx / bl + gx / gl, fy = by / bl + gy / gl;
     if (Math.hypot(fx, fy) > 0.3) turnToward(p, Math.atan2(fy, fx), rate * 1.2);
-  } else if (assist && sm > 0.1) {
+  } else if ((assist || fetching) && sm > 0.1) {
     turnToward(p, Math.atan2(dy, dx), rate);
   } else if (sm0 > 0.1) {
     turnToward(p, Math.atan2(sy, sx), taker ? rate * 0.6 : rate);
@@ -1791,10 +1803,7 @@ function movement(w, p, s) {
     const fd = (Math.cos(p.face) * (b.x - p.x) + Math.sin(p.face) * (b.y - p.y)) / (bd || 1);
     if (bd < 1.3 && fd > 0.5) beginTackle(w, p);
   }
-
-  // stamina
-  if ((sprint || assistSprint) && sp > s.jog * 0.9) p.stam = Math.max(0, p.stam - DT * 0.075 / s.stamina);
-  else p.stam = Math.min(1, p.stam + DT * (sp < 1 ? 0.11 : 0.05) * s.stamina);
+  // (no stamina: p.stam stays full)
 }
 
 function stateUpdate(w, p, s) {
@@ -2086,7 +2095,7 @@ function updateBall(w) {
     } else {
       const s = stOf(o);
       const sp = Math.hypot(o.vx, o.vy);
-      const sprint = o.ib & BTN.SPRINT, prec = o.ib & BTN.R2;
+      const sprint = sp > s.jog * 1.1, prec = o.ib & BTN.R2; // big touches at pace
       // touches: the ball eases out ahead and back with no sudden turnarounds –
       // bigger but rarer touches at a sprint (one every ~3.6 m), small ones under R2
       o.dph += sp * DT / (prec ? 1.2 : sprint ? 3.6 : 2.2);

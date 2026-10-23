@@ -27,7 +27,7 @@ export const BAR_LABELS = {
 
 const SHOULDER = [
   { bit: BTN.R2, glyph: 'R2', hint: 'Control', cls: 'small' },
-  { bit: BTN.SPRINT, glyph: 'R1', hint: 'Sprint', cls: '' },
+  { bit: BTN.SPRINT, glyph: 'R1', hint: 'Get ball', cls: '' },
 ];
 
 export class TouchControls {
@@ -171,7 +171,6 @@ export class TouchControls {
     let b = 0;
     for (const bit of this.held.values()) b |= bit;
     if (this.kick) b |= packKick(this.kick.t, this.kick.h);
-    if (this.rim && this.mag > 0.9) b |= BTN.SPRINT;
     const t = this.input.touch;
     t.x = this.sx; t.y = this.sy; t.mag = this.mag; t.b = b;
   }

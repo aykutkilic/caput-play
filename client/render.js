@@ -1006,10 +1006,7 @@ export class Renderer {
       g.beginPath();
       g.moveTo(X, Y + bounce); g.lineTo(X - 7 * this.dpr, Y - 10 * this.dpr + bounce); g.lineTo(X + 7 * this.dpr, Y - 10 * this.dpr + bounce);
       g.closePath(); g.fill(); g.stroke();
-      // stamina
-      const bw = 34 * this.dpr, by = Y - 16 * this.dpr;
-      g.fillStyle = 'rgba(0,0,0,0.5)'; g.fillRect(X - bw / 2, by, bw, 3 * this.dpr);
-      g.fillStyle = p.stam > 0.3 ? '#9be37a' : '#f0a63c'; g.fillRect(X - bw / 2, by, bw * p.stam, 3 * this.dpr);
+      const by = Y - 16 * this.dpr; // (where the stamina bar used to be: the gauge sits above it)
       // power gauge
       if (p.chgBtn) {
         const u = p.chg / CHG_MAX;
