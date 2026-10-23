@@ -1,3 +1,3 @@
 // Build identifier. The deploy workflow replaces the placeholder with the
 // commit and time of the release; left as is, it marks a local dev build.
-export const VERSION = 'b19b8e5.10231145';
+export const VERSION = '0dc7019.10231204';

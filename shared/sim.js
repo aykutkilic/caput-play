@@ -2119,24 +2119,42 @@ function gkSave(w, p) {
   if (p.st === ST.FALLEN || (p.st === ST.DIVE && p.stT > 30) || !(isFree(p) || p.st === ST.DIVE)) return false;
   if (b.last === p.id && b.kt < 20) return false;
   const s = stOf(p);
-  let d, tol;
+  let d, tol, seg;
   if (p.st === ST.DIVE && p.spr) {
     // spread: body across the shot, both ends covered, low
     const ca = Math.cos(p.stA), sa = Math.sin(p.stA), half = 0.55 * s.H + 0.35; // fingertips to boots
-    d = distSeg3(b.x, b.y, b.z, p.x - ca * half, p.y - sa * half, 0.25, p.x + ca * half, p.y + sa * half, 0.5);
+    seg = [p.x - ca * half, p.y - sa * half, 0.25, p.x + ca * half, p.y + sa * half, 0.5];
     tol = 0.45;
   } else if (p.st === ST.DIVE) {
     const ca = Math.cos(p.stA), sa = Math.sin(p.stA);
     const reach = 0.55 * s.H + s.diveReach * 0.5;
     const z = p.z + 0.35 + Math.min(p.stB, 1.8) * 0.15;
-    d = distSeg3(b.x, b.y, b.z, p.x - ca * 0.5, p.y - sa * 0.5, z, p.x + ca * reach, p.y + sa * reach, z + 0.1);
+    seg = [p.x - ca * 0.5, p.y - sa * 0.5, z, p.x + ca * reach, p.y + sa * reach, z + 0.1];
     tol = 0.45;
   } else {
     const fx = Math.cos(p.face) * 0.2, fy = Math.sin(p.face) * 0.2;
-    d = distSeg3(b.x, b.y, b.z, p.x + fx, p.y + fy, p.z + 0.1, p.x + fx, p.y + fy, p.z + s.H + 0.25);
+    seg = [p.x + fx, p.y + fy, p.z + 0.1, p.x + fx, p.y + fy, p.z + s.H + 0.25];
     tol = 0.6;
   }
+  d = distSeg3(b.x, b.y, b.z, ...seg);
   if (d > tol) return false;
+  // how cleanly he gets to it: how close its line passes him (it is only just
+  // inside his reach on the first tick it gets there, however central it is)
+  let dPass = d, at = [b.x, b.y, b.z];
+  for (let k = 1; k <= 6; k++) {
+    const t = k * DT * 0.5, q = [b.x + b.vx * t, b.y + b.vy * t, b.z + b.vz * t];
+    const dq = distSeg3(q[0], q[1], q[2], ...seg);
+    if (dq < dPass) { dPass = dq; at = q; }
+  }
+  // two hands or one: standing, it comes to his body / between his hands
+  // rather than to the limit of his reach; diving, along his arms rather than
+  // at the fingertips of the top one
+  let twoHands = dPass < 0.33;
+  if (p.st === ST.DIVE && !p.spr) {
+    const vx = seg[3] - seg[0], vy = seg[4] - seg[1], vz = seg[5] - seg[2];
+    const u = ((at[0] - seg[0]) * vx + (at[1] - seg[1]) * vy + (at[2] - seg[2]) * vz) / (vx * vx + vy * vy + vz * vz);
+    twoHands = dPass < 0.28 && u < 0.86;
+  } else if (p.spr) twoHands = false; // spread at his feet: a block
   if (victim) {
     // one go per dive: the looser the touch, the likelier he gets it
     p.hit = 1;
@@ -2149,7 +2167,7 @@ function gkSave(w, p) {
     return true;
   }
   const rs = Math.hypot(b.vx - p.vx, b.vy - p.vy, b.vz - p.vz);
-  const edge = d / tol;
+  const edge = dPass / tol;
   // fingertip contact on a hard shot may not be enough to keep it out
   const hands = p.human ? 1 : GK_HANDS[w.m.ai] || 1;
   const stop = clamp((1.45 - rs / 60 - edge * edge * 0.6 - (p.st === ST.DIVE ? 0.05 : 0)) * hands, 0.3, 0.99);
@@ -2161,22 +2179,32 @@ function gkSave(w, p) {
     w.events.push({ k: 'save', x: b.x, y: b.y, fail: 1 });
     return true;
   }
-  let pc = rs < 8 ? 1 : 1.3 - rs / 24 - (p.st === ST.DIVE ? 0.22 : 0) - edge * 0.25;
-  pc = clamp(pc * hands, 0.08, 0.97);
+  // Holding on to it: with two hands on it a keeper catches it – only a
+  // rocket gets spilled; with one hand he can only push it away, unless it's
+  // a gentle one he can pull in.
+  const sH = stOf(p).H, zr = b.z - p.z;
+  const awkward = (zr < 0.35 ? 0.05 : 0) + (zr > sH + 0.1 ? 0.06 : 0); // skidding along the grass / over his head
+  let pc = twoHands
+    ? 0.98 - 0.04 * Math.max(0, rs - 20) - (p.st === ST.DIVE ? 0.04 : 0)
+    : 0.5 - 0.03 * Math.max(0, rs - 6);
+  pc = clamp((pc - awkward) * hands, 0.04, 0.99);
   if (rnd(w) < pc) {
     b.owner = p.id; b.held = 1; b.vx = b.vy = b.vz = 0; b.spin = 0;
     b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.tgt = -1; b.sh = -1;
     p.hold = 0; p.chgBtn = 0; p.qa = 0;
     w.events.push({ k: 'catch', x: b.x, y: b.y });
   } else {
+    // parried: pushed out wide (to the side it was on) rather than back into
+    // the middle, and up
     const dir = teamDir(w, p.team);
     const sp = Math.hypot(b.vx, b.vy);
-    b.vx = dir * (2 + sp * 0.18) + (rnd(w) - 0.5) * 3;
-    b.vy = b.vy * 0.4 + (b.y >= p.y ? 1 : -1) * (2 + rnd(w) * 4);
-    b.vz = 2 + rnd(w) * 3.5; b.spin = 0;
+    const side = Math.abs(b.y - p.y) > 0.15 ? Math.sign(b.y - p.y) : (rnd(w) < 0.5 ? -1 : 1);
+    b.vx = dir * (1.2 + sp * 0.1) + (rnd(w) - 0.5) * 2;
+    b.vy = b.vy * 0.3 + side * (3.5 + rnd(w) * 4.5);
+    b.vz = 2.2 + rnd(w) * 3.5; b.spin = 0;
     b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.kt = 0; b.tgt = -1;
     p.kcd = 20;
-    w.events.push({ k: 'save', x: b.x, y: b.y });
+    w.events.push({ k: 'save', x: b.x, y: b.y, one: twoHands ? 0 : 1 });
   }
   return true;
 }
