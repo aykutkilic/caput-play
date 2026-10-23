@@ -22,13 +22,14 @@ const TAU = Math.PI * 2;
 // how well he finds the angle (0..1); smother: how loose a touch (m) he needs
 // before diving at an attacker's feet; read: whether he reads a shooter's
 // wind-up and sets himself; spread: ticks after a close-range strike before he
-// spreads himself across it (a reflex, not a read reaction); misjudge: noise
+// spreads himself across it (a reflex, not a read reaction), spreadP: how often
+// that comes off; misjudge: noise
 // in the AI's shoot / pass / keep decisions; claim: how far off his line (m)
 // he comes for a cross.
 const LEVELS = [
-  { react: 18, spin: 0, misread: 0.8, think: 9, block: 0.04, sweep: 0.4, hold: 70, shuffle: false, angle: 0.6, smother: 1.1, read: false, spread: 99, misjudge: 0.12, claim: 6 },
-  { react: 10, spin: 0.25, misread: 0.35, think: 5, block: 0.12, sweep: 0.2, hold: 45, shuffle: false, angle: 0.85, smother: 0.85, read: true, spread: 4, misjudge: 0.05, claim: 8 },
-  { react: 6, spin: 0.45, misread: 0.12, think: 3, block: 0.3, sweep: 0.05, hold: 28, shuffle: true, angle: 1, smother: 0.7, read: true, spread: 2, misjudge: 0.015, claim: 10 },
+  { react: 18, spin: 0, misread: 0.8, think: 9, block: 0.04, sweep: 0.4, hold: 70, shuffle: false, angle: 0.6, smother: 1.1, read: false, spread: 99, spreadP: 0, misjudge: 0.12, claim: 6 },
+  { react: 10, spin: 0.25, misread: 0.35, think: 5, block: 0.12, sweep: 0.2, hold: 45, shuffle: false, angle: 0.85, smother: 0.85, read: true, spread: 4, spreadP: 0.75, misjudge: 0.05, claim: 8 },
+  { react: 6, spin: 0.45, misread: 0.12, think: 3, block: 0.3, sweep: 0.05, hold: 28, shuffle: true, angle: 1, smother: 0.7, read: true, spread: 2, spreadP: 0.9, misjudge: 0.015, claim: 10 },
 ];
 // a lagging human's stand-in plays at the middle level, whatever the room's AI
 let stand = null;
@@ -559,6 +560,20 @@ function defendThink(w, p, c, owner) {
     }
     return;
   }
+  // an attacker on the ball near our goal: besides the man pressing him, the
+  // nearest of us gets on the line between the ball and the goal, to block
+  const dGoalB = Math.hypot(owner.x - ogx, owner.y);
+  if (dGoalB < 22) {
+    const k = Math.min(0.45, 3.5 / (dGoalB || 1));
+    const lx = owner.x + (ogx - owner.x) * k, ly = owner.y * (1 - k);
+    let best = null, bd = 1e9;
+    for (const q of w.players) {
+      if (q.team !== p.team || q.role === ROLE.GK || q.id === c.presser[p.team] || q.st === ST.FALLEN) continue;
+      const dq = Math.hypot(q.x - lx, q.y - ly);
+      if (dq < bd) { bd = dq; best = q; }
+    }
+    if (best === p) { moveTo(p, lx, ly, 3, 0.15); return; }
+  }
   const [sx, sy] = slotTarget(w, p, false);
   const mk = c.mark.get(p.id);
   let tx = sx, ty = sy;
@@ -669,9 +684,10 @@ function gkThink(w, p, c) {
   const tg0 = !owner && b.vx * -dir > 4 ? (ogx - b.x) / b.vx : -1;
   const shotOnGoal = tg0 > 0 && tg0 < 2 && Math.hypot(b.vx, b.vy) > 9 && b.lastTeam !== p.team
     && Math.abs(b.y + b.vy * tg0) < pit.goalW / 2 + 0.8;
-  // struck from close in: no time to react – spread across it on reflex
-  if (shotOnGoal && b.kt >= lv.spread && b.kt <= lv.spread + 4 && p.tcd === 0
-    && Math.hypot(b.x - p.x, b.y - p.y) < 4.5 && (p.x - b.x) / b.vx > 0.04) {
+  // struck from close in: no time to react – spread across it on reflex (it
+  // doesn't always come off: then it's hands, a dive or his legs)
+  if (shotOnGoal && b.kt === lv.spread && p.tcd === 0
+    && Math.hypot(b.x - p.x, b.y - p.y) < 4.5 && (p.x - b.x) / b.vx > 0.04 && rnd(w) < lv.spreadP) {
     p.tcd = 50;
     beginSpread(w, p, Math.atan2(-b.vy, -b.vx));
     return;
@@ -742,10 +758,13 @@ function gkThink(w, p, c) {
     const shooting = (owner.st === ST.KICK && (owner.kk === KICK.SHOT || owner.kk === KICK.FINESSE))
       || (lv.read && (owner.chgBtn & KICK_MASK) === KT.GOAL);
     const sep = Math.hypot(b.x - owner.x, b.y - owner.y), dBall = Math.hypot(b.x - p.x, b.y - p.y);
+    // close in, in the box: come off the line at him to make the goal small,
+    // whether or not he's running at it
+    const close = dGoal < 11 && inOwnBox(w, p.team, owner.x, owner.y, 0);
     // smother: the attacker has let the ball run away from him, or walked into
     // the keeper; spread: he's about to shoot from close in – no time to react,
     // so throw yourself at the ball as he strikes it
-    if ((alone || charge) && !shooting && inOwnBox(w, p.team, b.x, b.y, 0.5) && p.tcd === 0 && b.z < 0.5
+    if ((alone || charge || close) && !shooting && inOwnBox(w, p.team, b.x, b.y, 0.5) && p.tcd === 0 && b.z < 0.5
       && dBall < 2.6 && (sep > lv.smother || dBall < 1.3)) {
       p.tcd = 50;
       beginDive(w, p, Math.atan2(b.y - p.y, b.x - p.x), 0.15, Math.max(0.15, dBall / 7), dBall + 0.3);
@@ -754,11 +773,13 @@ function gkThink(w, p, c) {
     // close the angle: a lone attacker is met further out the closer he gets
     // (the gap between them shrinks faster than he advances)
     const gap = clamp(0.5 * dGoal, 2.8, 11);
-    const depth = alone || charge ? clamp(dGoal - gap, 1.0, Math.min(6.5, pit.boxD * 0.55)) : clamp(0.08 * dGoal + 0.7, 0.8, 2.6);
+    const depth = alone || charge ? clamp(dGoal - gap, 1.0, Math.min(6.5, pit.boxD * 0.55))
+      : close ? clamp(dGoal - 2.6, 1.0, Math.min(6, pit.boxD * 0.55))
+        : clamp(0.08 * dGoal + 0.7, 0.8, 2.6);
     [tx, ty] = anglePoint(w, p.team, b.x, b.y, depth);
     // crossing position: a wide ball not yet in shooting angle – stand central, a step out
     const wideBall = Math.abs(b.y) > pit.goalW / 2 + 4 && (b.x - ogx) * dir < pit.boxD + 8 && (b.x - ogx) * dir > 4;
-    if (!alone && wideBall) { tx = ogx + dir * 1.6; ty = Math.sign(b.y) * pit.goalW * 0.1; }
+    if (!alone && !close && wideBall) { tx = ogx + dir * 1.6; ty = Math.sign(b.y) * pit.goalW * 0.1; }
     set = shooting || (dGoal < 25 && Math.abs(angDiffAI(owner.face, Math.atan2(-owner.y, ogx - owner.x))) < 0.9 && sep < 1.2);
   } else {
     // our ball or a loose one: angle on where the ball is going; further out

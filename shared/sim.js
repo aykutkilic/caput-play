@@ -2155,6 +2155,10 @@ function gkSave(w, p) {
     const u = ((at[0] - seg[0]) * vx + (at[1] - seg[1]) * vy + (at[2] - seg[2]) * vz) / (vx * vx + vy * vy + vz * vz);
     twoHands = dPass < 0.28 && u < 0.86;
   } else if (p.spr) twoHands = false; // spread at his feet: a block
+  // struck from close in and low: no time to get his hands down – it's his
+  // legs or body, on reflex
+  const legs = !p.spr && p.st !== ST.DIVE && b.kt < 14 && b.z - p.z < 0.75 && Math.hypot(b.vx, b.vy) > 12;
+  if (legs) twoHands = false;
   if (victim) {
     // one go per dive: the looser the touch, the likelier he gets it
     p.hit = 1;
@@ -2201,10 +2205,15 @@ function gkSave(w, p) {
     const side = Math.abs(b.y - p.y) > 0.15 ? Math.sign(b.y - p.y) : (rnd(w) < 0.5 ? -1 : 1);
     b.vx = dir * (1.2 + sp * 0.1) + (rnd(w) - 0.5) * 2;
     b.vy = b.vy * 0.3 + side * (3.5 + rnd(w) * 4.5);
-    b.vz = 2.2 + rnd(w) * 3.5; b.spin = 0;
+    b.vz = legs ? 0.6 + rnd(w) * 1.6 : 2.2 + rnd(w) * 3.5; b.spin = 0;
+    if (legs && isFree(p) && p.z <= 0) {
+      // the leg that stopped it, out towards the ball
+      p.st = ST.BLOCK; p.stT = 3; p.stDur = 22; p.hit = 1;
+      p.stA = Math.atan2(b.y - p.y, b.x - p.x); p.stB = clamp(b.z, 0.12, 0.6); p.kx = b.x; p.ky = b.y;
+    }
     b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.kt = 0; b.tgt = -1;
     p.kcd = 20;
-    w.events.push({ k: 'save', x: b.x, y: b.y, one: twoHands ? 0 : 1 });
+    w.events.push({ k: 'save', x: b.x, y: b.y, one: twoHands ? 0 : 1, legs: legs ? 1 : 0 });
   }
   return true;
 }
