@@ -230,6 +230,7 @@ export function meetBall(w, p) {
   const threat = c.threat[p.team];
   const v0 = Math.hypot(p.vx, p.vy);
   const top = p.qa || p.chgBtn ? s.reach + 0.05 : 1.45;
+  const rolling = w.ball.z < 0.3 && Math.abs(w.ball.vz) < 1;
   let res = null, best = 1e9, early = null;
   for (let k = 1; k < pts.length; k++) {
     const q = pts[k];
@@ -240,7 +241,15 @@ export function meetBall(w, p) {
     if (d > run) continue;
     if (!early) early = { t, x: q.x, y: q.y, z: q.z };
     if (t > threat - 0.1) continue;
-    const score = Math.max(0, d) + t;
+    let score;
+    if (rolling) {
+      // a ball along the ground: go and meet it – the earliest point he can be
+      // at a moment before it, as long as it's still slow enough there to take
+      // cleanly (a hot one he lets come further, losing pace)
+      const pq = pts[k - 1], pace = Math.hypot(q.x - pq.x, q.y - pq.y) / PATH_H;
+      if (pace > 15 || d > (t < 0.27 ? v0 * Math.max(0, t - 0.12) : v0 * 0.15 + s.sprint * (t - 0.27) * 0.95)) continue;
+      score = t + 0.04 * Math.max(0, d);
+    } else score = Math.max(0, d) + t; // in the air the height he meets it at matters more
     if (score < best) { best = score; res = { t, x: q.x, y: q.y, z: q.z }; }
   }
   if (!res) res = early;
@@ -1648,6 +1657,11 @@ function receiveAssist(w, p, sx, sy, sm) {
   const dx = at.x - p.x, dy = at.y - p.y, d = Math.hypot(dx, dy);
   if (aerial && p.tm) {
     // he has chosen how to meet it: the stick no longer steers
+  } else if (p.qa || p.chgBtn) {
+    // a first-time pass / shot / touch is lined up: the stick aims it, the
+    // assist takes him to the ball – unless he pushes right away from it
+    const c = d > 1e-3 ? (sx * dx + sy * dy) / d : 1;
+    if (sm > 0.25 && d > 0.5 && c < -0.2) return null;
   } else if (sm > 0.25) {
     // the stick is his: the assist only helps while he's heading for the ball
     // anyway (even one played to him – he may want to run elsewhere)
