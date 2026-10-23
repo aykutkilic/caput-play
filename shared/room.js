@@ -25,7 +25,7 @@
 import {
   createWorld, addPlayer, removePlayer, updatePlayerSpec, step, startMatch, stopMatch, startKickoff, pById, GOAL_TICKS_LIVE,
 } from './sim.js';
-import { SNAP_EVERY, ROLE, PHASE, autoPitch, MAX_PLAYERS, TEAM_NAMES, QUICK_CHAT } from './constants.js';
+import { SNAP_EVERY, ROLE, PHASE, autoPitch, MAX_PLAYERS, TEAM_NAMES, QUICK_CHAT, GOAL_SIZE_DEFAULT } from './constants.js';
 import {
   worldBytes, encodeFuture, fullSnapshot, deltaSnapshot, patchSnapshotHeader, readWorld, decodeInputs,
 } from './protocol.js';
@@ -61,10 +61,11 @@ export class Room {
     this.members = new Map(); // clientId -> member
     this.ai = new Map();      // playerId -> ai spec
     this.hostId = null;
-    this.settings = { matchLen: 240, pitch: 'auto', goals: 0, ai: 1 };
+    this.settings = { matchLen: 240, pitch: 'auto', goals: GOAL_SIZE_DEFAULT, ai: 1 };
     this.world = createWorld(1, (Math.random() * 2 ** 31) | 0);
     this.world.auth = true; // inputs that don't arrive are missing here (see BOT_AFTER)
     this.world.m.matchLen = this.settings.matchLen;
+    this.world.m.goalS = this.settings.goals;
     startKickoff(this.world, 0);
     this.inputs = new Map();  // playerId -> Map(tick -> input)
     this.skips = new Set();   // members who skipped the current goal replay

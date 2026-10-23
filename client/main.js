@@ -9,7 +9,7 @@ import { TouchControls, isTouchDevice, lockZoom } from './touch.js';
 import { Replay } from './replay.js';
 import { initPwa } from './pwa.js';
 import { encodeStick, pById, wantsBlock, inOwnBox, pitchOf } from '../shared/sim.js';
-import { PHASE, SP, SP_NAME, ROLE, TEAM_NAMES, TICK_RATE, QUICK_CHAT, KICK_MASK } from '../shared/constants.js';
+import { PHASE, SP, SP_NAME, ROLE, TEAM_NAMES, TICK_RATE, QUICK_CHAT, KICK_MASK, GOAL_SIZE_DEFAULT } from '../shared/constants.js';
 import { ratings, stats } from '../shared/physique.js';
 
 const $ = (id) => document.getElementById(id);
@@ -339,7 +339,7 @@ function renderPanel() {
   $('specList').innerHTML = specs.length ? specs.join(', ') : '–';
   $('matchLen').value = String(r.settings.matchLen);
   $('pitchSel').value = String(r.settings.pitch);
-  $('goalSel').value = String(r.settings.goals ?? 0);
+  $('goalSel').value = String(r.settings.goals ?? GOAL_SIZE_DEFAULT);
   $('aiSel').value = String(r.settings.ai ?? 1);
   $('matchLen').disabled = $('pitchSel').disabled = $('aiSel').disabled = !isHost;
   // the goals can't be resized during a match
