@@ -1002,7 +1002,7 @@ function blockContacts(w) {
   for (const p of w.players) {
     if (p.st === ST.FALLEN || p.st === ST.DIVE || p.st === ST.SLIDE) continue;
     if (b.last === p.id && b.kt < 10) continue;
-    if (p.st === ST.CONTROL && !p.hit) continue; // about to take it on a part (see cushion)
+    if (p.st === ST.CONTROL) continue; // taking it on a part / just has (see cushion)
     if (b.nut === p.id && b.z < 0.6) continue;      // it's gone past (or through) him
     if (p.role === ROLE.GK && inOwnBox(w, p.team, p.x, p.y, 0.6) && inOwnBox(w, p.team, b.x, b.y, 0.3)) continue;
     const rs = Math.hypot(b.vx - p.vx, b.vy - p.vy, b.vz - p.vz);
@@ -1096,13 +1096,16 @@ export function contactPoint(p, st, part = p.stB) {
   }
 }
 
-// The body part a ball at height z is taken on (with a jump for the head).
-function partFor(s, z) {
-  if (z < 0.45) return PART.FOOT;
-  if (z < s.H * 0.55) return PART.THIGH;
-  if (z < s.H * 0.84) return PART.CHEST;
-  if (z <= s.H * 0.93 + s.jump * 0.8) return PART.HEAD;
-  return -1;
+// Heights the body parts take a ball at standing, and whether a part can
+// take one at height z – the thigh with a hop, the chest and head with a jump.
+const partZ = (s, part) => (part === PART.HEAD ? s.H * 0.93 : part === PART.CHEST ? s.H * 0.72 : part === PART.THIGH ? s.H * 0.45 : 0.2);
+const partUp = (s, part, up) => (part === PART.FOOT ? 0 : part === PART.THIGH ? Math.min(up, 0.12) : Math.min(up, s.jump * (part === PART.CHEST ? 0.85 : 0.8)));
+function partReaches(s, part, z, up = s.jump) {
+  const top = partUp(s, part, up);
+  if (part === PART.FOOT) return z < 0.45;
+  if (part === PART.THIGH) return z >= 0.45 && z <= s.H * 0.55 + top;
+  if (part === PART.CHEST) return z >= s.H * 0.55 && z <= s.H * 0.72 + top;
+  return z >= s.H * 0.84 && z <= s.H * 0.93 + top;
 }
 
 function predictBallShort(b, t) {
@@ -1208,27 +1211,38 @@ export function tryControl(w, p) {
   const meant = b.tgt === p.id && b.lastTeam === p.team;
   if (!byPerson(p) && !meant) return false;
   const s = stOf(p), fx = Math.cos(p.face), fy = Math.sin(p.face);
-  const order = b.last === p.id && b.kt < 60 ? [PART.FOOT] // his own cushion coming down: onto the foot
-    : p.tm === MEET.AT ? [PART.HEAD, PART.CHEST, PART.THIGH, PART.FOOT]
-      : p.tm === MEET.WITH ? [PART.THIGH, PART.FOOT, PART.CHEST, PART.HEAD]
-        : [PART.CHEST, PART.THIGH, PART.FOOT, PART.HEAD];
-  for (const part of order) {
-    const t = C_CONTACT[part] * DT;
-    const [bx, by, bz] = predictBallShort(b, t);
-    if (partFor(s, bz) !== part) continue;
-    if (part === PART.FOOT && b.vz - G * t > -1) continue; // a dropping ball, not one bobbling along
-    const qx = p.x + p.vx * t * 0.6, qy = p.y + p.vy * t * 0.6;
-    const hx = bx - qx, hy = by - qy, h = Math.hypot(hx, hy);
-    if (h > 0.95 || (h > 0.3 && (hx * fx + hy * fy) / h < -0.3)) continue;
-    // running with it, the chest and head only for a ball coming at him from the front
-    if (p.tm === MEET.WITH && part >= PART.CHEST && (b.vx - p.vx) * fx + (b.vy - p.vy) * fy > -1) continue;
-    beginControl(w, p, part, bx, by, bz, self);
-    return true;
+  // [part, how far up he'd go for it]: letting it come, a little jump to take
+  // it on the chest comes before the head, a big one only after
+  const J = s.jump;
+  const order = b.last === p.id && b.kt < 60 ? [[PART.FOOT, 0]] // his own cushion coming down: onto the foot
+    : p.tm === MEET.AT ? [[PART.HEAD, J], [PART.CHEST, J], [PART.THIGH, J], [PART.FOOT, 0]]
+      : p.tm === MEET.WITH ? [[PART.THIGH, J], [PART.FOOT, 0], [PART.CHEST, J], [PART.HEAD, J]]
+        : [[PART.CHEST, 0.25], [PART.THIGH, J], [PART.FOOT, 0], [PART.HEAD, J], [PART.CHEST, J]];
+  // When and on what he takes it: the first moment along its flight that it's
+  // within reach, not behind him (one over his shoulder is taken as it drops
+  // in front), and low enough for some part – the one he'd rather use at that
+  // height. Started just in time: early enough to get up to it for a jump.
+  // running with it, the chest and head only for a ball coming at him from the front
+  const fromBehind = p.tm === MEET.WITH && (b.vx - p.vx) * fx + (b.vy - p.vy) * fy > -1;
+  for (let k = 1; k <= 36; k++) {
+    const t = k * DT, [bx, by, bz] = predictBallShort(b, t);
+    const hx = bx - (p.x + p.vx * t * 0.6), hy = by - (p.y + p.vy * t * 0.6), h = Math.hypot(hx, hy);
+    if (h > 0.8 || (h >= 0.3 && (hx * fx + hy * fy) / h <= -0.3)) continue;
+    for (const [part, up] of order) {
+      if (!partReaches(s, part, bz, up)) continue;
+      if (part === PART.FOOT && b.vz - G * t > -1) continue; // a dropping ball, not one bobbling along
+      if (fromBehind && part >= PART.CHEST) continue;
+      const rise = Math.min(bz - partZ(s, part), partUp(s, part, up));
+      const lead = Math.max(C_CONTACT[part], rise > 0.04 ? Math.ceil(Math.sqrt(2 * rise / G) * 60) : 0);
+      if (k > lead) return false; // the right part – but not time to go for it yet
+      beginControl(w, p, part, bx, by, bz, self, Math.max(2, k));
+      return true;
+    }
   }
   return false;
 }
 
-function beginControl(w, p, part, bx, by, bz, self) {
+function beginControl(w, p, part, bx, by, bz, self, tk = C_CONTACT[part]) {
   const s = stOf(p);
   if (self) {
     // the touch goes where the stick points – or, with it neutral, the way he
@@ -1238,7 +1252,7 @@ function beginControl(w, p, part, bx, by, bz, self) {
     p.kx = sm > 0.3 ? sx : Math.cos(p.face); p.ky = sm > 0.3 ? sy : Math.sin(p.face);
   } else { p.kk = 0; p.kp = 0; }
   if (Math.hypot(bx - p.x, by - p.y) > 0.25) p.face = Math.atan2(by - p.y, bx - p.x);
-  p.st = ST.CONTROL; p.stB = part; p.stT = 0; p.stA = C_CONTACT[part]; p.stDur = p.stA + C_AFTER[part]; p.hit = 0;
+  p.st = ST.CONTROL; p.stB = part; p.stT = 0; p.stA = tk; p.stDur = p.stA + C_AFTER[part]; p.hit = 0;
   p.qa = 0; p.qt = 0; p.chgBtn = 0; p.chg = 0;
   // get the part under the ball – a short step, or keeping his pace on the run
   const t = p.stA * DT, fx = Math.cos(p.face), fy = Math.sin(p.face);
@@ -1246,10 +1260,10 @@ function beginControl(w, p, part, bx, by, bz, self) {
   const vm = Math.hypot(vx, vy), vmax = Math.max(2.5, Math.hypot(p.vx, p.vy));
   if (vm > vmax) { vx *= vmax / vm; vy *= vmax / vm; }
   p.vx = vx; p.vy = vy;
-  if (part === PART.HEAD) {
-    const rise = clamp(bz - s.H * 0.93, 0, s.jump);
-    if (rise > 0.02) p.vz = rise / t + 0.5 * G * t;
-  }
+  // a ball above where the part is standing: up to meet it (a hop for the
+  // thigh, a jump for the chest or head)
+  const rise = clamp(bz - partZ(s, part), 0, s.jump);
+  if (rise > 0.04) p.vz = Math.min(rise / t + 0.5 * G * t, Math.sqrt(2 * G * (s.jump + 0.05))); // no higher than he can jump
 }
 
 // The touch itself: the ball loses its pace off the part and drops where he
@@ -1282,6 +1296,11 @@ function cushion(w, p, s) {
   } else if (p.tm === MEET.WITH && run > 1) {
     // taken in his stride: out ahead, where he'll be in a moment
     vx = p.vx * 1.05 + p.vx / run * 1.2; vy = p.vy * 1.05 + p.vy / run * 1.2;
+  } else if (stickOf(p)[2] > 0.3) {
+    // the stick held: the touch goes the way he wants to go, a little ahead of
+    // him, and he carries on dribbling
+    const [sx, sy] = stickOf(p);
+    vx = p.vx * 0.85 + sx * (1.4 + 0.3 * run); vy = p.vy * 0.85 + sy * (1.4 + 0.3 * run);
   } else {
     // killed: it drops just in front of him
     vx = p.vx * 0.55 + fx * 0.9; vy = p.vy * 0.55 + fy * 0.9;
@@ -1671,9 +1690,23 @@ function movement(w, p, s) {
     // run just fast enough to be there in time (sprint if needed or asked for)
     const need = assist.d / Math.max(assist.t, 0.05) * 1.15;
     const cap = s.sprint * (p.stam < 0.25 ? 0.8 + 0.8 * p.stam : 1);
-    speed = clamp(Math.max(need, (p.ib & BTN.SPRINT) ? cap : 0), 1, cap);
+    // running with a ball in the air means running – not dawdling to arrive just in time
+    const run = p.tm === MEET.WITH && assist.d > 0.4 ? s.jog : 0;
+    speed = clamp(Math.max(need, run, (p.ib & BTN.SPRINT) ? cap : 0), 1, cap);
     sm = assist.d < 0.3 ? 0 : assist.d < 1 ? Math.max(0.35, assist.d) : 1;
     assistSprint = speed > s.jog * 1.05;
+  }
+
+  // with the ball near a line it may not cross: no running on out with it –
+  // he goes along the line instead (over the goal line only into the goal)
+  if (own && sm > 0.1) {
+    const pit = pitchOf(w), hx = pit.L / 2, hy = pit.W / 2, lim = 0.9;
+    let ox = dx * sm, oy = dy * sm;
+    if (Math.abs(p.y) > hy - lim && oy * Math.sign(p.y) > 0) oy *= clamp((hy - 0.35 - Math.abs(p.y)) / (lim - 0.35), 0, 1);
+    const scoring = Math.sign(p.x) === teamDir(w, p.team) && Math.abs(p.y) < pit.goalW / 2 - 0.3;
+    if (!scoring && Math.abs(p.x) > hx - lim && ox * Math.sign(p.x) > 0) ox *= clamp((hx - 0.35 - Math.abs(p.x)) / (lim - 0.35), 0, 1);
+    const om = Math.hypot(ox, oy);
+    if (om < sm - 1e-6) { if (om > 1e-3) { dx = ox / om; dy = oy / om; } sm = om; }
   }
 
   // can't sprint as fast sideways/backwards relative to facing
@@ -1772,9 +1805,16 @@ function stateUpdate(w, p, s) {
           && near3(p, ST.CONTROL, b) < T_TOL[ST.CONTROL] && winsAerialDuel(w, p, s)) cushion(w, p, s);
         else if (p.stT > p.stA + 3) p.hit = 2; // it got away from him
       } else {
-        // after the touch: running with it he keeps going, otherwise he settles
-        const k = p.tm === MEET.WITH ? 0.99 : 0.9;
-        p.vx *= k; p.vy *= k;
+        // after the touch: running with it, or the stick held, he keeps going
+        // (towards where the stick points) – otherwise he settles
+        const [sx, sy, sm] = stickOf(p);
+        if (sm > 0.3 && byPerson(p)) {
+          const want = Math.max(Math.hypot(p.vx, p.vy), s.jog * sm), f = 1 - Math.exp(-DT * 6);
+          p.vx += (sx * want - p.vx) * f; p.vy += (sy * want - p.vy) * f;
+        } else {
+          const k = p.tm === MEET.WITH ? 0.99 : 0.9;
+          p.vx *= k; p.vy *= k;
+        }
       }
       break;
     }
@@ -1985,6 +2025,19 @@ function collidePlayers(w) {
 
 // ---------------------------------------------------------------- ball
 
+// Where a ball someone has (at his feet or in his hands) may be: inside the
+// lines – except over the opponents' goal line between the posts, where he may
+// carry it in to score. Never into his own goal.
+function keepIn(w, team, x, y) {
+  const pit = pitchOf(w), hx = pit.L / 2 - BALL_R - 0.03, hy = pit.W / 2 - BALL_R - 0.03;
+  y = clamp(y, -hy, hy);
+  if (Math.abs(x) > hx) {
+    const attacking = Math.sign(x) === teamDir(w, team);
+    if (!(attacking && Math.abs(y) < pit.goalW / 2 - BALL_R)) x = Math.sign(x) * hx;
+  }
+  return [x, y];
+}
+
 function updateBall(w) {
   const b = w.ball, m = w.m;
   if (b.kt < 255) b.kt++;
@@ -1997,7 +2050,8 @@ function updateBall(w) {
       const fx = Math.cos(ha), fy = Math.sin(ha);
       const throwIn = m.spTaker === o.id;
       const reach = throwIn ? 0.05 : diving ? 0.75 : 0.28;
-      const nx = o.x + fx * reach, ny = o.y + fy * reach;
+      let nx = o.x + fx * reach, ny = o.y + fy * reach;
+      if (!throwIn) [nx, ny] = keepIn(w, o.team, nx, ny); // a keeper never carries it over his own line
       const nz = Math.max(BALL_R, o.z + (throwIn ? 2.0 : diving ? 0.3 : 1.05));
       b.vx = (nx - b.x) / DT; b.vy = (ny - b.y) / DT; b.vz = 0;
       b.x = nx; b.y = ny; b.z = nz;
@@ -2022,7 +2076,7 @@ function updateBall(w) {
       const tx = o.x + fx * ahead, ty = o.y + fy * ahead;
       const k = 1 - Math.exp(-DT * 16 * s.control * (prec ? 1.5 : 1));
       const cx = b.x + o.vx * DT, cy = b.y + o.vy * DT;
-      const nx = cx + (tx - cx) * k, ny = cy + (ty - cy) * k;
+      const [nx, ny] = keepIn(w, o.team, cx + (tx - cx) * k, cy + (ty - cy) * k);
       b.vx = (nx - b.x) / DT; b.vy = (ny - b.y) / DT;
       b.x = nx; b.y = ny; b.z = BALL_R; b.vz = 0; b.spin = 0; b.atT = 0;
       if (Math.hypot(b.x - o.x, b.y - o.y) > 2) { b.owner = -1; b.dl = 0; }
