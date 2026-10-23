@@ -108,6 +108,55 @@ export function rollTime(v0, v1) { return Math.log((v0 + MU / CF) / (Math.max(0,
 export function passEndSpeed(kind, d, power) {
   return kind === KICK.THROUGH ? 2 + 0.05 * d + 1.5 * power : 5 + 0.22 * d + 4 * power;
 }
+// The pace a ball rolled at v0 still has after covering a metres (0: it stops short).
+function rollSpeedAt(v0, a) {
+  if (a >= rollDist(v0)) return 0;
+  let lo = 0, hi = v0;
+  for (let i = 0; i < 20; i++) { const mid = (lo + hi) / 2; if (rollDist(v0) - rollDist(mid) > a) lo = mid; else hi = mid; }
+  return hi;
+}
+
+// How likely q is to stop a ground ball the other side plays past him: h is
+// how close its line comes to him, v its pace against his, (ux, uy) its way.
+// Straight at him he closes his legs on it – now and then it goes through
+// them – and the further out, the more he has to stretch for it. A quick
+// ball, one from behind him or one that catches him on the run gets by more.
+export function stopChance(q, h, v, ux, uy) {
+  if (v < 4) return 0.97;
+  const run = Math.hypot(q.vx, q.vy);
+  let c;
+  if (h < 0.2) c = 0.92 - (run > 3 ? 0.15 : 0);                // through the legs
+  else { const e = clamp(h / 0.62, 0, 1); c = 0.97 - 0.55 * e * e; } // past the leg he sticks out
+  c -= 0.015 * Math.max(0, v - 7);
+  if (Math.cos(q.face) * ux + Math.sin(q.face) * uy > 0.2) c -= 0.25; // it comes from behind him
+  return clamp(c, 0.15, 0.97);
+}
+
+// Chance a ground ball from (x0, y0) towards (x1, y1), rolled at v0, gets
+// past every opponent near its line: each can step across towards it in the
+// time it takes to get to him, which stretches his reach – the further he has
+// to go for it the likelier it beats him (stopChance above). Markers round the
+// receiver who are further from the spot than he is don't count.
+function laneOdds(w, team, x0, y0, x1, y1, v0, recv) {
+  const d = Math.hypot(x1 - x0, y1 - y0) || 0.01, ux = (x1 - x0) / d, uy = (y1 - y0) / d;
+  const rd = recv ? Math.hypot(recv.x - x1, recv.y - y1) : 99;
+  let odds = 1;
+  for (const o of w.players) {
+    if (o.team === team || o.st === ST.FALLEN || o.st === ST.DIVE || o.st === ST.SLIDE) continue;
+    const along = (o.x - x0) * ux + (o.y - y0) * uy;
+    if (along < 0.3 || along > d + 0.6) continue;
+    if (along > d - 1.5 && Math.hypot(o.x - x1, o.y - y1) > rd + 0.5) continue;
+    const h = Math.abs((o.x - x0) * uy - (o.y - y0) * ux);
+    if (h > 4) continue;
+    const v = rollSpeedAt(v0, Math.min(along, d));
+    if (v <= 0.5) { odds *= 0.1; continue; } // it stops before getting past him
+    const step = Math.max(0, rollTime(v0, v) - 0.25) * 4;
+    const r = o.role === ROLE.GK && inOwnBox(w, o.team, o.x, o.y, 0) ? 1.0 : 0.62;
+    if (h < r + step) odds *= 1 - stopChance(o, h * 0.62 / (r + step), v, ux, uy);
+  }
+  return odds;
+}
+
 export function groundSpeedFor(d, vEnd) {
   const target = d + rollDist(vEnd);
   let lo = 0, hi = 45;
@@ -217,7 +266,7 @@ export function makePlayer(id, team, role, human, hgt = 180, bld = 50) {
 }
 export function makeBall() {
   return {
-    x: 0, y: 0, z: BALL_R, vx: 0, vy: 0, vz: 0, spin: 0, owner: -1, held: 0, last: -1, lastTeam: -1, kt: 255, tgt: -1, sh: -1, dl: 0,
+    x: 0, y: 0, z: BALL_R, vx: 0, vy: 0, vz: 0, spin: 0, owner: -1, held: 0, last: -1, lastTeam: -1, kt: 255, tgt: -1, sh: -1, dl: 0, nut: -1,
     atk: -1, atT: 0, atA: 0, atM: 0, atOn: 0, px: 0, py: 0, pz: BALL_R,
   };
 }
@@ -334,7 +383,7 @@ export function startKickoff(w, team) {
   setPhase(w, PHASE.KICKOFF);
   m.ko = team; m.spTaker = -1; m.spType = SP.KICKOFF;
   Object.assign(b, { x: 0, y: 0, z: BALL_R, vx: 0, vy: 0, vz: 0, spin: 0, owner: -1, held: 0, last: -1, lastTeam: -1, kt: 255, tgt: -1, atk: -1, atT: 0 });
-  b.px = 0; b.py = 0; b.pz = BALL_R; b.sh = -1;
+  b.px = 0; b.py = 0; b.pz = BALL_R; b.sh = -1; b.nut = -1;
   placeKickoff(w);
 }
 
@@ -530,6 +579,7 @@ function runAhead(q, t) {
 
 // Picks a target for a kick. Humans aim with the stick (PES-style assisted
 // passing: the receiver closest to the stick direction gets it).
+const LANES = [0, 0.04, -0.04, 0.08, -0.08, 0.13, -0.13, 0.19, -0.19, 0.26, -0.26, 0.34, -0.34]; // rad off the straight pass
 export function planKick(w, p, kind, power, tx, ty, tid = -1, kh) {
   const pit = pitchOf(w), dir = teamDir(w, p.team), b = w.ball;
   if (kh === undefined) kh = kind === KICK.LONG || kind === KICK.PUNT || kind === KICK.CLEAR ? KH.HIGH : kind === KICK.SHOT ? KH.MID : KH.GROUND;
@@ -597,6 +647,21 @@ export function planKick(w, p, kind, power, tx, ty, tid = -1, kh) {
       }
     }
     if (fb) [lx, ly, vEnd] = fb;
+    if (!lofted && (kind === KICK.PASS || kind === KICK.THROUGH)) {
+      // Pick the lane: angle the pass round an opponent near its line, as long
+      // as the receiver can still get to it. With no clear lane it goes as
+      // close past him (or through his legs) as gives it the best chance.
+      const dist = Math.hypot(lx - b.x, ly - b.y), base = Math.atan2(ly - b.y, lx - b.x);
+      const v0 = groundSpeedFor(dist, Math.max(1.5, vEnd)), tBall = rollTime(v0, Math.max(1.5, vEnd));
+      let top = -1, cx = lx, cy = ly;
+      for (const da of LANES) {
+        const x = b.x + Math.cos(base + da) * dist, y = b.y + Math.sin(base + da) * dist;
+        if (da && Math.hypot(x - lx, y - ly) > 1.5 + 0.8 * tBall) continue; // he has to get to it
+        const sc = laneOdds(w, p.team, b.x, b.y, x, y, v0, best) - 0.35 * Math.abs(da);
+        if (sc > top + 1e-9) { top = sc; cx = x; cy = y; }
+      }
+      lx = cx; ly = cy;
+    }
     p.kv = lofted ? vEnd : Math.max(1.5, vEnd); // lofted: flight time; ground: arrival pace
     p.kx = clamp(lx, -pit.L / 2 - 1, pit.L / 2 + 1); p.ky = clamp(ly, -pit.W / 2 + 0.5, pit.W / 2 - 0.5); p.kt = best.id;
   } else {
@@ -864,6 +929,7 @@ function blockContacts(w) {
     if (p.st === ST.FALLEN || p.st === ST.DIVE || p.st === ST.SLIDE) continue;
     if (b.last === p.id && b.kt < 10) continue;
     if (p.st === ST.CONTROL && !p.hit) continue; // about to take it on a part (see cushion)
+    if (b.nut === p.id && b.z < 0.6) continue;      // it's gone past (or through) him
     if (p.role === ROLE.GK && inOwnBox(w, p.team, p.x, p.y, 0.6) && inOwnBox(w, p.team, b.x, b.y, 0.3)) continue;
     const rs = Math.hypot(b.vx - p.vx, b.vy - p.vy, b.vz - p.vz);
     const blocking = p.st === ST.BLOCK && !p.hit && p.stT >= 2 && p.stT <= 22;
@@ -1276,7 +1342,7 @@ function launch(w, p, tech) {
   b.vy = uy * vh + (aerial ? p.vy * 0.15 : 0);
   b.vz = vz;
   b.spin = spin;
-  b.owner = -1; b.held = 0; b.last = p.id; b.lastTeam = p.team; b.kt = 0; b.tgt = p.kt;
+  b.owner = -1; b.held = 0; b.last = p.id; b.lastTeam = p.team; b.kt = 0; b.tgt = p.kt; b.nut = -1;
   b.dl = isHead ? 0 : 1;
   b.sh = kind === KICK.SHOT || kind === KICK.FINESSE ? p.id : -1; // keeps the credit through saves / blocks
   invalidatePath(w);
@@ -2086,6 +2152,33 @@ function slideContacts(w) {
   }
 }
 
+// A ground ball the other side played, coming past (or at) him: does he stop
+// it? If not it's gone by – through his legs, or past the leg he stuck out –
+// and he can't touch it again on its way past (b.nut).
+function slipsPast(w, p) {
+  const b = w.ball;
+  if (b.lastTeam < 0 || b.lastTeam === p.team || p.role === ROLE.GK) return false;
+  const rvx = b.vx - p.vx, rvy = b.vy - p.vy, v = Math.hypot(rvx, rvy);
+  if (v < 4) return false;
+  const ux = rvx / v, uy = rvy / v;
+  const ox = p.x - b.x, oy = p.y - b.y, ahead = ox * ux + oy * uy;
+  const h = ahead > 0 ? Math.abs(ox * uy - oy * ux) : Math.hypot(ox, oy);
+  if (rnd(w) < stopChance(p, h, v, ux, uy)) return false;
+  b.nut = p.id;
+  if (h < 0.2) w.events.push({ k: 'nutmeg', x: p.x, y: p.y, id: p.id, by: b.last });
+  else {
+    w.events.push({ k: 'beaten', x: p.x, y: p.y, id: p.id, by: b.last });
+    if (isFree(p) && p.z <= 0) {
+      // the leg goes out for it, a moment too late
+      const sx = p.x - ox + ux * Math.max(0, ahead), sy = p.y - oy + uy * Math.max(0, ahead); // nearest point of its line
+      p.st = ST.BLOCK; p.stT = 0; p.stDur = 20; p.hit = 1;
+      p.stA = Math.atan2(sy - p.y, sx - p.x); p.stB = 0.15; p.kx = sx; p.ky = sy;
+      p.face = Math.atan2(-uy, -ux); p.vx *= 0.5; p.vy *= 0.5;
+    }
+  }
+  return true;
+}
+
 function possession(w) {
   const b = w.ball, m = w.m;
   if (b.owner >= 0) {
@@ -2107,8 +2200,10 @@ function possession(w) {
     }
     return;
   }
+  if (b.nut >= 0) { const q = pById(w, b.nut); if (!q || Math.hypot(b.x - q.x, b.y - q.y) > 1.3) b.nut = -1; }
   let best = null, bestD = 1e9, zone = 0, rival = null;
   for (const p of w.players) {
+    if (b.nut === p.id) continue;
     const settling = p.st === ST.CONTROL && p.hit === 1; // brought it down: collects it at his feet
     if (!canControl(p) && !(settling && b.z < 0.55)) continue;
     if (p.role === ROLE.GK && keeperHands(w, p) && inOwnBox(w, p.team, b.x, b.y, 0.3) && inOwnBox(w, p.team, p.x, p.y, 0.6)) continue;
@@ -2120,6 +2215,7 @@ function possession(w) {
     else if (b.z < s.H + 0.2) { reach = 0.38; z = 3; }
     else continue;
     if (h < reach) {
+      if (z === 1 && slipsPast(w, p)) continue;
       if (h < bestD) { if (best && best.team !== p.team) rival = best; best = p; bestD = h; zone = z; }
       else if (best && best.team !== p.team) rival = p;
     }

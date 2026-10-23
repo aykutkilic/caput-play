@@ -22,7 +22,7 @@ const PLAYER = [
 ];
 const BALL = [
   ['x', 'f32'], ['y', 'f32'], ['z', 'f32'], ['vx', 'f32'], ['vy', 'f32'], ['vz', 'f32'], ['spin', 'f32'],
-  ['owner', 'i8'], ['held', 'u8'], ['last', 'i8'], ['lastTeam', 'i8'], ['kt', 'u8'], ['tgt', 'i8'], ['sh', 'i8'], ['dl', 'u8'],
+  ['owner', 'i8'], ['held', 'u8'], ['last', 'i8'], ['lastTeam', 'i8'], ['kt', 'u8'], ['tgt', 'i8'], ['sh', 'i8'], ['dl', 'u8'], ['nut', 'i8'],
   ['atk', 'i8'], ['atT', 'u8'], ['atA', 'u8'], ['atM', 'u8'], ['atOn', 'u8'],
 ];
 const MATCH = [

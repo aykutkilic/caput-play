@@ -661,6 +661,7 @@ game.onEvent = (e) => {
     case 'kick': sfx.kick(Math.min(1, (e.v || 10) / 30), vol); break;
     case 'head': sfx.head(vol); break;
     case 'control': sfx.cushion(vol); break;
+    case 'nutmeg': sfx.oooh(); break;
     case 'slide': sfx.slide(vol); break;
     case 'dive': sfx.dive(vol); break;
     case 'shot': sfx.kick(Math.min(1, (e.v || 20) / 28) + 0.2, vol); break;
