@@ -36,8 +36,13 @@ export const PHASE_NAME = ['Warm-up', 'Kick-off', 'Play', 'Goal', 'Set piece', '
 // Player states
 export const ST = {
   IDLE: 0, KICK: 1, SLIDE: 2, TACKLE: 3, HEADER: 4, VOLLEY: 5, OVERHEAD: 6,
-  DIVE: 7, FALLEN: 8, DIVEHEAD: 9, THROW: 10, STUMBLE: 11, CHEST: 12, SKILL: 13, BLOCK: 14,
+  DIVE: 7, FALLEN: 8, DIVEHEAD: 9, THROW: 10, STUMBLE: 11, SKILL: 13, BLOCK: 14, CONTROL: 15, // (12: retired)
 };
+
+// Controlling a ball out of the air (ST.CONTROL, part in the player's stB)
+export const PART = { FOOT: 0, THIGH: 1, CHEST: 2, HEAD: 3 };
+// How a player meets the ball (p.tm): running at it, or running with it
+export const MEET = { NONE: 0, AT: 1, WITH: 2 };
 
 // Technique moves (ST.SKILL, kind stored in the player's stA)
 export const SKILL = { LIFT: 1, KNOCK: 2, FEINT_L: 3, FEINT_R: 4, DRAGBACK: 5 };

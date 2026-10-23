@@ -2,7 +2,7 @@
 // skeletal animation: every pose is computed from simulation state each frame,
 // so animations stay fluid and always agree with what the physics is doing.
 
-import { GOAL_DEPTH, BALL_R, ST, ROLE, PHASE, KICK, SP, SKILL, KH } from '../shared/constants.js';
+import { GOAL_DEPTH, BALL_R, ST, ROLE, PHASE, KICK, SP, SKILL, KH, PART } from '../shared/constants.js';
 import { stats } from '../shared/physique.js';
 import { CHG_MAX, pitchOf } from '../shared/sim.js';
 import { skeleton, drawFigure } from './figure.js';
@@ -298,12 +298,27 @@ export function poseFor(p, ctx) {
       P.lean += 0.45 * env; P.lab = 0.9 * env; P.rab = 0.7 * env; P.lsh = 0.9 * env;
       break;
     }
-    case ST.CHEST: {
-      // chest cushion: lean back into the ball, arms wide, soft knees
+    case ST.CONTROL: {
+      // bringing the ball down: the part rises to meet it and gives with it
       const cT = Math.max(1, p.stA);
       const env = k < cT ? ease(k / cT) : 1 - clamp((k - cT) / Math.max(1, p.stDur - cT), 0, 1);
-      P.lean = -0.38 * env; P.lab = P.rab = 0.95 * env; P.lsh = P.rsh = 0.35 * env; P.lel = P.rel = 0.5;
-      P.lk = P.rk = 0.35 * env + 0.12; P.drop = 0.03 * H * env;
+      if (p.stB === PART.FOOT) {
+        // instep / sole up to cushion it, arms out for balance
+        P.rh = mix(P.rh, 0.55, env); P.rk = mix(P.rk, 0.75, env); P.lk = mix(P.lk, 0.25, env);
+        P.lab = P.rab = 0.55 * env; P.lean = mix(P.lean, -0.04, env);
+      } else if (p.stB === PART.THIGH) {
+        // thigh lifted level, shin hanging, arms wide
+        P.rh = mix(P.rh, 1.45, env); P.rk = mix(P.rk, 1.55, env); P.lh = mix(P.lh, 0.05, env); P.lk = mix(P.lk, 0.22, env);
+        P.lab = P.rab = 0.9 * env; P.lsh = P.rsh = 0.3 * env; P.lean = mix(P.lean, -0.12, env);
+      } else if (p.stB === PART.CHEST) {
+        // chest: lean back into it, arms wide, soft knees
+        P.lean = -0.38 * env; P.lab = P.rab = 0.95 * env; P.lsh = P.rsh = 0.35 * env; P.lel = P.rel = 0.5;
+        P.lk = P.rk = 0.35 * env + 0.12; P.drop = 0.03 * H * env;
+      } else {
+        // head: up under it, chin tucked, arms out, knees soft for the landing
+        P.lsh = P.rsh = mix(P.lsh, 0.6, env); P.lab = P.rab = 0.85 * env; P.lel = P.rel = 0.45;
+        P.lk = mix(P.lk, 0.55, env); P.rk = mix(P.rk, 0.45, env); P.lean = mix(P.lean, -0.18, env); P.head = -0.3 * env;
+      }
       break;
     }
     case ST.BLOCK: {

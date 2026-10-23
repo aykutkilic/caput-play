@@ -180,6 +180,7 @@ export class Sfx {
     this.noise(0.035, 900, 0.9, 0.16 * vol);
   }
   bounce(vol = 1) { this.tone(110, 50, 0.08, 0.25 * vol); }
+  cushion(vol = 1) { this.tone(150, 85, 0.07, 0.2 * vol); this.noise(0.04, 420, 0.8, 0.07 * vol); } // ball taken on the body
   post() { this.tone(900, 860, 0.35, 0.18, 'triangle'); this.tone(1350, 1300, 0.25, 0.08, 'triangle'); this.kick(0.6, 0.6); }
   tackle(vol = 1) { this.noise(0.12, 500, 0.7, 0.35 * vol); this.tone(90, 40, 0.12, 0.3 * vol); }
   block(vol = 1) { this.tone(120, 55, 0.12, 0.42 * vol); this.noise(0.07, 650, 0.8, 0.28 * vol); }
