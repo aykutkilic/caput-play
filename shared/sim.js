@@ -480,10 +480,35 @@ export function loftTime(d, kh, power) {
   return Math.max(0.35, d / vh);
 }
 
+// Height the ball reaches after travelling d metres along the ground, launched
+// with horizontal speed vh and vertical speed vz from height z0 – the same
+// gravity and air drag as updateBall (-1 if it never gets there).
+function heightAt(vh, vz, z0, d) {
+  let x = 0, z = z0, h = vh, v = vz;
+  for (let k = 0; k < 600; k++) {
+    v -= G * DT;
+    const f = Math.max(0, 1 - AIR_K * Math.hypot(h, v) * DT);
+    h *= f; v *= f;
+    x += h * DT; z += v * DT;
+    if (x >= d) return z;
+    if (h < 0.5) break;
+  }
+  return -1;
+}
+// Vertical launch speed that brings the ball to height zt after d metres.
+function vzToReach(vh, z0, d, zt) {
+  let lo = -4, hi = 22;
+  for (let i = 0; i < 22; i++) {
+    const mid = (lo + hi) / 2;
+    if (heightAt(vh, mid, z0, d) < zt) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
 // Height the ball should have when it reaches its target.
 function targetHeight(w, p, kind, kh) {
   if (kind === KICK.SHOT || kind === KICK.FINESSE) {
-    return kh === KH.HIGH ? pitchOf(w).goalH - 0.35 : kh === KH.MID ? 1.1 : 0.22;
+    return kh === KH.HIGH ? pitchOf(w).goalH - 0.15 : kh === KH.MID ? 1.15 : 0.22; // high: just under the bar
   }
   const r = p.kt >= 0 ? pById(w, p.kt) : null;
   const head = r ? stOf(r).H * 0.93 : 1.75;
@@ -1055,11 +1080,12 @@ function launch(w, p, tech) {
       const t = d / speed * 1.03;
       vh = speed;
       if (p.kh === KH.GROUND && tech === ST.KICK) vz = 0.4 + 2.5 * Math.max(0, pw - 0.75); // skims the grass
-      else vz = Math.min(13, (tz - b.z + 0.5 * G * t * t) / t); // low pace + high target = a chip
+      else vz = Math.min(14, vzToReach(speed, b.z, d, tz)); // low pace + high target = a chip
       const techErr = { [ST.KICK]: 0, [ST.VOLLEY]: 0.035, [ST.HEADER]: 0.03, [ST.OVERHEAD]: 0.06, [ST.DIVEHEAD]: 0.04 }[tech] || 0;
       const mis = tech === ST.KICK ? (misalign > 1.0 ? (misalign - 1.0) * 0.07 : 0) : 0;
       const sprint = (p.ib & BTN.SPRINT) && Math.hypot(p.vx, p.vy) > 6 ? 0.015 : 0;
-      err = 0.015 + 0.04 * pw * pw + techErr + mis + pressure + sprint;
+      // the further out, the wider the spread (and a full-power strike is wilder)
+      err = 0.012 + 0.0011 * d + 0.00009 * d * d + 0.045 * pw * pw + techErr + mis + pressure + sprint;
       if (kind === KICK.FINESSE) {
         err *= 0.6;
         // curl: aim outside, let the spin bring it back
@@ -1072,7 +1098,7 @@ function launch(w, p, tech) {
         ux = nux; uy = nuy;
         spin = sgn * (2 * d * beta / (t * t)) / speed;
       }
-      zErr = 0.2 + 0.35 * pw;
+      zErr = (0.2 + 0.35 * pw) * (0.8 + d / 25);
       break;
     }
     case KICK.SELF: {
