@@ -487,6 +487,7 @@ export class Renderer {
       const hb = h && this.heldBallAt(w, h, Js.get(h.id), ppos.get(h.id));
       if (hb) ball = hb;
     }
+    this.lastBall = ball; // where it was drawn: a catch next frame starts from here
 
     // camera: follow the ball with a little look-ahead, biased towards me
     // (a dribbler's steady run, not the ball's touch-by-touch pulsing)
@@ -837,7 +838,16 @@ export class Renderer {
     if (b.owner !== p.id || !b.held) return null;
     const fx = Math.cos(p.face), fy = Math.sin(p.face);
     const mid = [(J.handL[0] + J.handR[0]) / 2, (J.handL[1] + J.handR[1]) / 2, (J.handL[2] + J.handR[2]) / 2];
-    const inHands = [mid[0] + fx * 0.07, mid[1] + fy * 0.07, mid[2] + 0.03];
+    let inHands = [mid[0] + fx * 0.07, mid[1] + fy * 0.07, mid[2] + 0.03];
+    // just caught: it goes from where it was taken onto the hands (the arms
+    // are already carrying it in, see posePlayer)
+    const c = this.anim.get(p.id)?.carry;
+    if (c) {
+      const u = ease(clamp((this.time - c.t0) / (c.dive ? 0.18 : 0.13), 0, 1));
+      const cf = Math.cos(p.face), sf = Math.sin(p.face);
+      const from = [x + c.f * cf - c.r * sf, y + c.f * sf + c.r * cf, c.z];
+      inHands = [from[0] + (inHands[0] - from[0]) * u, from[1] + (inHands[1] - from[1]) * u, from[2] + (inHands[2] - from[2]) * u];
+    }
     if (p.st === ST.THROW && w.m.spTaker !== p.id) {
       const h = J.handR; // a keeper's throw: in the throwing hand
       return [h[0] + fx * 0.05, h[1] + fy * 0.05, h[2] + 0.05];
@@ -856,12 +866,27 @@ export class Renderer {
     const a = this.animState(p, dt);
     const m = w.m, b = w.ball;
     const holding = b.owner === p.id && b.held && m.spTaker !== p.id;
+    // a catch: remember where the ball was (in his own frame, so it moves with
+    // him); for a moment the arms carry it from there into his chest
+    if (holding && !a.held && this.lastBall && dt > 0) {
+      const [lx, ly, lz] = this.lastBall;
+      const cf = Math.cos(p.face), sf = Math.sin(p.face);
+      const f = (lx - x) * cf + (ly - y) * sf, r = -(lx - x) * sf + (ly - y) * cf;
+      if (Math.hypot(f, r, lz - z - s.H * 0.6) < 2.2) a.carry = { t0: this.time, f, r, z: lz, dive: p.st === ST.DIVE };
+    }
+    a.held = holding;
+    if (a.carry && (!holding || this.time - a.carry.t0 > (a.carry.dive ? 0.5 : 0.3))) a.carry = null;
+    const carrying = a.carry && !a.carry.dive ? ease(clamp((this.time - a.carry.t0) / 0.3, 0, 1)) : -1;
     const ctx = {
       H: s.H, speed: a.sp, phase: a.ph, time: this.time,
       gkStance: p.role === ROLE.GK && b.owner !== p.id ? 1 : 0,
       holding,
       // cradled at his midriff (the ball itself is drawn in his hands)
-      holdAt: holding && (p.st === ST.IDLE || p.st === ST.STUMBLE) ? { f: 0.14 * s.H, r: 0, z: 0.6 * s.H } : null,
+      holdAt: holding && (p.st === ST.IDLE || p.st === ST.STUMBLE)
+        ? (carrying >= 0
+          ? { f: mix(a.carry.f, 0.14 * s.H, carrying), r: mix(a.carry.r, 0, carrying), z: mix(a.carry.z - z, 0.6 * s.H, carrying) }
+          : { f: 0.14 * s.H, r: 0, z: 0.6 * s.H })
+        : null,
       throwIn: b.owner === p.id && b.held && m.spTaker === p.id,
       throwInAnim: p.st === ST.THROW && Math.abs(Math.abs(p.y) - (pitchOf(w).W / 2)) < 1.2,
       throwRoll: p.st === ST.THROW && p.kh === KH.GROUND,
@@ -913,7 +938,8 @@ export class Renderer {
     // hands quicker: they follow the ball)
     if (!a.P || dt <= 0) a.P = { ...target };
     else {
-      const kb = 1 - Math.exp(-dt * 20), kh = 1 - Math.exp(-dt * (ctx.reach ? 32 : 20));
+      const kb = 1 - Math.exp(-dt * 20);
+      const kh = carrying >= 0 ? 1 : 1 - Math.exp(-dt * (ctx.reach ? 32 + 40 * ctx.reach.e : 20));
       for (const key in target) a.P[key] += (target[key] - a.P[key]) * (ARM_KEYS.has(key) ? kh : kb);
     }
     return skeleton(p, a.P, s.H, s.width, x, y, z, p.face);
