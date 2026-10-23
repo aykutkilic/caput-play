@@ -132,7 +132,16 @@ export function drawFigure(g, cam, J, look, H, wd, alpha = 1) {
       seg(lerp3(sh, el, 0.5), el, 0.05 * wd, look.skin);
       seg(el, hand, 0.044 * wd, look.skin);
     }
-    dot(hand, look.gloves ? 0.044 : 0.03, look.gloves || look.skin, hand[2] + 0.005);
+    // the hand, along the line of the forearm: a keeper's big padded glove
+    // with a dark cuff, otherwise a small bare hand
+    const tip = lerp3(hand, lerp3(el, hand, 1.42), 1), d = Math.max(hand[2], tip[2]) + 0.006;
+    if (look.gloves) {
+      seg(lerp3(el, hand, 0.9), hand, 0.052 * wd, shade(look.gloves, -0.45), d);
+      seg(hand, tip, 0.06, look.gloves, d + 0.001);
+      if (detail) seg(lerp3(hand, tip, 0.55), lerp3(hand, tip, 0.95), 0.03, shade(look.gloves, -0.12), d + 0.002); // palm
+    } else {
+      seg(hand, lerp3(hand, tip, 0.75), 0.034, look.skin, d);
+    }
   }
   // pelvis / shorts block and torso
   seg(P.hipL, P.hipR, 0.12 * wd, look.shorts, P.hc[2] - 0.01);

@@ -1284,8 +1284,10 @@ function launch(w, p, tech) {
   const kind = p.kk, pw = p.kp;
   const fromHands = b.held === 1;
   if (fromHands) {
+    // where it leaves his hands: onto the boot for a punt, low for a keeper
+    // rolling it out, over his head for a throw-in or an overarm throw
     b.held = 0;
-    b.z = kind === KICK.PUNT ? 0.45 : (w.m.spTaker === p.id ? 2.0 : 1.4);
+    b.z = kind === KICK.PUNT ? 0.45 : w.m.spTaker === p.id ? 2.0 : p.kh === KH.GROUND ? 0.3 : 2.0;
   }
   let dx = p.kx - b.x, dy = p.ky - b.y;
   let d = Math.hypot(dx, dy);
@@ -1310,7 +1312,7 @@ function launch(w, p, tech) {
         // along the ground, arriving at a pace the receiver can control
         const vEnd = p.kv > 0 ? p.kv : passEndSpeed(kind, d, pw);
         vh = Math.min(groundSpeedFor(d, vEnd), kind === KICK.THROW ? 17 : 28) * (0.97 + 0.06 * s.shot);
-        vz = kind === KICK.THROW ? (fromHands && b.z > 1.8 ? 1.5 : 0.6) : 0;
+        vz = kind === KICK.THROW ? (fromHands && b.z > 1.8 ? 1.5 : b.z < 0.5 ? 0.15 : 0.6) : 0; // (rolled out: along the grass)
         err = 0.012 + (misalign > 1.2 ? (misalign - 1.2) * 0.05 : 0) + pressure * 0.5;
       } else {
         // lofted: arrive at the chosen height (feet / chest / head) after the planned flight
