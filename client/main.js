@@ -305,6 +305,12 @@ function showPanel(on, remember = true) {
 }
 $('minBtn').onclick = () => showPanel(false);
 $('panelPill').onclick = () => showPanel(true);
+// a click or tap anywhere outside the open panel (not in a dialog over it) tucks it away
+addEventListener('pointerdown', (e) => {
+  if (!state.inRoom || $('panel').hidden) return;
+  if (e.target.closest && e.target.closest('#panel, #panelPill, .modal, #updateBtn, #toast')) return;
+  showPanel(false);
+}, true);
 
 function renderPanel() {
   const r = state.room;
@@ -596,9 +602,11 @@ function crowdLevel(w, auth) {
 
 // What the kick keys do right now: attacking, defending (press / slide /
 // jockey / keeper out), as the keeper, or blocking a hard ball coming in.
+let bendHintUntil = 0; // after my shot: how to bend it (see showControlMode)
 function controlMode(w) {
   const me = w && pById(w, state.myId);
   if (!me) return 'attack';
+  if (performance.now() < bendHintUntil && w.ball.owner < 0) return 'after';
   const b = w.ball, owner = b.owner >= 0 ? pById(w, b.owner) : null;
   if (owner && owner.team !== me.team) return me.role === ROLE.GK && inOwnBox(w, me.team, me.x, me.y, 2) ? 'keeper' : 'defend';
   if (!owner && wantsBlock(w, me)) return 'block';
@@ -607,7 +615,7 @@ function controlMode(w) {
 let shownMode = '';
 function showControlMode(w) {
   const mode = w ? controlMode(w) : 'attack';
-  touch.setMode(mode);
+  touch.setMode(mode === 'after' ? 'attack' : mode);
   if (mode === shownMode) return;
   shownMode = mode;
   const k = (name) => `<b>${esc(keyName(input.keys[name]))}</b>`;
@@ -615,6 +623,7 @@ function showControlMode(w) {
     defend: `Defending: ${k('mateG')} press · ${k('goalG')} slide · ${k('selfG')} jockey · ${k('runG')} keeper out (any row)`,
     keeper: `Keeper: ${k('goalG')} dive · ${k('runG')} rush out · ${k('mateG')} press · ${k('selfG')} jockey`,
     block: 'Hard ball coming: any kick key <b>blocks</b> it',
+    after: 'Aftertouch – now push the stick <b>sideways</b> to bend it · <b>back</b> lifts it · <b>forward</b> dips it',
   };
   $('ctxHint').innerHTML = lines[mode] || '';
   $('ctxHint').hidden = !lines[mode];
@@ -664,7 +673,10 @@ game.onEvent = (e) => {
     case 'nutmeg': sfx.oooh(); break;
     case 'slide': sfx.slide(vol); break;
     case 'dive': sfx.dive(vol); break;
-    case 'shot': sfx.kick(Math.min(1, (e.v || 20) / 28) + 0.2, vol); break;
+    case 'shot':
+      sfx.kick(Math.min(1, (e.v || 20) / 28) + 0.2, vol);
+      if (e.id === state.myId) bendHintUntil = performance.now() + 1600;
+      break;
     case 'bounce': sfx.bounce(Math.min(1, (e.v || 3) / 8) * vol); break;
     case 'post': sfx.post(); sfx.oooh(); break;
     case 'tackle': case 'steal': sfx.tackle(vol); break;

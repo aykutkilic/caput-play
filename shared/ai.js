@@ -4,7 +4,7 @@
 
 import { G, BTN, KT, KH, KICK_MASK, packKick, PHASE, ST, ROLE, SP, KICK } from './constants.js';
 import {
-  rnd, teamDir, pitchOf, pById, stOf, startKick, beginSlide, beginDive, beginSpread, slotOf, slotIndex,
+  rnd, teamDir, pitchOf, pById, stOf, startKick, beginSlide, beginDive, beginSpread, slotOf, slotIndex, shootingPractice,
   inOwnBox, clamp, encodeStick, ballPath, blockPlan, beginBlock, wantsBlock, loftTime,
   groundSpeedFor, passEndSpeed, MU, CF, byPerson,
 } from './sim.js';
@@ -340,7 +340,8 @@ function aimShot(w, p) {
   let side;
   if (gk && Math.abs(gk.y) > 0.3) side = gk.y > 0 ? -1 : 1;
   else side = p.y > 0.5 ? -1 : p.y < -0.5 ? 1 : (rnd(w) < 0.5 ? -1 : 1);
-  const aimY = side * pit.goalW * (0.24 + rnd(w) * 0.16);
+  // close in he picks a corner; from further out he keeps it safely inside the post
+  const aimY = side * pit.goalW * (0.24 + rnd(w) * 0.16) * clamp(1.25 - dGoal / 26, 0.4, 1);
   const off = gk ? Math.abs(gk.x - gx) : 0;
   if (gk && off > 3.5 && dGoal > 10 && dGoal - 2 > Math.hypot(gk.x - p.x, gk.y - p.y)) {
     return { kind: KICK.SHOT, kh: KH.HIGH, pw: clamp(0.15 + dGoal * 0.008, 0.15, 0.4), aimY: aimY * 0.5 };
@@ -613,6 +614,20 @@ function gkThink(w, p, c) {
   const pit = pitchOf(w), dir = teamDir(w, p.team), b = w.ball, m = w.m, s = stOf(p);
   const ogx = -dir * pit.L / 2;
   const lv = lvlOf(w);
+  if (b.owner === p.id && shootingPractice(w)) {
+    // shooting practice: serve it to one of the players after a moment – mostly
+    // rolled to his feet, sometimes up for a volley or a header
+    if (p.ai !== AI_CARRY) { p.ai = AI_CARRY; p.aiT = 40 + Math.floor(rnd(w) * 30); }
+    if (p.aiT > 0) { moveTo(p, ogx + dir * 2, p.y * 0.5, 99, 0.3); return; }
+    const outs = w.players.filter((q) => q.role !== ROLE.GK);
+    const q = outs[Math.floor(rnd(w) * outs.length)];
+    const d = Math.hypot(q.x - b.x, q.y - b.y), up = d > 30 || rnd(w) < 0.3;
+    const T = up ? 1.1 + d / 30 : 0.35 + d / 14;
+    const tx = q.x + q.vx * T, ty = q.y + q.vy * T;
+    if (up) aiKick(w, p, KICK.LONG, 0.6, tx, ty, q.id, d > 30 ? KH.HIGH : KH.MID);
+    else aiKick(w, p, KICK.PASS, 0.5, tx, ty, q.id, KH.GROUND);
+    return;
+  }
   if (b.owner === p.id) {
     // in his hands he can take his time; at his feet (a back-pass) he moves it on
     if (p.ai !== AI_CARRY) { p.ai = AI_CARRY; p.aiT = b.held ? lv.hold + Math.floor(rnd(w) * 30) : 10 + Math.floor(rnd(w) * 12); }

@@ -25,7 +25,7 @@ export const GOAL_TICKS_LIVE = 520;  // goal pause in a match: celebration + rep
 // the ball, a *fresh* stick input bends it (left/right of its flight), lifts it
 // (pull back) or dips it (push forward). Holding the aim you kicked with does
 // nothing, so PES-style aiming and aftertouch don't fight each other.
-export const AT_TICKS = 27;          // 0.45 s window
+export const AT_TICKS = 33;          // 0.55 s window
 const AT_CURVE = 1.7;                // spin gained per second at full lateral stick
 const AT_SPIN_MAX = 0.65;            // rad/s turn rate of the ball's path
 const AT_LIFT = 19;                  // m/s^2 upward while pulling back
@@ -424,6 +424,37 @@ function placeKickoff(w) {
   }
 }
 
+// Warm-up with nobody but humans in the outfield and AI keepers in goal:
+// shooting practice. The keepers pick up every dead ball and serve it to a
+// player (see the AI keeper) instead of the usual restarts.
+export function shootingPractice(w) {
+  if (w.m.live) return false;
+  let outfield = 0, aiKeeper = false;
+  for (const p of w.players) {
+    if (p.role === ROLE.GK) { if (!p.human) aiKeeper = true; } else if (!p.human) return false; else outfield++;
+  }
+  return outfield > 0 && aiKeeper;
+}
+// The ball in an AI keeper's hands to restart practice: that team's keeper,
+// or the one nearest the ball. False if there's none.
+function keeperRestart(w, team) {
+  const b = w.ball;
+  let gk = null, bd = 1e9;
+  for (const p of w.players) {
+    if (p.role !== ROLE.GK || p.human) continue;
+    const d = p.team === team ? -1 : Math.hypot(p.x - b.x, p.y - b.y);
+    if (d < bd) { bd = d; gk = p; }
+  }
+  if (!gk) return false;
+  resetPlayerState(gk);
+  Object.assign(b, { x: gk.x, y: gk.y, z: 1.0, vx: 0, vy: 0, vz: 0, spin: 0, owner: gk.id, held: 1, last: gk.id, lastTeam: gk.team,
+    kt: 255, tgt: -1, sh: -1, dl: 0, nut: -1, atk: -1, atT: 0 });
+  b.px = b.x; b.py = b.y; b.pz = b.z;
+  w.m.spTaker = -1;
+  resumePhase(w);
+  return true;
+}
+
 function startSetPiece(w, type, team, x, y) {
   const m = w.m;
   setPhase(w, PHASE.SETPIECE);
@@ -435,6 +466,7 @@ function startSetPiece(w, type, team, x, y) {
 function takeSetPiece(w) {
   const m = w.m, b = w.ball, pit = pitchOf(w);
   const team = m.spTeam, dir = teamDir(w, team);
+  if (shootingPractice(w) && keeperRestart(w, -1)) return;
   let taker = null;
   if (m.spType === SP.GOALKICK) taker = w.players.find((p) => p.team === team && p.role === ROLE.GK) || null;
   if (!taker) {
@@ -776,7 +808,7 @@ export function beginLift(w, p, power, kh = KH.HIGH) {
   if (kh === KH.GROUND) {
     // knock-on: push it ahead along the ground and burst after it
     p.stA = SKILL.KNOCK; p.stDur = 8;
-    const v = sp + 2.5 + 3.5 * power;
+    const v = sp * 0.8 + 0.6 + (11 - 4.5 * power) * power; // a tap just nudges it ahead of him
     b.vx = ux * v; b.vy = uy * v; b.vz = 0.4;
     p.kcd = 14;
     const burst = Math.min(s.sprint * 1.06, sp + 1.6);
@@ -1300,7 +1332,7 @@ function launch(w, p, tech) {
       const mis = tech === ST.KICK ? (misalign > 1.0 ? (misalign - 1.0) * 0.07 : 0) : 0;
       const sprint = (p.ib & BTN.SPRINT) && Math.hypot(p.vx, p.vy) > 6 ? 0.015 : 0;
       // the further out, the wider the spread (and a full-power strike is wilder)
-      err = 0.012 + 0.0011 * d + 0.00009 * d * d + 0.045 * pw * pw + techErr + mis + pressure + sprint;
+      err = 0.035 + 0.0016 * d + 0.00011 * d * d + 0.06 * pw * pw + techErr + mis + pressure + sprint;
       if (kind === KICK.FINESSE) {
         err *= 0.6;
         // curl: aim outside, let the spin bring it back
@@ -1314,6 +1346,8 @@ function launch(w, p, tech) {
         spin = sgn * (2 * d * beta / (t * t)) / speed;
       }
       zErr = (0.2 + 0.35 * pw) * (0.8 + d / 25);
+      // no strike is perfectly clean: it swerves a little one way or the other
+      if (kind !== KICK.FINESSE) spin += gauss(w) * (0.05 + 0.1 * pw);
       break;
     }
     case KICK.SELF: {
@@ -2340,7 +2374,9 @@ function rules(w) {
         if (m.live && m.clock >= halfTicks * m.half) {
           setPhase(w, m.half === 1 ? PHASE.HALFTIME : PHASE.FULLTIME);
           w.events.push({ k: 'whistle', n: m.half === 1 ? 2 : 3 });
-        } else startKickoff(w, m.lastGoalTeam >= 0 ? 1 - m.lastGoalTeam : 0);
+        } else if (!(shootingPractice(w) && keeperRestart(w, m.lastGoalTeam >= 0 ? 1 - m.lastGoalTeam : -1))) {
+          startKickoff(w, m.lastGoalTeam >= 0 ? 1 - m.lastGoalTeam : 0);
+        }
       }
       break;
     case PHASE.SETPIECE:

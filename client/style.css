@@ -127,8 +127,9 @@ body.touchui #ctxHint { display: none; }
   position: fixed; top: calc(12px + env(safe-area-inset-top)); right: calc(12px + env(safe-area-inset-right));
   width: 420px; max-width: calc(100vw - 24px); max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px);
   touch-action: pan-y; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px;
-  display: flex; flex-direction: column; gap: 14px; overflow: auto; backdrop-filter: blur(10px);
+  background: rgba(14, 22, 28, 0.74); border: 1px solid var(--line); border-radius: 16px; padding: 16px;
+  display: flex; flex-direction: column; gap: 14px; overflow: auto;
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
 }
 #panel header { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
 #panel .hbtns { display: flex; gap: 6px; flex-shrink: 0; }
