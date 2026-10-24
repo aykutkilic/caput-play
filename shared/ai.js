@@ -937,7 +937,7 @@ function gkThink(w, p, c) {
   if (shotOnGoal) { p.im = 0; return; }
 
   // 3. positioning
-  let tx, ty, set = false, rush = false;
+  let tx, ty, set = false, rush = false, spotVx = 0, spotVy = 0;
   if (owner && owner.team !== p.team) {
     const dGoal = Math.hypot(owner.x - ogx, owner.y);
     // a breakaway: nobody between him and goal, and running at it (closing
@@ -993,11 +993,22 @@ function gkThink(w, p, c) {
     // to within 1-2 m of him. Aimed at where the ball will be a moment from
     // now (by the man's run: the ball jumps about with his touches).
     const ax = b.x + owner.vx * 0.18, ay = b.y + owner.vy * 0.18, fx = Math.max(0.5, (ax - ogx) * dir);
-    const still = 1 - clamp(Math.hypot(owner.vx, owner.vy) / 6, 0, 1), closeIn = clamp((8 - fx) / 3, 0, 1);
+    // (what he has to keep up with is the man going across: running straight
+    // in at goal, he's met further out like a man standing)
+    const gl = Math.hypot(ogx - owner.x, owner.y) || 1, across = Math.abs(owner.vx * -owner.y - owner.vy * (ogx - owner.x)) / gl;
+    const still = 1 - clamp(across / 6, 0, 1), closeIn = clamp((8 - fx) / 3, 0, 1);
     const share = (0.4 + 0.22 * still) * (1 - closeIn) + 0.62 * closeIn;
     const depth = alone || charge || close ? clamp(fx * share, 1.0, Math.max(1.0, Math.min(fx - clamp(0.3 * fx, 1.0, 2.2), 6)))
       : clamp(0.11 * dGoal + 0.8, 1.0, 3.2);
     [tx, ty] = anglePoint(w, p.team, ax, ay, depth);
+    // how that spot moves across with his run: the keeper moves with it (in
+    // and out is left to the pull below – backing off fast he can't do, and
+    // it would slow him getting across)
+    const [nx, ny] = anglePoint(w, p.team, ax + owner.vx * 0.1, ay + owner.vy * 0.1, depth);
+    const lx = tx - ax, ly = ty - ay, ll = Math.hypot(lx, ly) || 1; // along the line ball -> spot
+    spotVx = (nx - tx) / 0.1; spotVy = (ny - ty) / 0.1;
+    const along = (spotVx * lx + spotVy * ly) / ll;
+    spotVx -= along * lx / ll; spotVy -= along * ly / ll;
     // a defender in the way hides part of the goal: he covers the rest – the
     // biggest part the shooter still sees (not all the way: it may deflect,
     // the defender may move)
@@ -1029,12 +1040,15 @@ function gkThink(w, p, c) {
     // (closing a man down close in, he gets out there first, then sets)
     if (d < 0.2) p.im = 0; else setMove(p, tx - p.x, ty - p.y, Math.min(0.65, d));
   } else if (owner && owner.team !== p.team) {
-    // keeping to the line as he moves: brisk, but no quicker than he can pull
-    // up at the spot (a keeper who overruns it is off the line again)
-    if (d < 0.08) p.im = 0;
+    // keeping to the line as he moves: along with the spot (it moves across
+    // with the man's run), plus a pull onto it no quicker than he can pull up
+    // there (a keeper who overruns it is off the line again)
+    const pull = Math.sqrt(2 * s.accel * 1.2 * d) * 0.85;
+    const vx = (d > 1e-3 ? (tx - p.x) / d * pull : 0) + spotVx, vy = (d > 1e-3 ? (ty - p.y) / d * pull : 0) + spotVy;
+    const vm = Math.hypot(vx, vy), fast = vm > s.jog * 0.9;
+    if (vm < 0.3) p.im = 0;
     else {
-      const v = Math.sqrt(2 * s.accel * 1.2 * d) * 0.85, fast = v > s.jog * 0.9;
-      setMove(p, tx - p.x, ty - p.y, Math.min(1, Math.max(0.15, v / (fast ? s.sprint : s.jog))));
+      setMove(p, vx, vy, Math.min(1, vm / (fast ? s.sprint : s.jog)));
       if (fast) p.ib |= BTN.SPRINT;
     }
   } else moveTo(p, tx, ty, rush ? 1.5 : 3.5, 0.12);

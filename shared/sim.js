@@ -1978,7 +1978,10 @@ function movement(w, p, s) {
   } else {
     const ex = tvx - p.vx, ey = tvy - p.vy, e = Math.hypot(ex, ey);
     const slowing = vt < v;
-    const acc = s.accel * (own ? 0.9 : 1) * (prec ? 1.3 : 1) * (slowing ? 1.5 : 1) * DT;
+    // (a keeper's footwork staying on the angle while a man has the ball – the
+    // quick push-off – is trained: half as quick again; not the reaction to a
+    // shot once it's struck)
+    const acc = s.accel * (own ? 0.9 : 1) * (prec ? 1.3 : 1) * (slowing ? 1.5 : 1) * (p.role === ROLE.GK && oppHas ? 1.5 : 1) * DT;
     if (e > acc) { p.vx += ex / e * acc; p.vy += ey / e * acc; } else { p.vx = tvx; p.vy = tvy; }
   }
 
