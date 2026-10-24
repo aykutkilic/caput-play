@@ -8,7 +8,7 @@ import { Sfx, CHANNELS } from './audio.js';
 import { TouchControls, isTouchDevice, lockZoom } from './touch.js';
 import { Replay } from './replay.js';
 import { initPwa } from './pwa.js';
-import { encodeStick, pById, wantsBlock, inOwnBox, pitchOf } from '../shared/sim.js';
+import { encodeStick, pById, wantsBlock, inOwnBox, pitchOf, keeperHands } from '../shared/sim.js';
 import { PHASE, SP, SP_NAME, ROLE, TEAM_NAMES, TICK_RATE, QUICK_CHAT, KICK_MASK, GOAL_SIZE_DEFAULT } from '../shared/constants.js';
 import { ratings, stats } from '../shared/physique.js';
 
@@ -654,6 +654,9 @@ function controlMode(w) {
   if (w.m.spTaker === me.id) return w.m.spType === SP.THROWIN ? 'throwin' : w.m.spType === SP.PENALTY ? 'penalty'
     : w.m.spType === SP.FREEKICK || w.m.spType === SP.CORNER ? 'freekick' : 'restart';
   const b = w.ball, owner = b.owner >= 0 ? pById(w, b.owner) : null;
+  const gk = me.role === ROLE.GK && inOwnBox(w, me.team, me.x, me.y, 0.6);
+  if (gk && b.owner === me.id && b.held) return 'keeperBall';
+  if (gk && !owner && keeperHands(w, me) && (b.z > 1.2 || b.vz > 2) && inOwnBox(w, me.team, b.x, b.y, 3)) return 'keeperAir';
   if (owner && owner.team !== me.team) return me.role === ROLE.GK && inOwnBox(w, me.team, me.x, me.y, 2) ? 'keeper' : 'defend';
   if (!owner && wantsBlock(w, me)) return 'block';
   return 'attack';
@@ -661,13 +664,15 @@ function controlMode(w) {
 let shownMode = '';
 function showControlMode(w) {
   const mode = w ? controlMode(w) : 'attack';
-  touch.setMode(['after', 'throwin', 'penalty', 'freekick', 'restart'].includes(mode) ? 'attack' : mode);
+  touch.setMode(['after', 'throwin', 'penalty', 'freekick', 'restart', 'keeperBall'].includes(mode) ? 'attack' : mode);
   if (mode === shownMode) return;
   shownMode = mode;
   const k = (name) => `<b>${esc(keyName(input.keys[name]))}</b>`;
   const lines = {
     defend: `Defending: ${k('mateG')} press · ${k('goalG')} slide · ${k('selfG')} jockey · ${k('runG')} keeper out (any row)`,
-    keeper: `Keeper: ${k('goalG')} dive · ${k('runG')} rush out · ${k('mateG')} press · ${k('selfG')} jockey`,
+    keeper: `Keeper: ${k('goalG')} dive at his feet · ${k('selfG')} one-on-one block · ${k('runG')} rush out · ${k('mateG')} press`,
+    keeperAir: `High ball: you catch it on your own · ${k('goalG')} (any row) <b>punches</b> it clear – aim with the stick`,
+    keeperBall: `In your hands: <b>ground</b> row rolls it out · <b>mid</b> row throws it (a drop kick when it's far) · <b>high</b> row punts it`,
     block: 'Hard ball coming: any kick key <b>blocks</b> it',
     after: 'Aftertouch – now push the stick <b>sideways</b> to bend it · <b>back</b> lifts it · <b>forward</b> dips it',
     freekick: 'Your free kick – turn with the stick, a kick key plays it · or <b>hold a direction</b> to take it quickly and run with it',
@@ -733,6 +738,7 @@ game.onEvent = (e) => {
     case 'foul': sfx.tackle(vol); if (game.auth && game.auth.m.live) sfx.boo(); break;
     case 'catch': sfx.catchBall(); break;
     case 'save': sfx.kick(0.4, vol); sfx.oooh(); break;
+    case 'punch': sfx.kick(Math.min(1, (e.v || 12) / 25), vol); if (e.v > 12) sfx.oooh(); break;
     case 'block': sfx.block(vol); if ((e.v || 0) > 14) sfx.oooh(); break;
   }
 };

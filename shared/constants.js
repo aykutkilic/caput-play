@@ -37,7 +37,13 @@ export const PHASE_NAME = ['Warm-up', 'Kick-off', 'Play', 'Goal', 'Set piece', '
 export const ST = {
   IDLE: 0, KICK: 1, SLIDE: 2, TACKLE: 3, HEADER: 4, VOLLEY: 5, OVERHEAD: 6,
   DIVE: 7, FALLEN: 8, DIVEHEAD: 9, THROW: 10, STUMBLE: 11, SKILL: 13, BLOCK: 14, CONTROL: 15, // (12: retired)
+  PUNCH: 16, TIP: 17, // keeper: punching a high ball clear / tipping one over the bar (contact point in kx, ky, stB)
 };
+
+// A keeper's one-on-one blocks (ST.DIVE with p.spr set): spread on his side
+// across the shot, the star jump (an X in the air) and the K-barrier (down on
+// one knee, the shin across the near post side)
+export const GKB = { SPREAD: 1, STAR: 2, KNEE: 3 };
 
 // Controlling a ball out of the air (ST.CONTROL, part in the player's stB)
 export const PART = { FOOT: 0, THIGH: 1, CHEST: 2, HEAD: 3 };
@@ -54,7 +60,7 @@ export const SP = { NONE: 0, THROWIN: 1, CORNER: 2, GOALKICK: 3, FREEKICK: 4, PE
 export const SP_NAME = ['', 'Throw-in', 'Corner', 'Goal kick', 'Free kick', 'Penalty', 'Kick-off'];
 
 // Kick kinds
-export const KICK = { PASS: 1, LONG: 2, SHOT: 3, THROUGH: 4, CHIP: 5, CLEAR: 6, THROW: 7, PUNT: 8, FINESSE: 9, SELF: 10 };
+export const KICK = { PASS: 1, LONG: 2, SHOT: 3, THROUGH: 4, CHIP: 5, CLEAR: 6, THROW: 7, PUNT: 8, FINESSE: 9, SELF: 10, DROP: 11 };
 
 // Pitch presets (metres). Small-sided games play on smaller pitches.
 export const PITCHES = [

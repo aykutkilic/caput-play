@@ -21,7 +21,8 @@ const BARS = [
 export const BAR_LABELS = {
   attack: [['Run', 'through'], ['Pass', 'team-mate'], ['Shoot', 'goal'], ['Self', 'lift / skill']],
   defend: [['GK out', 'send keeper'], ['Press', 'hold'], ['Slide', 'tackle'], ['Jockey', 'hold']],
-  keeper: [['Rush', 'come out'], ['Press', 'hold'], ['Dive', 'save'], ['Jockey', 'hold']],
+  keeper: [['Rush', 'come out'], ['Press', 'hold'], ['Dive', 'save'], ['Block', '1v1']],
+  keeperAir: [['Catch', 'auto'], ['Catch', 'auto'], ['Punch', 'clear'], ['Catch', 'auto']],
   block: [['Block', 'leg / body'], ['Block', 'leg / body'], ['Block', 'leg / body'], ['Block', 'leg / body']],
 };
 

@@ -2,9 +2,9 @@
 // skeletal animation: every pose is computed from simulation state each frame,
 // so animations stay fluid and always agree with what the physics is doing.
 
-import { GOAL_DEPTH, BALL_R, ST, ROLE, PHASE, KICK, SP, SKILL, KH, PART } from '../shared/constants.js';
+import { GOAL_DEPTH, BALL_R, ST, ROLE, PHASE, KICK, SP, SKILL, KH, PART, GKB } from '../shared/constants.js';
 import { stats } from '../shared/physique.js';
-import { CHG_MAX, pitchOf, DIVE_BASE, DIVE_SPAN, diveReach } from '../shared/sim.js';
+import { CHG_MAX, pitchOf, DIVE_BASE, DIVE_SPAN, diveReach, SIDEARM_MAX } from '../shared/sim.js';
 import { skeleton, drawFigure } from './figure.js';
 
 export { skeleton, drawFigure };
@@ -149,15 +149,30 @@ export function poseFor(p, ctx) {
   const t = ctx.time;
 
   // locomotion (base layer): legs, counter-swinging arms, shoulders twisting
-  // against the hips, knees lifting higher at a sprint, head kept level
-  const lift = 1.2 + 0.4 * Math.max(0, A - 0.8);
-  P.lh = A * 0.8 * s; P.rh = -A * 0.8 * s;
+  // against the hips, knees lifting higher at a sprint, head kept level.
+  // Moving backwards (back-pedalling) the cycle runs the other way, shorter
+  // and more upright; sideways at a modest pace it's a side-step shuffle.
+  const vt = Math.max(0.5, sp), back = clamp(-(ctx.vf || 0) / vt, 0, 1);
+  const shuffle = clamp((Math.abs(ctx.vl || 0) / vt - 0.6) / 0.3, 0, 1) * clamp((5.5 - sp) / 2, 0, 1);
+  const lift = (1.2 + 0.4 * Math.max(0, A - 0.8)) * (1 - 0.5 * back);
+  const swing = A * 0.8 * (1 - 2 * back) * (1 - 0.3 * back);
+  P.lh = swing * s; P.rh = -swing * s;
   P.lk = 0.12 + A * (0.25 + lift * Math.max(0, c));
   P.rk = 0.12 + A * (0.25 + lift * Math.max(0, -c));
   P.lsh = -A * 0.78 * s; P.rsh = A * 0.78 * s;
   P.lel = P.rel = 0.3 + A * 1.05;
   P.tw = -0.24 * A * s;
-  P.lean = 0.04 + A * 0.2 + (1 - Math.min(1, A * 3)) * 0.015 * Math.sin(t * 2.1);
+  P.lean = 0.04 + A * 0.2 * (1 - 1.3 * back) + (1 - Math.min(1, A * 3)) * 0.015 * Math.sin(t * 2.1);
+  if (shuffle > 0) {
+    // side-step: the leading leg steps out, the other closes up to it; knees
+    // bent, on the toes, no stride
+    const lead = (ctx.vl || 0) > 0 ? 1 : -1, open = 0.5 + 0.5 * s;
+    const outL = lead < 0 ? open : 1 - open, outR = lead > 0 ? open : 1 - open;
+    P.lh = mix(P.lh, 0.28, shuffle); P.rh = mix(P.rh, 0.28, shuffle);
+    P.lk = mix(P.lk, 0.55 + 0.15 * outR, shuffle); P.rk = mix(P.rk, 0.55 + 0.15 * outL, shuffle);
+    P.la = mix(P.la, 0.06 + 0.3 * outL, shuffle); P.ra = mix(P.ra, 0.06 + 0.3 * outR, shuffle);
+    P.tw *= 1 - shuffle; P.lsh *= 1 - shuffle; P.rsh *= 1 - shuffle;
+  }
   P.head = -P.lean * 0.55;
   P.bob = A * 0.05 * Math.abs(s);
   if (A < 0.25) {
@@ -178,10 +193,33 @@ export function poseFor(p, ctx) {
     for (const side of [-1, 1]) armIK(P, side, (0.24 + 0.03 * set) * H, side * (0.17 + 0.04 * set) * H, (0.53 + 0.07 * set) * H + sway, H, g);
   }
   if (ctx.reach) {
-    // hands to the ball coming at him; for a low one he gets down behind it
-    const r = ctx.reach, low = clamp((0.55 * H - r.z) / (0.4 * H), 0, 1) * r.e;
-    P.drop += 0.12 * H * low; P.lean += 0.35 * low; P.lk += 0.4 * low; P.rk += 0.4 * low; P.lh += 0.3 * low; P.rh += 0.3 * low;
-    handsTo(P, r.f, r.r, r.z, H, r.e, 0.1 - 0.03 * low);
+    // hands to the ball coming at him, the catch shaped by its height:
+    //  * along the ground: a stoop (legs straight and together, bent at the
+    //    waist, palms up behind it) for one straight at him; a long barrier
+    //    (side-on, down on one knee behind the hands) for a hard or skidding one
+    //  * shin to waist: down behind it, scooped up
+    //  * waist to chest: the basket – forearms under it, pulled into the stomach
+    //  * chest to head: the W – hands behind it, thumbs together
+    //  * above the head: the high catch – arms up straight
+    const r = ctx.reach, zr = r.z / H, e = r.e;
+    if (zr < 0.2) {
+      if (r.fast || Math.abs(r.r) > 0.12 * H) {
+        const side = r.r >= 0 ? -1 : 1; // the knee away from the ball goes down
+        P.drop += 0.26 * H * e; P.lean += 0.5 * e; P.roll += 0.12 * side * e;
+        legIK(P, side, -0.24 * H, side * 0.02 * H, -(0.53 * H - P.drop) + 0.03, H, e); // shin back along the grass
+        if (side > 0) { P.lh = mix(P.lh, 1.2, e); P.lk = mix(P.lk, 1.5, e); } else { P.rh = mix(P.rh, 1.2, e); P.rk = mix(P.rk, 1.5, e); }
+      } else {
+        P.lh = mix(P.lh, 0.15, e); P.rh = mix(P.rh, 0.15, e); P.lk = mix(P.lk, 0.18, e); P.rk = mix(P.rk, 0.18, e);
+        P.la = mix(P.la, 0.02, e); P.ra = mix(P.ra, 0.02, e); P.lean += 0.95 * e; P.drop += 0.03 * H * e;
+      }
+      handsTo(P, r.f, r.r, r.z - 0.03, H, e, 0.075);
+    } else {
+      const low = clamp((0.55 * H - r.z) / (0.4 * H), 0, 1) * e;
+      P.drop += 0.12 * H * low; P.lean += 0.35 * low; P.lk += 0.4 * low; P.rk += 0.4 * low; P.lh += 0.3 * low; P.rh += 0.3 * low;
+      const basket = zr > 0.42 && zr < 0.72 ? e : 0, high = clamp((zr - 1.05) / 0.12, 0, 1) * e;
+      P.lean += 0.12 * basket - 0.15 * high;
+      handsTo(P, r.f, r.r, r.z - 0.06 * basket, H, e, 0.1 - 0.03 * low - 0.025 * basket);
+    }
   }
   if (ctx.holdAt) {
     // cradling it: both hands round the ball, elbows tucked
@@ -226,8 +264,9 @@ export function poseFor(p, ctx) {
       P.rh = rh; P.rk = rk; P.lh = 0.12; P.lk = 0.3;
       P.lsh = 0.55; P.lab = 0.9; P.rsh = -0.35; P.rab = 0.45; P.lean = 0.02 - 0.1 * big;
       if (ctx.fromHands) {
-        // punt: ball held out in front, dropped onto the boot, arms out for balance
-        const rel = clamp((k / cT - 0.45) / 0.35, 0, 1);
+        // punt: ball held out in front, dropped onto the boot, arms out for
+        // balance (a drop kick lets go of it earlier: it lands first)
+        const rel = clamp((k / cT - (ctx.dropKick ? 0.2 : 0.45)) / 0.35, 0, 1);
         if (rel < 1) handsTo(P, 0.36 * H, 0, 0.5 * H - 0.08 * H * rel, H, 1 - rel, 0.1);
         P.lsh = mix(P.lsh, 1.2, rel); P.lab = mix(P.lab, 0.85, rel); P.lel = mix(P.lel, 0.4, rel);
         P.rsh = mix(P.rsh, 0.3, rel); P.rab = mix(P.rab, 0.7, rel); P.rel = mix(P.rel, 0.3, rel);
@@ -253,6 +292,14 @@ export function poseFor(p, ctx) {
         P.rsh = k < cT ? mix(0.5, -0.85, u) : mix(0.3, 1.25, Math.min(1, f * 2.2)); P.rel = 0.15; P.rab = 0.1;
         P.lsh = 0.95; P.lel = 0.55; P.lab = 0.55;
         P.lh = 0.7 * low + 0.2; P.lk = 0.85 * low + 0.2; P.rh = -0.3 * low; P.rk = 1.2 * low + 0.2;
+      } else if (ctx.sidearm) {
+        // sidearm: the arm swings back at shoulder height, the body coiled,
+        // then whips round flat across the front
+        const u = k < cT ? ease(k / cT) : 1, f = k < cT ? 0 : clamp((k - cT) / 12, 0, 1);
+        P.rsh = k < cT ? mix(0.6, -1.15, u) : mix(-0.6, 1.35, ease(Math.min(1, f * 1.6))); P.rab = k < cT ? mix(0.4, 1.0, u) : mix(1.0, 0.45, f);
+        P.rel = 0.35; P.lsh = 0.9; P.lab = 0.6; P.lel = 0.5;
+        P.tw = k < cT ? 0.6 * u : mix(0.6, -0.45, Math.min(1, f * 1.6)); P.lean = 0.12 + 0.1 * f;
+        P.lh = 0.5; P.lk = 0.35; P.rh = -0.2; P.rk = 0.4; P.drop = 0.04 * H;
       } else {
         // overarm: the arm goes back behind his head, then whips over and through
         const u = k < cT ? ease(k / cT) : 1, f = k < cT ? 0 : clamp((k - cT) / 14, 0, 1);
@@ -321,14 +368,38 @@ export function poseFor(p, ctx) {
       break;
     }
     case ST.DIVE: {
+      if (p.spr === GKB.STAR) {
+        // star jump: a small hop with arms up and out in a V, legs wide
+        const e = clamp(k / 4, 0, 1) * clamp((p.stDur - k) / 8, 0, 1);
+        P.lsh = mix(P.lsh, 3.05, e); P.rsh = mix(P.rsh, 3.05, e); P.lab = mix(P.lab, 0.95, e); P.rab = mix(P.rab, 0.95, e);
+        P.lel = P.rel = mix(P.lel, 0.08, e);
+        P.la = mix(P.la, 0.45, e); P.ra = mix(P.ra, 0.45, e); P.lh = mix(P.lh, 0.06, e); P.rh = mix(P.rh, 0.06, e);
+        P.lk = mix(P.lk, 0.18, e); P.rk = mix(P.rk, 0.18, e); P.lean = mix(P.lean, 0.06, e); P.tw *= 1 - e;
+        break;
+      }
+      if (p.spr === GKB.KNEE) {
+        // K-barrier: down on one knee towards the near post, the shin along
+        // the grass, the other foot planted, body upright, hands cupped low
+        const e = clamp(k / 6, 0, 1) * clamp((p.stDur - k) / 10, 0, 1);
+        const side = Math.sin(ctx.diveRel) >= 0 ? 1 : -1; // (+: his R side, see skeleton)
+        P.drop = mix(P.drop, 0.25 * H, e); P.lean = mix(P.lean, 0.18, e); P.tw *= 1 - e;
+        const hz = 0.53 * H - P.drop;
+        legIK(P, side, -0.05 * H, side * 0.24 * H, -hz + 0.03, H, e);   // the knee down, shin out along the grass
+        legIK(P, -side, 0.22 * H, -side * 0.05 * H, -hz, H, e);         // the planted foot
+        handsTo(P, 0.2 * H, 0, 0.17 * H, H, e, 0.075);
+        break;
+      }
       // How big a dive (from its length, see DIVE_BASE in the sim): a quick
       // hop tilts him a little and he's straight back on his feet; a full
       // stretch takes him horizontal in the air, he lands on his side, stays
       // down a moment, then pushes himself up – to his knees, then his feet.
+      // A collapse (a low ball close to him) has no spring: the legs fold and
+      // he drops straight onto his side.
       const rel = ctx.diveRel, air = p.z > 0.02;
       const big = p.spr ? 1 : clamp((p.stDur - 2 * DIVE_BASE) / DIVE_SPAN, 0, 1);
-      const lieMax = 0.3 + 0.7 * big, upT = Math.round(10 + 14 * big), left = p.stDur - k;
-      let lie = (air ? clamp(k / 9, 0, 1) : clamp(k / 5, 0, 1)) * lieMax;
+      const collapse = !p.spr && p.stB < 0.5 && big < 0.45;
+      const lieMax = collapse ? 0.95 : 0.3 + 0.7 * big, upT = Math.round(10 + 14 * big), left = p.stDur - k;
+      let lie = (air && !collapse ? clamp(k / 9, 0, 1) : clamp(k / (collapse ? 6 : 5), 0, 1)) * lieMax;
       if (left < upT) lie *= ease(left / upT);
       const up = left < upT ? 1 - left / upT : 0;        // getting up (0 .. 1)
       const env = clamp(k / 7, 0, 1) * (left < upT ? ease(left / upT) : 1);
@@ -348,6 +419,13 @@ export function poseFor(p, ctx) {
         P.lsh = P.rsh = mix(mix(P.lsh, 2.2, env), 0.85, hug); P.lel = P.rel = mix(0.5 * env, 2.1, hug); P.lab = P.rab = mix(-0.1, 0.15, hug);
       }
       P.lk = 0.25; P.rk = mix(P.rk, 0.9, env); P.rh = 0.5 * env;
+      if (collapse) { const f = clamp(1 - k / 8, 0, 1) * env; P.lk = mix(P.lk, 1.3, f); P.rk = mix(P.rk, 1.5, f); P.lh = mix(P.lh, 0.6, f); }
+      if (p.hit === 2 && !ctx.diveHold) {
+        // tipped it: the top hand stays up where it flicked the ball, the other comes in
+        const top = Math.sin(rel) >= 0 ? 1 : -1;
+        if (top > 0) { P.rsh = 3.1; P.rel = 0.05; P.lsh = mix(P.lsh, 1.5, env); P.lel = 1.1; }
+        else { P.lsh = 3.1; P.lel = 0.05; P.rsh = mix(P.rsh, 1.5, env); P.rel = 1.1; }
+      }
       if (up > 0) {
         // pushing himself up off the grass: a hand down, a knee under him
         const u = Math.sin(up * Math.PI);
@@ -358,6 +436,28 @@ export function poseFor(p, ctx) {
         // spread at the shooter's feet: arms and legs out wide, a star on its side
         P.lsh = P.rsh = mix(P.lsh, 1.7, env); P.lab = P.rab = 0.9 * env;
         P.la = P.ra = 0.55 * env; P.lk = P.rk = 0.2; P.rh = 0.2 * env;
+      }
+      break;
+    }
+    case ST.PUNCH: case ST.TIP: {
+      // punching it clear: the fist(s) driven through where it was; tipping it
+      // over: one arm up to it, the wrist flicking it on, leaning back. In the
+      // air, the knee nearest the play comes up.
+      const c2 = ctx.contact;
+      const ext = k < 5 ? ease(k / 5) : 1 - clamp((k - 9) / Math.max(1, p.stDur - 9), 0, 1);
+      if (p.st === ST.PUNCH && p.stA === 2) {
+        handsTo(P, c2.f + 0.12 * H * ext, c2.r, c2.z + 0.05 * H * ext, H, ext, 0.055);
+        P.lean = mix(P.lean, 0.15, ext);
+      } else {
+        const side = c2.r >= 0 ? 1 : -1, up = p.st === ST.TIP;
+        armIK(P, side, c2.f + (up ? 0.02 : 0.12) * H * ext, c2.r, c2.z + (up ? 0.1 : 0.05) * H * ext, H, ext);
+        if (side > 0) { P.lsh = mix(P.lsh, 0.9, ext); P.lab = mix(P.lab, 0.6, ext); P.lel = mix(P.lel, 1.2, ext); }
+        else { P.rsh = mix(P.rsh, 0.9, ext); P.rab = mix(P.rab, 0.6, ext); P.rel = mix(P.rel, 1.2, ext); }
+        P.lean = mix(P.lean, up ? -0.28 : 0.1, ext); P.roll = mix(P.roll, -0.15 * side, ext);
+      }
+      if (p.z > 0.04) {
+        const u = clamp(p.z / 0.2, 0, 1);
+        P.lh = mix(P.lh, 1.25, u); P.lk = mix(P.lk, 1.9, u); P.rh = mix(P.rh, 0.1, u); P.rk = mix(P.rk, 0.35, u);
       }
       break;
     }
@@ -847,9 +947,12 @@ export class Renderer {
 
   animState(p, dt) {
     let a = this.anim.get(p.id);
-    if (!a) { a = { ph: Math.random() * TAU, sp: 0, face: p.face, turn: 0, P: null }; this.anim.set(p.id, a); }
+    if (!a) { a = { ph: Math.random() * TAU, sp: 0, face: p.face, turn: 0, P: null, vf: 0, vl: 0 }; this.anim.set(p.id, a); }
     const sp = Math.hypot(p.vx, p.vy);
     a.sp += (sp - a.sp) * (1 - Math.exp(-dt * 12));
+    // velocity in his own frame: forwards, and towards his R side (see skeleton)
+    const cf = Math.cos(p.face), sf = Math.sin(p.face), kv = 1 - Math.exp(-dt * 10);
+    a.vf += (p.vx * cf + p.vy * sf - a.vf) * kv; a.vl += (-p.vx * sf + p.vy * cf - a.vl) * kv;
     // turn rate, for leaning into curves
     const turn = dt > 0 ? angDiff(a.face, p.face) / dt : 0;
     a.turn += (clamp(turn, -12, 12) - a.turn) * (1 - Math.exp(-dt * 10));
@@ -899,6 +1002,14 @@ export class Renderer {
       const c = [x + fx * 0.28, y + fy * 0.28, 0.45];
       return [inHands[0] + (c[0] - inHands[0]) * u * u, inHands[1] + (c[1] - inHands[1]) * u * u, inHands[2] + (c[2] - inHands[2]) * u * u];
     }
+    if (p.st === ST.KICK && p.kk === KICK.DROP) {
+      // a drop kick: let go of early, it falls to the grass in front of him and
+      // is struck as it comes up off it
+      const u = p.stT / Math.max(1, p.stA), c = [x + fx * 0.3, y + fy * 0.3];
+      if (u < 0.2) return inHands;
+      const v = clamp((u - 0.2) / 0.6, 0, 1), z = u < 0.8 ? mix(inHands[2], BALL_R, v * v) : BALL_R + (u - 0.8) / 0.2 * 0.05;
+      return [mix(inHands[0], c[0], v), mix(inHands[1], c[1], v), z];
+    }
     return inHands;
   }
 
@@ -932,12 +1043,15 @@ export class Renderer {
       throwIn: b.owner === p.id && b.held && m.spTaker === p.id,
       throwInAnim: p.st === ST.THROW && Math.abs(Math.abs(p.y) - (pitchOf(w).W / 2)) < 1.2,
       throwRoll: p.st === ST.THROW && p.kh === KH.GROUND,
-      fromHands: p.st === ST.KICK && p.kk === KICK.PUNT,
+      fromHands: p.st === ST.KICK && (p.kk === KICK.PUNT || p.kk === KICK.DROP),
+      dropKick: p.st === ST.KICK && p.kk === KICK.DROP,
+      sidearm: p.st === ST.THROW && p.kh === KH.MID && m.spTaker !== p.id && Math.hypot(p.kx - x, p.ky - y) <= SIDEARM_MAX,
+      vf: a.vf, vl: a.vl,
       diveHold: p.st === ST.DIVE && holding,
       celebrate: info.celebrateTeam === p.team && p.st === ST.IDLE,
       diveRel: angDiff(p.face, p.stA),
       diveEl: p.st === ST.DIVE && !p.spr ? diveReach(p, s)[1] : 0, // a high dive: body on a diagonal
-      block: null, reach: null, windup: null, gkSet: 0,
+      block: null, reach: null, windup: null, gkSet: 0, contact: null,
     };
     if (ctx.gkStance) {
       // set: hands up a little while an opponent has the ball within shooting range
@@ -954,6 +1068,9 @@ export class Renderer {
     if (p.st === ST.BLOCK) {
       const [df, dr] = local(p.kx, p.ky);
       ctx.block = { df, dr, z: p.stB - z };
+    } else if (p.st === ST.PUNCH || p.st === ST.TIP) {
+      const [df, dr] = local(p.kx, p.ky);
+      ctx.contact = { f: Math.max(0.08 * s.H, df), r: dr, z: clamp(p.stB - z, 0.5 * s.H, 1.35 * s.H) };
     } else if (ctx.gkStance && !ctx.holding && b.owner < 0 && (p.st === ST.IDLE || p.st === ST.STUMBLE)) {
       // keeper: hands to where a ball coming at him will reach him – they come
       // up in the last half second, earlier the faster it is
@@ -973,7 +1090,7 @@ export class Renderer {
           // not past arm's length: the hands go out towards it as far as they can
           const reach = 0.6 * s.H, hd = Math.hypot(df, dr);
           const kk = hd > reach ? reach / hd : 1;
-          ctx.reach = { f: Math.max(0.12 * s.H, df * kk), r: dr * kk, z: clamp(pz - z, 0.12, s.H * 1.22), e: ease(e) };
+          ctx.reach = { f: Math.max(0.12 * s.H, df * kk), r: dr * kk, z: clamp(pz - z, 0.12, s.H * 1.22), e: ease(e), fast: v2 > 121 };
         }
       }
     }

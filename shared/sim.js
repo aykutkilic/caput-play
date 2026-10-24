@@ -8,7 +8,7 @@
 
 import {
   DT, G, BALL_R, PLAYER_R, BTN, KT, KH, KICK_MASK, packKick, PHASE, ST, ROLE, SP, KICK, PITCHES, GOAL_DEPTH, POST_R, SKILL,
-  GOAL_SIZES, PART, MEET,
+  GOAL_SIZES, PART, MEET, GKB,
 } from './constants.js';
 import { stats } from './physique.js';
 import { aiThink } from './ai.js';
@@ -229,7 +229,9 @@ export function meetBall(w, p) {
   }
   const threat = c.threat[p.team];
   const v0 = Math.hypot(p.vx, p.vy);
-  const top = p.qa || p.chgBtn ? s.reach + 0.05 : 1.45;
+  // (a keeper who may use his hands goes for it as high as he can catch it)
+  const hands = p.role === ROLE.GK && keeperHands(w, p) && inOwnBox(w, p.team, p.x, p.y, 0.6);
+  const top = hands ? s.H * 1.22 + s.jump : p.qa || p.chgBtn ? s.reach + 0.05 : 1.45;
   const rolling = w.ball.z < 0.3 && Math.abs(w.ball.vz) < 1;
   let res = null, best = 1e9, early = null;
   for (let k = 1; k < pts.length; k++) {
@@ -735,19 +737,27 @@ export function planKick(w, p, kind, power, tx, ty, tid = -1, kh) {
   }
 }
 
+// A keeper's distribution from his hands: rolled out along the ground, thrown
+// (sidearm – flat and quick – up to SIDEARM_MAX, overarm further), a drop kick
+// (dropped, struck on the half-volley as it comes up: low and driven) beyond
+// throwing range, or punted (high and long).
+export const SIDEARM_MAX = 20, THROW_MAX = 34;
+
 // wound: ticks of wind-up already shown while the key was held – the foot
 // comes through that much sooner (straight away after a proper hold).
 export function startKick(w, p, kind, power, quick = false, tx, ty, tid = -1, kh, wound = 0) {
   const b = w.ball;
   const fromHands = b.owner === p.id && b.held === 1;
   planKick(w, p, kind, power, tx, ty, tid, kh);
+  if (fromHands && kind === KICK.THROW && p.kh === KH.MID && w.m.spTaker !== p.id
+    && Math.hypot(p.kx - b.x, p.ky - b.y) > THROW_MAX) p.kk = kind = KICK.DROP;
   let contact;
-  if (fromHands) contact = kind === KICK.PUNT ? 12 : 10;
+  if (fromHands) contact = kind === KICK.PUNT ? 12 : kind === KICK.DROP ? 15 : 10;
   else if (kind === KICK.SHOT || kind === KICK.FINESSE) contact = quick ? 3 : 7;
   else if (kind === KICK.LONG || kind === KICK.CLEAR) contact = quick ? 3 : 6;
   else contact = quick ? 2 : 4;
   if (!fromHands && wound > 0) contact = Math.max(1, contact - wound);
-  p.st = fromHands && kind !== KICK.PUNT ? ST.THROW : ST.KICK;
+  p.st = fromHands && kind !== KICK.PUNT && kind !== KICK.DROP ? ST.THROW : ST.KICK;
   p.stT = 0; p.stA = contact; p.stDur = contact + (fromHands ? 12 : 11); p.stB = 0; p.hit = 0;
   p.chgBtn = 0; p.chg = 0; p.qa = 0; p.qt = 0;
 }
@@ -762,7 +772,7 @@ function beginOwnKick(w, p, packed, power, quick) {
   const pen = m.spTaker === p.id && m.spType === SP.PENALTY;
   let kind;
   if (throwIn) kind = kh === KH.GROUND ? KICK.THROW : KICK.LONG;
-  else if (held) kind = kh === KH.GROUND && target !== KT.GOAL ? KICK.THROW : KICK.PUNT;
+  else if (held) kind = kh === KH.HIGH || target === KT.GOAL ? KICK.PUNT : KICK.THROW; // ground: rolled; mid: thrown (or a drop kick, see startKick)
   else if (pen) kind = (p.ib & BTN.R2) ? KICK.FINESSE : KICK.SHOT;
   else kind = kickKind(p, target);
   if (kind === KICK.PUNT) kh = KH.HIGH;
@@ -899,10 +909,13 @@ export function beginDive(w, p, ang, height, tArr = 0.45, dist = Infinity) {
   // diving diagonally – hands up, feet low (see diveReach) – which costs
   // sideways reach, so he has to travel that much further
   const rise = clamp((p.stB - 0.6) * 0.5, 0, Math.min(0.75, 0.25 + s.jump));
+  // a low ball just out of reach: no spring – the legs give way and he
+  // collapses sideways onto it (quicker down, and up again, than a full dive)
+  const collapse = p.stB < 0.5 && dist < 1.7;
   let spd = cap;
-  if (Number.isFinite(dist)) spd = clamp(Math.max(0, dist - 0.5) / t * 1.1, 1.5, cap);
+  if (Number.isFinite(dist)) spd = collapse ? clamp(Math.max(0, dist - 0.4) / t * 1.1, 1.0, cap * 0.6) : clamp(Math.max(0, dist - 0.5) / t * 1.1, 1.5, cap);
   p.vx = Math.cos(ang) * spd; p.vy = Math.sin(ang) * spd; p.spr = 0;
-  p.vz = rise > 0.05 ? Math.min(4.2, rise / t + 0.5 * G * t) : 1.2;
+  p.vz = collapse ? 0.45 : rise > 0.05 ? Math.min(4.2, rise / t + 0.5 * G * t) : 1.2;
   // in the air for the flight, then on the ground: a full-stretch or high
   // dive puts him down for longer than a quick hop (the renderer reads how
   // big a dive it was from stDur – see DIVE_BASE)
@@ -920,7 +933,8 @@ export const DIVE_BASE = 18, DIVE_SPAN = 34; // ticks down after a dive: quick h
 // body itself only goes up so far); he levels out as he lands. Given the ball,
 // the arms swing up to ~35 degrees up or down from that towards it.
 export function diveReach(p, s, ball) {
-  const reach = 0.55 * s.H + s.diveReach * 0.5;
+  // the arms come up and out over the first ~0.12 s as he pushes off
+  const reach = (0.55 * s.H + s.diveReach * 0.5) * clamp(0.6 + p.stT / 7 * 0.4, 0.6, 1);
   const z0 = p.z + 0.35;
   const level = p.stT < 6 ? 1 : clamp(p.z / 0.12, 0, 1); // levels out as he lands
   let el = Math.asin(clamp((p.stB + 0.05 - z0) / reach, 0.03, 0.85)) * level;
@@ -1077,18 +1091,80 @@ function deflect(w, p, nx, ny, nz, limb) {
   w.events.push({ k: 'block', x: b.x, y: b.y, z: b.z, v: Math.abs(vn), id: p.id });
 }
 
-// Keeper spreading himself at a shooter's feet: a low, wide barrier across the
-// line of the shot (arms one way, legs the other), a short step towards the
-// ball. Beaten by a chip or a shot past the ends of his body.
-// toBall: the direction the ball is coming from.
-export function beginSpread(w, p, toBall) {
+// A keeper's one-on-one block at a shooter close in (GKB), thrown as the shot
+// comes – no time to read it and dive. toBall: the direction it comes from.
+//  * spread: a low, wide barrier on his side across the line of the shot (arms
+//    one way, legs the other) after a short step at it; beaten by a chip or a
+//    shot past the ends of his body.
+//  * star jump: up off both feet, arms up and out in a V and legs wide – the
+//    corners covered, a gap between his legs.
+//  * K-barrier: down onto one knee with the shin along the grass towards the
+//    near post, body upright, hands cupped low in front – for a shot from a
+//    tight angle: near post and the ground covered, he stays tall.
+export function beginBlock1v1(w, p, toBall, kind) {
   if (!isFree(p) || p.z > 0) return;
-  p.st = ST.DIVE; p.stT = 0; p.stDur = 46; p.stB = 0.25; p.hit = 0; p.spr = 1;
-  p.stA = toBall + Math.PI / 2; // body lies across the shot
-  p.face = toBall;
-  p.vx = Math.cos(toBall) * 2.2; p.vy = Math.sin(toBall) * 2.2; p.vz = 0.8;
+  p.st = ST.DIVE; p.stT = 0; p.hit = 0; p.spr = kind; p.face = toBall;
+  const fx = Math.cos(toBall), fy = Math.sin(toBall);
+  if (kind === GKB.STAR) {
+    p.stA = toBall + Math.PI / 2; p.stB = 1.2; p.stDur = 32;
+    p.vx = fx * 0.8; p.vy = fy * 0.8; p.vz = 1.7; // a small hop (~15 cm): he stays big, not high
+  } else if (kind === GKB.KNEE) {
+    // the knee goes down on the near post side (stA points that way)
+    const pit = pitchOf(w), gx = -teamDir(w, p.team) * pit.L / 2;
+    const py = (w.ball.y >= 0 ? 1 : -1) * pit.goalW / 2;
+    const side = -fy * (gx - p.x) + fx * (py - p.y) >= 0 ? 1 : -1; // +1: to his left
+    p.stA = toBall + side * Math.PI / 2; p.stB = 0.2; p.stDur = 38;
+    p.vx = fx * 0.6; p.vy = fy * 0.6; p.vz = 0;
+  } else {
+    p.stA = toBall + Math.PI / 2; p.stB = 0.25; p.stDur = 46; // body lies across the shot
+    p.vx = fx * 2.2; p.vy = fy * 2.2; p.vz = 0.8;
+  }
   p.chgBtn = 0; p.qa = 0;
   w.events.push({ k: 'dive', x: p.x, y: p.y });
+}
+export function beginSpread(w, p, toBall) { beginBlock1v1(w, p, toBall, GKB.SPREAD); }
+
+// Which block suits a shot from (bx, by), d metres from the keeper: the
+// K-barrier from a tight angle, spread close in, the star jump a little further.
+export function blockKind(w, bx, by, d) {
+  const pit = pitchOf(w);
+  if (Math.abs(by) > pit.goalW / 2 + 0.5 && d < 6.5) return GKB.KNEE;
+  return d < 4.2 ? GKB.SPREAD : GKB.STAR;
+}
+
+// The star jump's and the K-barrier's body as limb segments
+// [ax, ay, az, bx, by, bz] (see beginBlock1v1). The arm on the ball's side
+// still goes to it on reflex, as far as it reaches.
+const KNEE_HANDS = 2;
+function blockSegs(p, s, b) {
+  const H = s.H, fx = Math.cos(p.face), fy = Math.sin(p.face);
+  const at = (f, l, z) => [p.x + fx * f - fy * l, p.y + fy * f + fx * l, p.z + z]; // l: to his left
+  const bl = -fy * (b.x - p.x) + fx * (b.y - p.y), bz = b.z - p.z; // the ball: to his left, up
+  if (p.spr === GKB.STAR) {
+    const e = clamp(p.stT / 6, 0.35, 1), arm = 0.5 * H, shz = 0.82 * H, up = 0.45;
+    const segs = [];
+    for (const side of [-1, 1]) {
+      const sl = side * 0.12 * H;
+      const el = bl * side > 0.12 * H ? clamp(Math.atan2(bz - shz, Math.abs(bl - sl)), up - 1.1, up + 0.7) : up;
+      segs.push([...at(0, sl, shz), ...at(0.05, sl + side * arm * Math.cos(el) * e, shz + arm * Math.sin(el) * e)]);
+      segs.push([...at(0, side * 0.06 * H, 0.5 * H), ...at(0, side * (0.06 * H + 0.25 * H * e), 0.06)]);
+    }
+    // his body is as wide as his shoulders
+    for (const side of [-1, 1]) segs.push([...at(0, side * 0.1 * H, 0.5 * H), ...at(0, side * 0.1 * H, 0.95 * H)]);
+    return segs;
+  }
+  const side = Math.sin(angDiff(p.face, p.stA)) >= 0 ? 1 : -1, e = clamp(p.stT / 7, 0.35, 1);
+  // the hands: cupped low in front, going out towards the ball
+  const shz = 0.62 * H, reach = 0.52 * H, dl = bl, dz = bz - shz, dn = Math.hypot(dl, dz);
+  const k = dn > reach ? reach / dn : 1;
+  const hl = clamp(dl * k, -reach, reach), hz = Math.max(0.12, shz + dz * k);
+  return [
+    [...at(0.1, side * 0.05, 0.11), ...at(-0.05, side * (0.15 + 0.4 * e), 0.11)], // shin along the grass
+    [...at(0.05, -side * 0.22, 0.08), ...at(0.18, -side * 0.18, 0.3 * H)],      // standing leg
+    [...at(0.25, hl * 0.4, (shz + hz) / 2), ...at(0.3, hl, hz)],               // hands, out to the ball
+    [...at(0.05, -0.1 * H, 0.33 * H), ...at(0.12, -0.1 * H, 0.8 * H)],         // body, shoulder wide
+    [...at(0.05, 0.1 * H, 0.33 * H), ...at(0.12, 0.1 * H, 0.8 * H)],
+  ];
 }
 
 // Contextual technique for an airborne / incoming ball (PES-style buffered input).
@@ -1138,6 +1214,9 @@ function predictBallShort(b, t) {
 export function tryQueued(w, p) {
   const b = w.ball;
   if (!p.qa || b.owner >= 0 || p.kcd > 0 || !isFree(p) || p.z > 0) return false;
+  // a keeper who may use his hands takes a ball in the air with them (a kick
+  // key down then means punch it – see gkSave)
+  if (p.role === ROLE.GK && b.z > 0.5 && keeperHands(w, p) && inOwnBox(w, p.team, p.x, p.y, 0.6) && inOwnBox(w, p.team, b.x, b.y, 0.3)) return false;
   const d0 = Math.hypot(b.x - p.x, b.y - p.y);
   if (d0 > 6) return false;
   const s = stOf(p), pit = pitchOf(w), dir = teamDir(w, p.team);
@@ -1353,10 +1432,13 @@ function launch(w, p, tech) {
   const kind = p.kk, pw = p.kp;
   const fromHands = b.held === 1;
   if (fromHands) {
-    // where it leaves his hands: onto the boot for a punt, low for a keeper
-    // rolling it out, over his head for a throw-in or an overarm throw
+    // where it leaves his hands: onto the boot for a punt, off the grass for a
+    // drop kick, low for a keeper rolling it out, at shoulder height for a
+    // sidearm throw, over his head for a throw-in or an overarm throw
     b.held = 0;
-    b.z = kind === KICK.PUNT ? 0.45 : w.m.spTaker === p.id ? 2.0 : p.kh === KH.GROUND ? 0.3 : 2.0;
+    const dt = Math.hypot(p.kx - b.x, p.ky - b.y);
+    b.z = kind === KICK.PUNT ? 0.45 : kind === KICK.DROP ? 0.16 : w.m.spTaker === p.id ? 2.0
+      : p.kh === KH.GROUND ? 0.3 : kind === KICK.THROW && dt <= SIDEARM_MAX ? 1.35 : 2.0;
   }
   let dx = p.kx - b.x, dy = p.ky - b.y;
   let d = Math.hypot(dx, dy);
@@ -1374,10 +1456,10 @@ function launch(w, p, tech) {
 
   switch (kind) {
     case KICK.PASS: case KICK.THROUGH: case KICK.THROW:
-    case KICK.LONG: case KICK.PUNT: case KICK.CLEAR: {
+    case KICK.LONG: case KICK.PUNT: case KICK.CLEAR: case KICK.DROP: {
       const kh = p.kh;
       const footOnly = tech === ST.KICK || tech === ST.THROW;
-      if (kh === KH.GROUND && footOnly && kind !== KICK.LONG && kind !== KICK.PUNT && kind !== KICK.CLEAR) {
+      if (kh === KH.GROUND && footOnly && kind !== KICK.LONG && kind !== KICK.PUNT && kind !== KICK.CLEAR && kind !== KICK.DROP) {
         // along the ground, arriving at a pace the receiver can control
         const vEnd = p.kv > 0 ? p.kv : passEndSpeed(kind, d, pw);
         vh = Math.min(groundSpeedFor(d, vEnd), kind === KICK.THROW ? 17 : 28) * (0.97 + 0.06 * s.shot);
@@ -1387,12 +1469,15 @@ function launch(w, p, tech) {
         // lofted: arrive at the chosen height (feet / chest / head) after the planned flight
         const lofted = kh !== KH.GROUND ? kh : KH.MID; // a header/volley "to feet" is still in the air
         const zt = targetHeight(w, p, kind, kh);
+        // (a drop kick is driven: flatter and quicker than a lofted pass)
         const T = p.kv > 0 && p.kt >= 0 && kh !== KH.GROUND
           ? p.kv
-          : loftTime(d, kind === KICK.PUNT || kind === KICK.CLEAR ? KH.HIGH : lofted, pw);
-        vh = d / T * 1.04;
+          : kind === KICK.DROP ? Math.max(0.35, d / (clamp(14 + 0.25 * d, 14, 24) + 2 * pw))
+            : loftTime(d, kind === KICK.PUNT || kind === KICK.CLEAR ? KH.HIGH : lofted, pw);
+        vh = d / T * (kind === KICK.DROP ? 1.1 : 1.04);
         vz = (zt - b.z + 0.5 * G * T * T * 1.03) / T;
-        const cap = (fromHands && kind !== KICK.PUNT ? 21 : isHead ? 16 : 32) * s.shot;
+        const thrown = fromHands && kind !== KICK.PUNT && kind !== KICK.DROP;
+        const cap = (thrown ? (b.z < 1.6 ? 17 : 21) : isHead ? 16 : 32) * s.shot;
         const v = Math.hypot(vh, vz);
         if (v > cap) { vh *= cap / v; vz *= cap / v; }
         err = 0.018 + (misalign > 1.4 ? 0.05 : 0) + pressure;
@@ -1531,8 +1616,11 @@ function handleButtons(w, p) {
     if (mine) {
       if (free) { p.chgBtn = packed; p.chg = 0; }
     } else if (!owner) {
+      // keeper: a ball coming in – a dive; but the shoot key at one that isn't
+      // going in (a cross) means punch it (see gkSave)
       const ownGoalDanger = p.role === ROLE.GK && inOwnBox(w, p.team, b.x, b.y, 8)
-        && (b.vx * teamDir(w, p.team) < -3) && Math.hypot(b.x - p.x, b.y - p.y) > 1.2;
+        && (b.vx * teamDir(w, p.team) < -3) && Math.hypot(b.x - p.x, b.y - p.y) > 1.2
+        && (pressed !== KT.GOAL || goalLineCross(w, p.team, b).on);
       const plan = !ownGoalDanger && wantsBlock(w, p) ? blockPlan(w, p) : null;
       if (ownGoalDanger) humanDive(w, p);  // keeper: hands
       else if (plan && free) beginBlock(w, p, plan);
@@ -1546,6 +1634,10 @@ function handleButtons(w, p) {
       if (pressed === KT.GOAL && free) {
         if (p.role === ROLE.GK && inOwnBox(w, p.team, p.x, p.y, 2)) humanDive(w, p);
         else beginSlide(w, p);
+      } else if (pressed === KT.SELF && free && p.role === ROLE.GK && inOwnBox(w, p.team, p.x, p.y, 2)) {
+        // keeper: a one-on-one block at the man on the ball, the one that suits where he is
+        const d = Math.hypot(b.x - p.x, b.y - p.y);
+        if (d < 9) beginBlock1v1(w, p, Math.atan2(b.y - p.y, b.x - p.x), blockKind(w, b.x, b.y, d));
       } else if (pressed === KT.RUN) {
         if (p.team === 0) m.gkc0 = 90; else m.gkc1 = 90;
       }
@@ -1757,10 +1849,11 @@ function movement(w, p, s) {
     if (om < sm - 1e-6) { if (om > 1e-3) { dx = ox / om; dy = oy / om; } sm = om; }
   }
 
-  // can't sprint as fast sideways/backwards relative to facing
+  // can't sprint as fast sideways/backwards relative to facing (a keeper
+  // back-pedalling, facing the play, is slower still)
   if (sm > 0.1) {
     const align = Math.cos(angDiff(p.face, Math.atan2(dy, dx)));
-    speed *= 0.72 + 0.28 * Math.max(0, align);
+    speed *= align >= 0 || p.role !== ROLE.GK ? 0.72 + 0.28 * Math.max(0, align) : 0.72 + 0.17 * align;
   }
   const tvx = dx * sm * speed, tvy = dy * sm * speed;
   const v = Math.hypot(p.vx, p.vy), vt = Math.hypot(tvx, tvy);
@@ -1889,6 +1982,10 @@ function stateUpdate(w, p, s) {
     }
     case ST.BLOCK: {
       if (p.z <= 0 && p.stT > 8) { p.vx *= 0.8; p.vy *= 0.8; }
+      break;
+    }
+    case ST.PUNCH: case ST.TIP: {
+      if (p.z <= 0 && p.stT > 4) { p.vx *= 0.82; p.vy *= 0.82; }
       break;
     }
     case ST.FALLEN: {
@@ -2229,6 +2326,86 @@ function goalFrame(w) {
 
 function canControl(p) { return isFree(p) && p.kcd === 0 && p.z < 0.3; }
 
+// AI keepers' choices at the ball by the room's AI level: how often a ball
+// heading in is tipped over the bar / round the post (rather than parried
+// back into play) and a high ball in a crowd punched clear (rather than risk
+// the catch). A human keeper chooses for himself.
+const GK_TIP = [0.5, 0.78, 0.92], GK_PUNCH = [0.35, 0.65, 0.85];
+
+// Where the ball would cross a team's goal line: on target or not (between
+// the posts, under the bar – a ball that bounces first counts).
+function goalLineCross(w, team, b) {
+  const pit = pitchOf(w), dir = teamDir(w, team), gx = -dir * pit.L / 2;
+  const t = b.vx * dir < -0.5 ? (gx - b.x) / b.vx : -1;
+  if (!(t > 0 && t < 2.5)) return { on: false, t: -1, y: 0, z: 0 };
+  const y = b.y + b.vy * t, z = b.z + b.vz * t - 0.5 * G * t * t;
+  return { on: Math.abs(y) < pit.goalW / 2 + 0.1 && z < pit.goalH + 0.1, t, y, z };
+}
+
+// The keeper's hands at the ball for a moment after he has punched it or
+// tipped it over (the renderer reaches to kx, ky, stB).
+function beginHandsTo(w, p, st, at, kind) {
+  p.st = st; p.stT = 0; p.stDur = st === ST.PUNCH ? 24 : 26; p.stA = kind; p.hit = 1;
+  p.kx = at[0]; p.ky = at[1]; p.stB = at[2];
+  p.chgBtn = 0; p.chg = 0; p.qa = 0;
+}
+
+// Tipping a ball that is going in over the bar (a high one, dipping under
+// it) or round the post (one by the post, at full stretch in a dive): out
+// for a corner instead of back into play. False if a touch can't get it there.
+function tipAway(w, p, s, tgt, at) {
+  const b = w.ball, pit = pitchOf(w), gx = -teamDir(w, p.team) * pit.L / 2;
+  const k = 0.72 + rnd(w) * 0.1, vx = b.vx * k;
+  const t = (gx - b.x) / vx; // till it gets to the line, slowed by the touch
+  if (!(t > 0.02 && t < 2)) return false;
+  let over;
+  if (tgt.z > pit.goalH - 0.8 && b.z > 0.8 * s.H) over = true;
+  else if (p.st === ST.DIVE && !p.spr && Math.abs(tgt.y) > pit.goalW / 2 - 0.9) over = false;
+  else return false;
+  if (over) {
+    const vz = (pit.goalH + 0.35 - b.z + 0.5 * G * t * t) / t;
+    if (vz - b.vz > 7.5) return false; // more than fingertips can give it
+    b.vy = b.vy * k + (rnd(w) - 0.5) * 1.2; b.vz = vz + rnd(w) * 0.8;
+  } else {
+    const side = tgt.y >= 0 ? 1 : -1;
+    const vy = (side * (pit.goalW / 2 + 0.45 + rnd(w) * 0.4) - b.y) / t;
+    if (Math.abs(vy - b.vy) > 9) return false;
+    b.vy = vy; b.vz = b.vz * 0.6 + 0.4;
+  }
+  b.vx = vx; b.spin = 0;
+  b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.kt = 0; b.tgt = -1;
+  p.kcd = 25;
+  if (p.st === ST.DIVE) p.hit = 2; // (the top hand flicks it – see the renderer)
+  else if (isFree(p)) beginHandsTo(w, p, ST.TIP, at, over ? 0 : 1);
+  invalidatePath(w);
+  w.events.push({ k: 'save', x: b.x, y: b.y, tip: over ? 1 : 2 });
+  return true;
+}
+
+// Punching a high ball clear: with both fists one coming at him goes back out
+// the way it came, high and far; with one fist a ball across him is helped on
+// its way – always away from goal. A human aims it with the stick. In a crowd
+// it's sometimes mistimed.
+function punchClear(w, p, at, contest) {
+  const b = w.ball, dir = teamDir(w, p.team), v = Math.hypot(b.vx, b.vy);
+  const fx = Math.cos(p.face), fy = Math.sin(p.face);
+  const inx = v > 0.5 ? b.vx / v : -fx, iny = v > 0.5 ? b.vy / v : -fy;
+  const two = -(inx * fx + iny * fy) > 0.6; // coming at him rather than across
+  const [sx, sy, sm] = stickOf(p);
+  let ux = two ? -inx : inx, uy = two ? -iny : iny;
+  if (byPerson(p) && sm > 0.3) { ux = sx; uy = sy; }
+  if (ux * dir < 0.35) ux = 0.35 * dir; // never back towards his own goal
+  const a = Math.atan2(uy, ux) + gauss(w) * 0.2;
+  let pw = two ? 13 + rnd(w) * 5 : 9 + rnd(w) * 4 + 0.25 * v;
+  if (rnd(w) < (contest ? 0.12 : 0.04)) pw *= 0.5;
+  b.vx = Math.cos(a) * pw; b.vy = Math.sin(a) * pw; b.vz = 4.5 + rnd(w) * 2.5; b.spin = 0;
+  b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.kt = 0; b.tgt = -1; b.sh = -1;
+  p.kcd = 22;
+  if (isFree(p)) beginHandsTo(w, p, ST.PUNCH, at, two ? 2 : 1);
+  invalidatePath(w);
+  w.events.push({ k: 'punch', x: b.x, y: b.y, z: b.z, v: pw, id: p.id });
+}
+
 function gkSave(w, p) {
   const b = w.ball, m = w.m;
   if (p.kcd > 0 || p.role !== ROLE.GK) return false;
@@ -2245,42 +2422,52 @@ function gkSave(w, p) {
   if (p.st === ST.FALLEN || (p.st === ST.DIVE && p.stT > 30) || !(isFree(p) || p.st === ST.DIVE)) return false;
   if (b.last === p.id && b.kt < 20) return false;
   const s = stOf(p);
-  let d, tol, seg;
-  if (p.st === ST.DIVE && p.spr) {
+  // the parts of him that can get to it: segments, and how close counts
+  let segs, tol;
+  if (p.st === ST.DIVE && p.spr === GKB.SPREAD) {
     // spread: body across the shot, both ends covered, low
     const ca = Math.cos(p.stA), sa = Math.sin(p.stA), half = 0.55 * s.H + 0.35; // fingertips to boots
-    seg = [p.x - ca * half, p.y - sa * half, 0.25, p.x + ca * half, p.y + sa * half, 0.5];
+    segs = [[p.x - ca * half, p.y - sa * half, 0.25, p.x + ca * half, p.y + sa * half, 0.5]];
     tol = 0.45;
+  } else if (p.st === ST.DIVE && p.spr) {
+    segs = blockSegs(p, s, b);
+    tol = 0.28;
   } else if (p.st === ST.DIVE) {
     const ca = Math.cos(p.stA), sa = Math.sin(p.stA);
     const [z0, el, reach] = diveReach(p, s, b);
     const hr = reach * Math.cos(el);
-    seg = [p.x - ca * 0.5, p.y - sa * 0.5, Math.max(0.15, z0 - 0.5 * Math.sin(el)), p.x + ca * hr, p.y + sa * hr, Math.max(0.15, z0 + reach * Math.sin(el))];
+    segs = [[p.x - ca * 0.5, p.y - sa * 0.5, Math.max(0.15, z0 - 0.5 * Math.sin(el)), p.x + ca * hr, p.y + sa * hr, Math.max(0.15, z0 + reach * Math.sin(el))]];
     tol = 0.45;
   } else {
     const fx = Math.cos(p.face) * 0.2, fy = Math.sin(p.face) * 0.2;
-    seg = [p.x + fx, p.y + fy, p.z + 0.1, p.x + fx, p.y + fy, p.z + s.H + 0.25];
+    segs = [[p.x + fx, p.y + fy, p.z + 0.1, p.x + fx, p.y + fy, p.z + s.H + 0.25]];
     tol = 0.6;
   }
-  d = distSeg3(b.x, b.y, b.z, ...seg);
+  const near = (x, y, z) => {
+    let best = 1e9, part = 0;
+    for (let i = 0; i < segs.length; i++) { const dd = distSeg3(x, y, z, ...segs[i]); if (dd < best) { best = dd; part = i; } }
+    return [best, part];
+  };
+  const [d, part0] = near(b.x, b.y, b.z);
   if (d > tol) return false;
   // how cleanly he gets to it: how close its line passes him (it is only just
   // inside his reach on the first tick it gets there, however central it is)
-  let dPass = d, at = [b.x, b.y, b.z];
+  let dPass = d, at = [b.x, b.y, b.z], part = part0;
   for (let k = 1; k <= 6; k++) {
     const t = k * DT * 0.5, q = [b.x + b.vx * t, b.y + b.vy * t, b.z + b.vz * t];
-    const dq = distSeg3(q[0], q[1], q[2], ...seg);
-    if (dq < dPass) { dPass = dq; at = q; }
+    const [dq, pq] = near(q[0], q[1], q[2]);
+    if (dq < dPass) { dPass = dq; at = q; part = pq; }
   }
   // two hands or one: standing, it comes to his body / between his hands
   // rather than to the limit of his reach; diving, along his arms rather than
   // at the fingertips of the top one
   let twoHands = dPass < 0.33;
   if (p.st === ST.DIVE && !p.spr) {
-    const vx = seg[3] - seg[0], vy = seg[4] - seg[1], vz = seg[5] - seg[2];
-    const u = ((at[0] - seg[0]) * vx + (at[1] - seg[1]) * vy + (at[2] - seg[2]) * vz) / (vx * vx + vy * vy + vz * vz);
+    const sg = segs[0], vx = sg[3] - sg[0], vy = sg[4] - sg[1], vz = sg[5] - sg[2];
+    const u = ((at[0] - sg[0]) * vx + (at[1] - sg[1]) * vy + (at[2] - sg[2]) * vz) / (vx * vx + vy * vy + vz * vz);
     twoHands = dPass < 0.28 && u < 0.86;
-  } else if (p.spr) twoHands = false; // spread at his feet: a block
+  } else if (p.spr === GKB.KNEE) twoHands = part === KNEE_HANDS && dPass < 0.2; // into the cupped hands
+  else if (p.spr) twoHands = false; // spread / star: a block
   // struck from close in and low: no time to get his hands down – it's his
   // legs or body, on reflex
   const legs = !p.spr && p.st !== ST.DIVE && b.kt < 14 && b.z - p.z < 0.75 && Math.hypot(b.vx, b.vy) > 12;
@@ -2309,14 +2496,32 @@ function gkSave(w, p) {
     w.events.push({ k: 'save', x: b.x, y: b.y, fail: 1 });
     return true;
   }
+  const sH = s.H, zr = b.z - p.z;
+  const tgt = goalLineCross(w, p.team, b);
+  // an opponent going for it too
+  let contest = false;
+  for (const o of w.players) {
+    if (o.team === p.team || o.st === ST.FALLEN) continue;
+    if ((Math.hypot(o.x - b.x, o.y - b.y) < 1.8 && b.z < stOf(o).reach + 0.4) || Math.hypot(o.x - p.x, o.y - p.y) < 1.5) { contest = true; break; }
+  }
+  // a high ball, standing or in the air: punched clear – a human with the
+  // shoot key down, the AI when he'd have to catch it in a crowd
+  if (!p.spr && p.st !== ST.DIVE && zr > sH * 0.7) {
+    const key = byPerson(p) && (p.qa & KICK_MASK) === KT.GOAL;
+    if (key || (!byPerson(p) && contest && rnd(w) < (GK_PUNCH[m.ai] ?? 0.65))) { punchClear(w, p, at, contest); return true; }
+  }
+  // going back under a ball dropping in over his head: tip it over the bar
+  // rather than take it and carry it over his own line
+  const back = (p.vx * teamDir(w, p.team)) < -1.2;
+  if (tgt.on && back && !p.spr && zr > sH * 1.05 && rnd(w) < (byPerson(p) ? 0.9 : GK_TIP[m.ai] ?? 0.78) && tipAway(w, p, s, tgt, at)) return true;
   // Holding on to it: with two hands on it a keeper catches it – only a
   // rocket gets spilled; with one hand he can only push it away, unless it's
-  // a gentle one he can pull in.
-  const sH = stOf(p).H, zr = b.z - p.z;
-  const awkward = (zr < 0.35 ? 0.05 : 0) + (zr > sH + 0.1 ? 0.06 : 0); // skidding along the grass / over his head
+  // a gentle one he can pull in. Someone challenging him for it makes it harder.
+  const awkward = (zr < 0.35 ? 0.05 : 0) + (zr > sH + 0.1 ? 0.06 : 0) + (contest ? 0.15 : 0); // skidding along the grass / over his head
   let pc = twoHands
     ? 0.98 - 0.04 * Math.max(0, rs - 20) - (p.st === ST.DIVE ? 0.04 : 0)
     : 0.5 - 0.03 * Math.max(0, rs - 6);
+  if (p.spr === GKB.STAR) pc *= 0.3; // arms and legs out: it only drops to him if it's gentle
   pc = clamp((pc - awkward) * hands, 0.04, 0.99);
   if (rnd(w) < pc) {
     b.owner = p.id; b.held = 1; b.vx = b.vy = b.vz = 0; b.spin = 0;
@@ -2324,14 +2529,18 @@ function gkSave(w, p) {
     p.hold = 0; p.chgBtn = 0; p.qa = 0;
     w.events.push({ k: 'catch', x: b.x, y: b.y });
   } else {
+    // going in: tipped over the bar or round the post if he can
+    const arm = !p.spr || (p.spr === GKB.STAR && segs[part][5] > p.z + 0.85 * sH);
+    if (tgt.on && !legs && arm && rnd(w) < (byPerson(p) ? 0.85 : GK_TIP[m.ai] ?? 0.78) && tipAway(w, p, s, tgt, at)) return true;
     // parried: pushed out wide (to the side it was on) rather than back into
-    // the middle, and up
+    // the middle, and up – off his legs or a block's body it stays lower
     const dir = teamDir(w, p.team);
     const sp = Math.hypot(b.vx, b.vy);
+    const low = legs || (p.spr && !arm);
     const side = Math.abs(b.y - p.y) > 0.15 ? Math.sign(b.y - p.y) : (rnd(w) < 0.5 ? -1 : 1);
     b.vx = dir * (1.2 + sp * 0.1) + (rnd(w) - 0.5) * 2;
     b.vy = b.vy * 0.3 + side * (3.5 + rnd(w) * 4.5);
-    b.vz = legs ? 0.6 + rnd(w) * 1.6 : 2.2 + rnd(w) * 3.5; b.spin = 0;
+    b.vz = low ? 0.6 + rnd(w) * 1.6 : 2.2 + rnd(w) * 3.5; b.spin = 0;
     if (legs && isFree(p) && p.z <= 0) {
       // the leg that stopped it, out towards the ball
       p.st = ST.BLOCK; p.stT = 3; p.stDur = 22; p.hit = 1;

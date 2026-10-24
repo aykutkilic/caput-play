@@ -2,9 +2,9 @@
 // world's seeded RNG) so that clients predicting AI players get the same
 // decisions as the server.
 
-import { G, BTN, KT, KH, KICK_MASK, packKick, PHASE, ST, ROLE, SP, KICK } from './constants.js';
+import { G, BTN, KT, KH, KICK_MASK, packKick, PHASE, ST, ROLE, SP, KICK, GKB } from './constants.js';
 import {
-  rnd, teamDir, pitchOf, pById, stOf, startKick, beginSlide, beginDive, beginSpread, slotOf, slotIndex, shootingPractice,
+  rnd, teamDir, pitchOf, pById, stOf, startKick, beginSlide, beginDive, beginBlock1v1, blockKind, slotOf, slotIndex, shootingPractice,
   inOwnBox, clamp, encodeStick, ballPath, blockPlan, beginBlock, wantsBlock, loftTime,
   groundSpeedFor, passEndSpeed, MU, CF, byPerson,
 } from './sim.js';
@@ -325,9 +325,14 @@ function slotTarget(w, p, attacking) {
 function aiKick(w, p, kind, power, tx, ty, tid = -1, kh) {
   const b = w.ball, m = w.m;
   if (b.held && b.owner === p.id) {
-    if (m.spTaker === p.id) kind = kind === KICK.LONG || (kh !== undefined && kh !== KH.GROUND) ? KICK.LONG : KICK.THROW;
-    else kind = kind === KICK.PASS || kind === KICK.THROUGH ? KICK.THROW : KICK.PUNT;
-    if (kind === KICK.THROW) kh = KH.GROUND;
+    if (m.spTaker === p.id) {
+      kind = kind === KICK.LONG || (kh !== undefined && kh !== KH.GROUND) ? KICK.LONG : KICK.THROW;
+      if (kind === KICK.THROW) kh = KH.GROUND;
+    } else if ((kind === KICK.PASS || kind === KICK.THROUGH) && (kh === undefined || kh === KH.GROUND)) {
+      kind = KICK.THROW; kh = KH.GROUND; // rolled out
+    } else if (kind !== KICK.PUNT && Math.hypot(tx - b.x, ty - b.y) <= 50) {
+      kind = KICK.THROW; kh = KH.MID; // thrown – a drop kick beyond throwing range (see startKick)
+    } else kind = KICK.PUNT;
   }
   startKick(w, p, kind, power, false, tx, ty, tid, kh);
 }
@@ -651,8 +656,14 @@ function gkThink(w, p, c) {
     const bp = bestPass(w, p);
     const d = bp ? Math.hypot(bp.tx - p.x, bp.ty - p.y) : 99;
     const clear = bp && bp.kh === KH.GROUND && bp.odds > 0.85 && d < 32;
-    // ball at his feet with someone closing in: no time to wait
+    // ball at his feet with someone closing in: no time to wait – out of his
+    // box (sweeping up) with a man on him, it's cleared, long and wide
     const rushed = !b.held && openness(w, p.team, p.x, p.y) < 8;
+    if (rushed && !inOwnBox(w, p.team, p.x, p.y, 0) && openness(w, p.team, p.x, p.y) < 4.5 && m.spTaker !== p.id) {
+      const side = p.y >= 0 ? 1 : -1;
+      aiKick(w, p, KICK.CLEAR, 0.95, p.x + dir * 32, side * pit.W * 0.38, -1, KH.HIGH);
+      return;
+    }
     if (p.aiT > 0 && m.spTaker !== p.id && !rushed && !(clear && bp.odds > 0.95 && p.aiT < lv.hold - 15)) {
       moveTo(p, ogx + dir * 5, p.y * 0.5, 99, 0.3);
       return;
@@ -671,7 +682,9 @@ function gkThink(w, p, c) {
       };
       for (const q of w.players) if (q.team === p.team && q !== p && (q.x - p.x) * dir > 12) tryTarget(q.x, q.y, q);
       for (const side of [-1, 1]) for (const fx of [-0.15, 0.1]) tryTarget(dir * pit.L * fx, side * pit.W * 0.4, null);
-      aiKick(w, p, b.held ? KICK.PUNT : KICK.LONG, 0.75 + rnd(w) * 0.2, best.tx, best.ty, best.tid, KH.HIGH);
+      // from his hands: a drop kick to a man within range, else punted
+      const far = Math.hypot(best.tx - p.x, best.ty - p.y) > 50 || best.tid < 0;
+      aiKick(w, p, b.held && far ? KICK.PUNT : KICK.LONG, 0.75 + rnd(w) * 0.2, best.tx, best.ty, best.tid, KH.HIGH);
     }
     return;
   }
@@ -684,13 +697,23 @@ function gkThink(w, p, c) {
   const tg0 = !owner && b.vx * -dir > 4 ? (ogx - b.x) / b.vx : -1;
   const shotOnGoal = tg0 > 0 && tg0 < 2 && Math.hypot(b.vx, b.vy) > 9 && b.lastTeam !== p.team
     && Math.abs(b.y + b.vy * tg0) < pit.goalW / 2 + 0.8;
-  // struck from close in: no time to react – spread across it on reflex (it
-  // doesn't always come off: then it's hands, a dive or his legs)
-  if (shotOnGoal && b.kt === lv.spread && p.tcd === 0
-    && Math.hypot(b.x - p.x, b.y - p.y) < 4.5 && (p.x - b.x) / b.vx > 0.04 && rnd(w) < lv.spreadP) {
-    p.tcd = 50;
-    beginSpread(w, p, Math.atan2(-b.vy, -b.vx));
-    return;
+  // struck from close in: no time to react – a block on reflex (it doesn't
+  // always come off: then it's hands, a dive or his legs): the K-barrier from
+  // a tight angle, spread close in, the star jump a little further out at a
+  // shot coming near him (one wide of him is still a dive)
+  if (shotOnGoal && b.kt === lv.spread && p.tcd === 0 && (p.x - b.x) / b.vx > 0.04 && rnd(w) < lv.spreadP) {
+    const dB = Math.hypot(b.x - p.x, b.y - p.y), tk = (p.x - b.x) / b.vx;
+    const kind = blockKind(w, b.x, b.y, dB);
+    // (the star only for one just out of his reach standing, not one at him,
+    // and at a height his arms cover – it leaves a gap at his hips)
+    const off = Math.abs(b.y + b.vy * tk - p.y), zk = b.z + b.vz * tk - 0.5 * G * tk * tk;
+    const nearHim = off > 0.55 && off < 1.15 && zk > 1.0 && zk < 2.3;
+    // (the star jump only when there's no time to dive: under a quarter second)
+    if (dB < 4.5 || (kind === GKB.STAR && nearHim && tk < 0.25) || (kind === GKB.KNEE && dB < 6.5)) {
+      p.tcd = 50;
+      beginBlock1v1(w, p, Math.atan2(-b.vy, -b.vx), kind);
+      return;
+    }
   }
   if (shotOnGoal && b.kt > lv.react + (p.id % 3) + (pv > 2.5 ? 5 : 0)) {
     const t = (p.x - b.x) / b.vx;
@@ -702,6 +725,15 @@ function gkThink(w, p, c) {
         const yk = b.y + b.vy * tt + lv.spin * b.spin * b.vx * tt * tt;
         let zk = b.z + b.vz * tt - 0.5 * G * tt * tt;
         if (zk < 0.15) zk = 0.25;
+        // a lob over his head that drops in under the bar: back-pedal along
+        // its line to where he can reach it jumping (then catch it, or tip it
+        // over – see gkSave)
+        const top = s.H * 1.22 + s.jump + 0.1;
+        const zg = b.z + b.vz * tg - 0.5 * G * tg * tg;
+        if (zk > top && zg < pit.goalH + 0.2) {
+          const q = c.path.find((q) => (q.x - p.x) * dir < -0.3 && q.z < top);
+          if (q) { moveTo(p, (q.x - ogx) * dir < 0.2 ? ogx + dir * 0.2 : q.x, q.y, 0.5, 0.05); return; }
+        }
         const dy = yk - p.y;
         if (Math.abs(dy) > 0.65 && tt < 0.4 + s.h * 0.08) {
           const ey = dy + (rnd(w) - 0.5) * 2 * lv.misread;
