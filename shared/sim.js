@@ -2246,9 +2246,46 @@ function updatePlayer(w, p) {
   }
 }
 
+// A body on the ground (a dive, a slide, a man down) as a segment head to
+// feet: along the dive, or the way he faces.
+const lying = (p) => (p.st === ST.DIVE || p.st === ST.FALLEN || p.st === ST.SLIDE) && p.z < 0.4;
+function bodySeg(p) {
+  const a = p.st === ST.DIVE ? p.stA : p.face, ux = Math.cos(a), uy = Math.sin(a);
+  return p.st === ST.SLIDE ? [p.x + ux * 0.9, p.y + uy * 0.9, p.x - ux * 0.6, p.y - uy * 0.6]
+    : [p.x + ux * 0.8, p.y + uy * 0.8, p.x - ux * 0.9, p.y - uy * 0.9];
+}
+// from (x, y) to the nearest point of a body on the ground: distance, and the way out
+function toBody(p, x, y) {
+  const [x0, y0, x1, y1] = bodySeg(p), vx = x1 - x0, vy = y1 - y0;
+  const u = clamp(((x - x0) * vx + (y - y0) * vy) / (vx * vx + vy * vy), 0, 1);
+  const dx = x - (x0 + vx * u), dy = y - (y0 + vy * u), d = Math.hypot(dx, dy);
+  return d > 1e-4 ? [d, dx / d, dy / d] : [0, -vy / Math.hypot(vx, vy), vx / Math.hypot(vx, vy)];
+}
+
 function collidePlayers(w) {
   const ps = w.players, b = w.ball;
   const RR = PLAYER_R * 2;
+  // a body on the ground is in the way: a man on his feet can't run through
+  // it – he's held up, and running into it hard he goes over it (a keeper who
+  // dived and took the man, not the ball: a foul)
+  for (const a of ps) {
+    if (!lying(a) || a.st === ST.SLIDE) continue; // (a slide meets ball or man: see slideContacts)
+    for (const c of ps) {
+      if (c === a || lying(c) || c.z > 0.5 || c.st === ST.DIVE) continue;
+      const [d, nx, ny] = toBody(a, c.x, c.y), R = PLAYER_R * 0.8 + 0.2;
+      if (d >= R) continue;
+      c.x += nx * (R - d); c.y += ny * (R - d);
+      const vin = -(c.vx * nx + c.vy * ny);
+      if (vin <= 0) continue;
+      c.vx += nx * vin; c.vy += ny * vin;
+      if (vin > 4 && isFree(c)) {
+        const had = b.owner === c.id || (b.last === c.id && b.kt < 20);
+        if (a.st === ST.DIVE && a.team !== c.team && had && !(b.last === a.id && b.kt < 40)) { foul(w, a, c); return; }
+        c.st = ST.STUMBLE; c.stT = 0; c.stDur = 22;
+        if (b.owner === c.id && !b.held) { b.owner = -1; b.dl = 0; } // (the ball runs on without him)
+      }
+    }
+  }
   for (let i = 0; i < ps.length; i++) {
     const a = ps[i];
     if (a.st === ST.FALLEN || a.st === ST.DIVE || a.z > 0.8) continue;
@@ -2797,11 +2834,40 @@ function slipsPast(w, p) {
 function possession(w) {
   const b = w.ball, m = w.m;
   if (b.owner >= 0) {
-    // a long touch while sprinting can be nicked by a nearby opponent
     const o = pById(w, b.owner);
     if (!o || b.held || m.spTaker === o.id) return;
-    if (Math.hypot(b.x - o.x, b.y - o.y) < 0.95) return;
+    // run into an opponent's feet – or into a body on the ground (a keeper
+    // diving at it, a man down) – the ball is stopped there: a man on his feet
+    // has it if he can take it (strength against strength; a keeper in his
+    // box gathers it), a keeper down at it smothers it most times, otherwise
+    // it comes off him loose
     const os = stOf(o);
+    for (const p of w.players) {
+      if (p.team === o.team || p.z > 0.4 || p.st === ST.SLIDE) continue; // (a slide: see slideContacts)
+      const down = lying(p);
+      const [d, nx, ny] = down ? toBody(p, b.x, b.y) : [Math.hypot(b.x - p.x, b.y - p.y), b.x - p.x, b.y - p.y];
+      if (d > (down ? 0.3 : 0.36)) continue;
+      const hands = p.role === ROLE.GK && keeperHands(w, p) && inOwnBox(w, p.team, b.x, b.y, 0.3) && inOwnBox(w, p.team, p.x, p.y, 0.6);
+      const take = clamp(0.62 + 0.4 * (stOf(p).strength - os.strength) - ((o.ib & BTN.R2) ? 0.12 : 0) + (hands ? 0.15 : 0), 0.3, 0.9);
+      if ((!down && canControl(p) && p.tcd === 0 && rnd(w) < take) || (down && hands && p.st === ST.DIVE && rnd(w) < 0.75)) {
+        b.owner = p.id; b.held = hands ? 1 : 0; b.vx = b.vy = b.vz = 0; b.spin = 0;
+        b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.tgt = -1; b.sh = -1; p.dph = 0;
+        o.kcd = 12;
+        w.events.push(hands ? { k: 'catch', x: b.x, y: b.y, smother: 1 } : { k: 'steal', x: b.x, y: b.y });
+      } else {
+        // off his feet / his body: back out, a little to the side
+        const nl = Math.hypot(nx, ny) || 1, v = Math.max(2.5, Math.hypot(o.vx, o.vy) * 0.55), lat = (rnd(w) - 0.5) * 2;
+        b.owner = -1; b.held = 0;
+        b.vx = nx / nl * v - ny / nl * lat; b.vy = ny / nl * v + nx / nl * lat; b.vz = 0.5;
+        b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.kt = 0; b.tgt = -1; b.sh = -1;
+        o.kcd = 12; p.tcd = Math.max(p.tcd, 15);
+        invalidatePath(w);
+        w.events.push({ k: 'block', x: b.x, y: b.y, z: b.z, v, id: p.id });
+      }
+      return;
+    }
+    // a long touch while sprinting can be nicked by a nearby opponent
+    if (Math.hypot(b.x - o.x, b.y - o.y) < 0.95) return;
     for (const p of w.players) {
       if (p.team === o.team || !canControl(p) || p.tcd > 0) continue;
       if (Math.hypot(b.x - p.x, b.y - p.y) < 0.55) {
