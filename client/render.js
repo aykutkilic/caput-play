@@ -28,6 +28,7 @@ export const CAMERAS = {
   iso: { name: 'Isometric', yaw: 45, elev: 33 },
   iso30: { name: 'Isometric (shallow)', yaw: 30, elev: 36 },
   side: { name: 'Classic side', yaw: 0, elev: 46 },
+  fp: { name: 'First person', fp: true },
 };
 
 export function lookFor(avatar, team, role) {
@@ -76,6 +77,72 @@ export class Camera {
     const yr = sy; // down on screen == towards the viewer on the ground plane
     return [sx * this.c + yr * this.s, -sx * this.s + yr * this.c];
   }
+}
+
+// First person: a perspective camera at a player's eyes, with the same
+// interface as Camera (px / py / depth / scale / screenDirToWorld) plus what
+// perspective needs – camera space for clipping at the near plane, and the
+// scale at a given point. Screen right is 90 degrees anticlockwise of the
+// view, as in the isometric views, so the pitch is never mirrored.
+export class PerspCam {
+  constructor() {
+    this.persp = true;
+    this.w = 800; this.h = 600; this.ex = 0; this.ey = 0; this.ez = 1.7;
+    this.yaw = 0; this.pitch = -0.12; this.near = 0.25; this.fov = 64 * D2R;
+    this.update();
+  }
+  update() {
+    const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw), cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
+    this.F = [cy * cp, sy * cp, sp]; this.R = [-sy, cy, 0]; this.U = [-cy * sp, -sy * sp, cp];
+    // a wide screen sees more across, not less up and down (a phone held
+    // sideways a little more of both: the ball at his feet stays in view)
+    const fov = this.w / this.h > 1.8 ? 74 * D2R : this.fov;
+    this.f = Math.min(this.h / 2 / Math.tan(fov / 2), this.w / 2 / Math.tan(47 * D2R));
+    this.cx = this.ex; this.cy = this.ey;
+    // what code written for the orthographic camera reads: the view straight ahead
+    this.c = -sy; this.s = -cy; this.se = Math.max(0.05, Math.sin(-this.pitch)); this.ce = Math.cos(this.pitch);
+    this.scale = this.f / 10; // (sizes not tied to a point: as seen from 10 m)
+  }
+  toCam(x, y, z) {
+    const dx = x - this.ex, dy = y - this.ey, dz = z - this.ez, R = this.R, U = this.U, F = this.F;
+    return [dx * R[0] + dy * R[1], dx * U[0] + dy * U[1] + dz * U[2], dx * F[0] + dy * F[1] + dz * F[2]];
+  }
+  sx(c) { return this.w / 2 + this.f * c[0] / Math.max(this.near, c[2]); }
+  sy(c) { return this.h / 2 - this.f * c[1] / Math.max(this.near, c[2]); }
+  px(x, y, z) { return this.sx(this.toCam(x, y, z)); }
+  py(x, y, z) { return this.sy(this.toCam(x, y, z)); }
+  depth(x, y) { return -((x - this.ex) * this.F[0] + (y - this.ey) * this.F[1]); } // nearer = bigger
+  ahead(x, y, z, m = 0) { return this.toCam(x, y, z)[2] > this.near + m; }
+  sc(x, y, z) { return this.f / Math.max(this.near, this.toCam(x, y, z)[2]); }
+  // the stick: up is where I'm looking
+  screenDirToWorld(sx, sy) {
+    const fx = Math.cos(this.yaw), fy = Math.sin(this.yaw);
+    return [-fy * sx - fx * sy, fx * sx - fy * sy];
+  }
+  // an orthographic stand-in for drawing one figure at (x, y, z): the real
+  // projection, with the scale and the view's angles at that point
+  local(x, y, z) {
+    const dx = x - this.ex, dy = y - this.ey, a = Math.atan2(dy, dx), down = Math.atan2(this.ez - z, Math.hypot(dx, dy));
+    return {
+      persp: true, px: (X, Y, Z) => this.px(X, Y, Z), py: (X, Y, Z) => this.py(X, Y, Z), depth: (X, Y) => this.depth(X, Y),
+      scale: this.sc(x, y, z), c: -Math.sin(a), s: -Math.cos(a), se: Math.max(0.03, Math.sin(down)), ce: Math.cos(down),
+    };
+  }
+}
+
+// Clips a polygon (camera-space points) to in front of the near plane.
+function clipNear(pts, near) {
+  const out = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    const ina = a[2] > near, inb = b[2] > near;
+    if (ina) out.push(a);
+    if (ina !== inb) {
+      const t = (near - a[2]) / (b[2] - a[2]);
+      out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, near]);
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- pose
@@ -555,7 +622,10 @@ export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
     this.g = canvas.getContext('2d', { alpha: false });
-    this.cam = new Camera();
+    this.isoCam = new Camera();
+    this.fpCam = new PerspCam();
+    this.cam = this.isoCam; // the one in use this frame
+    this.fp = false;
     this.anim = new Map();
     this.trail = [];
     this.zoom = 1;
@@ -572,14 +642,17 @@ export class Renderer {
     if (!CAMERAS[name]) name = 'iso';
     this.preset = name;
     const c = CAMERAS[name];
-    this.cam.set(c.yaw, c.elev);
+    this.fp = !!c.fp;
+    if (!c.fp) this.isoCam.set(c.yaw, c.elev);
+    this.fpInit = false;
   }
 
   resize() {
     this.dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.canvas.width = Math.round(innerWidth * this.dpr);
     this.canvas.height = Math.round(innerHeight * this.dpr);
-    this.cam.w = this.canvas.width; this.cam.h = this.canvas.height;
+    for (const c of [this.isoCam, this.fpCam]) { c.w = this.canvas.width; c.h = this.canvas.height; }
+    this.fpCam.update();
   }
 
   pos(e, alpha, off) {
@@ -590,7 +663,8 @@ export class Renderer {
   }
 
   frame(w, alpha, offsets, info, dt) {
-    const g = this.g, cam = this.cam;
+    const g = this.g;
+    let cam = this.cam = this.isoCam;
     this.time += dt;
     const pit = pitchOf(w);
     // landscape: fit ~40 m across; portrait (phones): zoom in so players stay readable
@@ -642,17 +716,25 @@ export class Renderer {
     if (!this.camInit) { this.camX = tx; this.camY = ty; this.camInit = true; }
     this.camX += (tx - this.camX) * k; this.camY += (ty - this.camY) * k;
     cam.cx = this.camX; cam.cy = this.camY;
-
+    // first person: through my player's eyes (back to the isometric view
+    // while I'm not on the pitch)
+    const mine = this.fp && w.players.find((p) => p.id === info.myId);
+    const fpOn = !!(mine && Js.get(mine.id));
+    if (fpOn) cam = this.cam = this.firstPerson(mine, Js.get(mine.id), ball, dt);
+    if (this.fpShown !== fpOn) { this.fpShown = fpOn; document.body.classList.toggle('fp', fpOn); }
     // background
     g.fillStyle = '#0e1a14';
     g.fillRect(0, 0, cam.w, cam.h);
+    if (cam.persp) this.stadium(pit);
     this.drawGround(pit);
     const far = [], near = [];
     this.boards(pit, far, near);
     for (const f of far) f();
 
-    // shadows
+    // shadows (in first person not my own: I'm not drawn)
+    const drawn = (p) => !(fpOn && p.id === info.myId);
     for (const p of w.players) {
+      if (!drawn(p)) continue;
       const [x, y, z] = ppos.get(p.id);
       this.shadow(x, y, 0.42 * (stats(p.hgt, p.bld).H / 1.8), 0.28 / (1 + z * 0.8), p);
     }
@@ -663,9 +745,10 @@ export class Renderer {
     const items = [];
     for (const p of w.players) {
       const [x, y, z] = ppos.get(p.id);
-      items.push({ d: cam.depth(x, y), fn: () => this.drawPose(p, Js.get(p.id), info) });
+      if (!drawn(p) || (cam.persp && !cam.ahead(x, y, z + 1, 0.2))) continue;
+      items.push({ d: cam.depth(x, y), fn: () => this.drawPose(p, Js.get(p.id), info, cam.persp ? cam.local(x, y, z + 0.9) : cam) });
     }
-    items.push({ d: cam.depth(ball[0], ball[1]) + 0.05, fn: () => this.drawBall(w, ball, dt) });
+    if (!cam.persp || cam.ahead(ball[0], ball[1], ball[2])) items.push({ d: cam.depth(ball[0], ball[1]) + 0.05, fn: () => this.drawBall(w, ball, dt) });
     this.goalParts(pit, items);
     items.sort((a, b) => a.d - b.d);
     for (const it of items) it.fn();
@@ -676,22 +759,55 @@ export class Renderer {
       const [x, y, z] = ppos.get(p.id);
       this.overlay(w, p, x, y, z, info);
     }
-    // where am I, when the camera can't see me
+    // where am I, when the camera can't see me – in first person, where the ball is
     const meAt = ppos.get(info.myId);
-    if (meAt) this.offscreen(w.players.find((p) => p.id === info.myId), meAt);
+    if (fpOn) { if (Math.hypot(ball[0] - meAt[0], ball[1] - meAt[1]) > 1.6) this.offscreen(null, ball); } // (not at my feet)
+    else if (meAt) this.offscreen(w.players.find((p) => p.id === info.myId), meAt);
+  }
+
+  // The first-person camera at my player's eyes: it turns to where he faces
+  // (eased, so a quick turn doesn't whip the view round) and tilts towards
+  // the ball when it's in front – down at his feet, up to a high ball.
+  firstPerson(p, J, ball, dt) {
+    const c = this.fpCam, h = J.head;
+    const k = this.fpInit ? 1 - Math.exp(-dt * 5) : 1;
+    let dy = angDiff(c.yaw, p.face);
+    c.yaw += dy * k;
+    if (c.yaw > Math.PI) c.yaw -= TAU; else if (c.yaw < -Math.PI) c.yaw += TAU;
+    // eyes: a little behind and above the head – it never fills the view, and
+    // a ball at his feet is still in sight when he looks down at it
+    const fx = Math.cos(c.yaw), fy = Math.sin(c.yaw);
+    const ex = h[0] - fx * 0.35, ey = h[1] - fy * 0.35, ez = Math.max(0.3, h[2] + 0.1);
+    c.ex = this.fpInit ? c.ex + (ex - c.ex) * (1 - Math.exp(-dt * 25)) : ex;
+    c.ey = this.fpInit ? c.ey + (ey - c.ey) * (1 - Math.exp(-dt * 25)) : ey;
+    c.ez = this.fpInit ? c.ez + (ez - c.ez) * (1 - Math.exp(-dt * 12)) : ez;
+    const bx = ball[0] - c.ex, by = ball[1] - c.ey, bd = Math.hypot(bx, by);
+    let tp = -0.13;
+    if (bd > 0.2 && (bx * fx + by * fy) / bd > 0.5) tp = clamp(-0.13 + 0.5 * (Math.atan2(ball[2] - c.ez, bd) + 0.15), -0.68, 0.3);
+    c.pitch = this.fpInit ? c.pitch + (tp - c.pitch) * (1 - Math.exp(-dt * 4)) : tp;
+    this.fpInit = true;
+    c.update();
+    return c;
   }
 
   // A badge at the screen edge pointing to my player, with how far away he is.
   offscreen(p, [x, y, z]) {
     const g = this.g, cam = this.cam, d = this.dpr;
-    const X = cam.px(x, y, z + 0.9), Y = cam.py(x, y, z + 0.9);
+    const zz = p ? z + 0.9 : z;
+    let X = cam.px(x, y, zz), Y = cam.py(x, y, zz);
     const m = 10 * d;
-    if (X > m && X < cam.w - m && Y > m && Y < cam.h - m) return;
+    const behind = cam.persp && !cam.ahead(x, y, zz);
+    if (!behind && X > m && X < cam.w - m && Y > m && Y < cam.h - m) return;
+    if (behind) {
+      // behind me: point the way to turn, along the bottom edge
+      const c = cam.toCam(x, y, zz);
+      X = cam.w / 2 + Math.sign(c[0] || 1) * cam.w; Y = cam.h * 0.9;
+    }
     const cx = cam.w / 2, cy = cam.h / 2, pad = 34 * d;
     const dx = X - cx, dy = Y - cy;
     const t = Math.min((cx - pad) / Math.max(1e-6, Math.abs(dx)), (cy - pad) / Math.max(1e-6, Math.abs(dy)));
     const ex = cx + dx * t, ey = cy + dy * t, ang = Math.atan2(dy, dx);
-    const col = TEAM_COLORS[p.team] ? TEAM_COLORS[p.team].ui : '#fff';
+    const col = !p ? '#ffffff' : TEAM_COLORS[p.team] ? TEAM_COLORS[p.team].ui : '#fff';
     const r = 13 * d * (1 + 0.06 * Math.sin(this.time * 6));
     g.save();
     g.translate(ex, ey);
@@ -708,7 +824,7 @@ export class Renderer {
     const dist = Math.round(Math.hypot(x - cam.cx, y - cam.cy));
     g.fillStyle = '#fff'; g.font = `700 ${Math.round(10 * d)}px system-ui, sans-serif`;
     g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillText(`${dist}m`, 0, 0.5 * d);
+    g.fillText(p ? `${dist}m` : '⚽', 0, 0.5 * d);
     g.restore();
   }
 
@@ -717,22 +833,72 @@ export class Renderer {
   poly(pts, fill) {
     const g = this.g, cam = this.cam;
     g.beginPath();
-    pts.forEach(([x, y, z = 0], i) => {
-      const X = cam.px(x, y, z), Y = cam.py(x, y, z);
-      if (i) g.lineTo(X, Y); else g.moveTo(X, Y);
-    });
+    if (cam.persp) {
+      // first person: clipped at the near plane (the pitch runs on behind me)
+      const cp = clipNear(pts.map(([x, y, z = 0]) => cam.toCam(x, y, z)), cam.near);
+      cp.forEach((c, i) => { const X = cam.sx(c), Y = cam.sy(c); if (i) g.lineTo(X, Y); else g.moveTo(X, Y); });
+      if (cp.length < 3) return;
+    } else {
+      pts.forEach(([x, y, z = 0], i) => {
+        const X = cam.px(x, y, z), Y = cam.py(x, y, z);
+        if (i) g.lineTo(X, Y); else g.moveTo(X, Y);
+      });
+    }
     g.closePath();
     if (fill) { g.fillStyle = fill; g.fill(); }
   }
 
   line(x1, y1, z1, x2, y2, z2) {
     const g = this.g, cam = this.cam;
+    if (cam.persp) {
+      let a = cam.toCam(x1, y1, z1), b = cam.toCam(x2, y2, z2);
+      const n = cam.near;
+      if (a[2] <= n && b[2] <= n) return;
+      if (a[2] <= n || b[2] <= n) {
+        const t = (n - a[2]) / (b[2] - a[2]), c = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, n];
+        if (a[2] <= n) a = c; else b = c;
+      }
+      g.moveTo(cam.sx(a), cam.sy(a)); g.lineTo(cam.sx(b), cam.sy(b));
+      return;
+    }
     g.moveTo(cam.px(x1, y1, z1), cam.py(x1, y1, z1));
     g.lineTo(cam.px(x2, y2, z2), cam.py(x2, y2, z2));
   }
 
+  // A painted line on the grass: in first person a strip of its real width
+  // (it narrows into the distance); otherwise part of the stroked path.
+  paint(x1, y1, x2, y2, wd = 0.12) {
+    if (!this.cam.persp) { this.line(x1, y1, 0, x2, y2, 0); return; }
+    const L = Math.hypot(x2 - x1, y2 - y1) || 1, nx = -(y2 - y1) / L * wd / 2, ny = (x2 - x1) / L * wd / 2;
+    this.poly([[x1 + nx, y1 + ny, 0.005], [x2 + nx, y2 + ny, 0.005], [x2 - nx, y2 - ny, 0.005], [x1 - nx, y1 - ny, 0.005]], this.g.strokeStyle);
+    this.g.beginPath(); // (filled already: nothing left for a stroke() after it)
+  }
+
+  // A circle on the grass (shadows, spots, markers): in first person each
+  // with the size and the foreshortening of where it is.
+  groundEllipse(x, y, r) {
+    const g = this.g, cam = this.cam;
+    const X = cam.px(x, y, 0), Y = cam.py(x, y, 0);
+    let R = r * cam.scale, se = cam.se;
+    if (cam.persp) {
+      if (!cam.ahead(x, y, 0, 0.3)) return false;
+      R = r * cam.sc(x, y, 0); se = Math.max(0.03, Math.sin(Math.atan2(cam.ez, Math.hypot(x - cam.ex, y - cam.ey))));
+    }
+    g.ellipse(X, Y, R, R * se, 0, 0, TAU);
+    return true;
+  }
+
   arc(cx, cy, r, a0, a1) {
     const g = this.g, cam = this.cam;
+    if (cam.persp) {
+      // first person: along the arc as painted strips
+      const n = Math.max(6, Math.ceil(Math.abs(a1 - a0) / TAU * 48));
+      for (let i = 0; i < n; i++) {
+        const u0 = a0 + (a1 - a0) * i / n, u1 = a0 + (a1 - a0) * (i + 1) / n;
+        this.paint(cx + Math.cos(u0) * r, cy + Math.sin(u0) * r, cx + Math.cos(u1) * r, cy + Math.sin(u1) * r);
+      }
+      return;
+    }
     const X = cam.px(cx, cy, 0), Y = cam.py(cx, cy, 0);
     const yaw = cam.yaw * D2R;
     // ground circle -> screen ellipse (axis-aligned because the rotation is about z)
@@ -748,24 +914,24 @@ export class Renderer {
       const x0 = -hx - 1 + (pit.L + 2) * i / n, x1 = -hx - 1 + (pit.L + 2) * (i + 1) / n;
       this.poly([[x0, -hy - 1], [x1, -hy - 1], [x1, hy + 1], [x0, hy + 1]], i % 2 ? '#3a8a4f' : '#358048');
     }
-    g.strokeStyle = 'rgba(245,250,245,0.85)';
+    g.strokeStyle = g.fillStyle = 'rgba(245,250,245,0.85)';
     g.lineWidth = Math.max(1, 0.12 * this.cam.scale);
     g.lineJoin = 'round';
     g.beginPath();
     // touchlines, goal lines, halfway
-    this.line(-hx, -hy, 0, hx, -hy, 0); this.line(hx, -hy, 0, hx, hy, 0);
-    this.line(hx, hy, 0, -hx, hy, 0); this.line(-hx, hy, 0, -hx, -hy, 0);
-    this.line(0, -hy, 0, 0, hy, 0);
+    this.paint(-hx, -hy, hx, -hy); this.paint(hx, -hy, hx, hy);
+    this.paint(hx, hy, -hx, hy); this.paint(-hx, hy, -hx, -hy);
+    this.paint(0, -hy, 0, hy);
     for (const s of [-1, 1]) {
       const gx = s * hx;
       // penalty box
-      this.line(gx, -pit.boxW / 2, 0, gx - s * pit.boxD, -pit.boxW / 2, 0);
-      this.line(gx - s * pit.boxD, -pit.boxW / 2, 0, gx - s * pit.boxD, pit.boxW / 2, 0);
-      this.line(gx - s * pit.boxD, pit.boxW / 2, 0, gx, pit.boxW / 2, 0);
+      this.paint(gx, -pit.boxW / 2, gx - s * pit.boxD, -pit.boxW / 2);
+      this.paint(gx - s * pit.boxD, -pit.boxW / 2, gx - s * pit.boxD, pit.boxW / 2);
+      this.paint(gx - s * pit.boxD, pit.boxW / 2, gx, pit.boxW / 2);
       // goal area
-      this.line(gx, -pit.areaW / 2, 0, gx - s * pit.areaD, -pit.areaW / 2, 0);
-      this.line(gx - s * pit.areaD, -pit.areaW / 2, 0, gx - s * pit.areaD, pit.areaW / 2, 0);
-      this.line(gx - s * pit.areaD, pit.areaW / 2, 0, gx, pit.areaW / 2, 0);
+      this.paint(gx, -pit.areaW / 2, gx - s * pit.areaD, -pit.areaW / 2);
+      this.paint(gx - s * pit.areaD, -pit.areaW / 2, gx - s * pit.areaD, pit.areaW / 2);
+      this.paint(gx - s * pit.areaD, pit.areaW / 2, gx, pit.areaW / 2);
     }
     g.stroke();
     g.beginPath();
@@ -793,8 +959,31 @@ export class Renderer {
     g.fillStyle = 'rgba(245,250,245,0.9)';
     for (const [x, y] of [[0, 0], [hx - pit.penSpot, 0], [-hx + pit.penSpot, 0]]) {
       g.beginPath();
-      g.ellipse(this.cam.px(x, y, 0), this.cam.py(x, y, 0), 0.18 * this.cam.scale, 0.18 * this.cam.scale * this.cam.se, 0, 0, TAU);
-      g.fill();
+      if (this.groundEllipse(x, y, this.cam.persp ? 0.11 : 0.18)) g.fill(); // (up close: its real size)
+    }
+  }
+
+  // First person: a night sky over the stadium and the stands all round,
+  // rising behind the boards.
+  stadium(pit) {
+    const g = this.g, cam = this.cam;
+    const hy = clamp(cam.h / 2 + cam.f * Math.tan(cam.pitch), -cam.h, 2 * cam.h); // the horizon
+    const sky = g.createLinearGradient(0, hy - cam.h * 0.9, 0, hy);
+    sky.addColorStop(0, '#050b14'); sky.addColorStop(0.7, '#14243a'); sky.addColorStop(1, '#2a3d55');
+    g.fillStyle = sky; g.fillRect(0, 0, cam.w, Math.max(0, hy + 2));
+    // four stands, each widening outwards so they meet at the corners
+    const hx = pit.L / 2 + 5.4, hw = pit.W / 2 + 4.4, back = 16, top = 10;
+    const corners = [[-hx, -hw], [hx, -hw], [hx, hw], [-hx, hw]];
+    const shades = ['#202d3c', '#1b2735', '#17212d', '#121a24']; // darker higher up
+    for (let i = 0; i < 4; i++) {
+      const [ax, ay] = corners[i], [bx, by] = corners[(i + 1) % 4];
+      const len = Math.hypot(bx - ax, by - ay), tx = (bx - ax) / len, ty = (by - ay) / len, nx = ty, ny = -tx; // outwards
+      const fa = [ax + (nx - tx) * back, ay + (ny - ty) * back], fb = [bx + (nx + tx) * back, by + (ny + ty) * back];
+      const at = (x, y, f, u) => [x + (f[0] - x) * u, y + (f[1] - y) * u, 0.75 + (top - 0.75) * u];
+      for (let t = 0; t < 4; t++) {
+        const u0 = t / 4, u1 = (t + 1) / 4;
+        this.poly([at(ax, ay, fa, u0), at(bx, by, fb, u0), at(bx, by, fb, u1), at(ax, ay, fa, u1)], shades[t]);
+      }
     }
   }
 
@@ -820,7 +1009,7 @@ export class Renderer {
         }
         g.globalAlpha = 1;
       };
-      if (mid < 0) far.push(draw(1)); else near.push(draw(0.55));
+      if (mid < 0 || this.cam.persp) far.push(draw(1)); else near.push(draw(0.55));
     }
   }
 
@@ -854,12 +1043,13 @@ export class Renderer {
         const cx = pt.pts.reduce((a, q) => a + q[0], 0) / 4, cy = pt.pts.reduce((a, q) => a + q[1], 0) / 4;
         items.push({ d: cam.depth(cx, cy), fn: net(pt.pts) });
       }
+      const S = (y) => (cam.persp ? cam.sc(gx, y, gh / 2) : cam.scale); // (first person: as thick as where it is)
       const post = (y) => () => {
         const g = this.g;
         g.lineCap = 'round';
-        g.strokeStyle = 'rgba(0,0,0,0.35)'; g.lineWidth = 0.16 * cam.scale + 2;
+        g.strokeStyle = 'rgba(0,0,0,0.35)'; g.lineWidth = 0.16 * S(y) + 2;
         g.beginPath(); this.line(gx, y, 0, gx, y, gh); g.stroke();
-        g.strokeStyle = '#f7f7f2'; g.lineWidth = Math.max(2, 0.16 * cam.scale);
+        g.strokeStyle = '#f7f7f2'; g.lineWidth = Math.max(2, 0.16 * S(y));
         g.beginPath(); this.line(gx, y, 0, gx, y, gh); g.stroke();
       };
       items.push({ d: cam.depth(gx, -gw) + 0.01, fn: post(-gw) });
@@ -867,9 +1057,9 @@ export class Renderer {
       items.push({
         d: cam.depth(gx, 0) + 0.01, fn: () => {
           const g = this.g;
-          g.strokeStyle = 'rgba(0,0,0,0.35)'; g.lineWidth = 0.16 * cam.scale + 2;
+          g.strokeStyle = 'rgba(0,0,0,0.35)'; g.lineWidth = 0.16 * S(0) + 2;
           g.beginPath(); this.line(gx, -gw, gh, gx, gw, gh); g.stroke();
-          g.strokeStyle = '#f7f7f2'; g.lineWidth = Math.max(2, 0.16 * cam.scale);
+          g.strokeStyle = '#f7f7f2'; g.lineWidth = Math.max(2, 0.16 * S(0));
           g.beginPath(); this.line(gx, -gw, gh, gx, gw, gh); g.stroke();
         },
       });
@@ -880,12 +1070,11 @@ export class Renderer {
 
   shadow(x, y, r, a) {
     // soft-edged: a wide faint ellipse under a tighter darker one
-    const g = this.g, cam = this.cam;
-    const X = cam.px(x, y, 0), Y = cam.py(x, y, 0), R = r * cam.scale;
+    const g = this.g;
     g.fillStyle = `rgba(0,25,10,${a * 0.45})`;
-    g.beginPath(); g.ellipse(X, Y, R * 1.25, R * 1.25 * cam.se, 0, 0, TAU); g.fill();
+    g.beginPath(); if (this.groundEllipse(x, y, r * 1.25)) g.fill();
     g.fillStyle = `rgba(0,25,10,${a * 0.75})`;
-    g.beginPath(); g.ellipse(X, Y, R * 0.85, R * 0.85 * cam.se, 0, 0, TAU); g.fill();
+    g.beginPath(); if (this.groundEllipse(x, y, r * 0.85)) g.fill();
   }
 
   // Where my player is being guided to meet a high ball (receive assist).
@@ -896,13 +1085,12 @@ export class Renderer {
     if (!as || b.owner >= 0 || !(b.z > 0.6 || b.vz > 1.5)) return;
     const g = this.g, cam = this.cam;
     const head = as.z > 1.5;
-    const r = (0.45 + 0.08 * Math.sin(this.time * 9)) * cam.scale;
-    const X = cam.px(as.x, as.y, 0), Y = cam.py(as.x, as.y, 0);
+    const r = 0.45 + 0.08 * Math.sin(this.time * 9);
     g.strokeStyle = head ? 'rgba(255,214,102,0.9)' : TEAM_COLORS[me.team].ui;
     g.lineWidth = Math.max(1.5, 0.07 * cam.scale);
-    g.beginPath(); g.ellipse(X, Y, r, r * cam.se, 0, 0, TAU); g.stroke();
+    g.beginPath(); if (this.groundEllipse(as.x, as.y, r)) g.stroke();
     g.fillStyle = g.strokeStyle;
-    g.beginPath(); g.ellipse(X, Y, r * 0.18, r * 0.18 * cam.se, 0, 0, TAU); g.fill();
+    g.beginPath(); if (this.groundEllipse(as.x, as.y, r * 0.18)) g.fill();
   }
 
   ballShadow([x, y, z]) {
@@ -914,7 +1102,8 @@ export class Renderer {
     const g = this.g, cam = this.cam;
     const sp = Math.hypot(w.ball.vx, w.ball.vy, w.ball.vz);
     const X = cam.px(x, y, z), Y = cam.py(x, y, z);
-    const r = Math.max(3, BALL_R * 1.75 * cam.scale) * (this.ballScale ?? 1);
+    // (first person: its real size where it is – a little bigger, to read)
+    const r = (cam.persp ? Math.max(2, BALL_R * 1.15 * cam.sc(x, y, z)) : Math.max(3, BALL_R * 1.75 * cam.scale)) * (this.ballScale ?? 1);
     // trail: shows speed, and the bend of a ball with spin (aftertouch / finesse)
     const curving = Math.abs(w.ball.spin) > 0.1 && w.ball.owner < 0;
     const len = curving ? 16 : 7;
@@ -969,9 +1158,9 @@ export class Renderer {
     return J;
   }
 
-  drawPose(p, J, info) {
+  drawPose(p, J, info, cam = this.cam) {
     const s = stats(p.hgt, p.bld);
-    drawFigure(this.g, this.cam, J, info.looks.get(p.id) || lookFor(null, p.team, p.role), s.H, s.width);
+    drawFigure(this.g, cam, J, info.looks.get(p.id) || lookFor(null, p.team, p.role), s.H, s.width);
     p._headZ = J.head[2];
   }
 
@@ -1108,11 +1297,13 @@ export class Renderer {
   }
 
   overlay(w, p, x, y, z, info) {
-    const g = this.g, cam = this.cam, S = cam.scale;
+    const g = this.g, cam = this.cam, S = cam.persp ? cam.sc(x, y, z) : cam.scale;
     const s = stats(p.hgt, p.bld);
     const top = Math.max((p._headZ || s.H) + 0.35, z + 0.6);
-    const X = cam.px(x, y, top), Y = cam.py(x, y, top);
     const mine = p.id === info.myId;
+    if (cam.persp && mine) { this.fpGauge(p); return; }
+    if (cam.persp && !cam.ahead(x, y, top, 0.3)) return;
+    const X = cam.px(x, y, top), Y = cam.py(x, y, top);
     const fs = Math.round(clamp(S * 0.3, 9, 12) * this.dpr);
     let nameY = Y - 2;
     if (mine) {
@@ -1178,6 +1369,24 @@ export class Renderer {
       const yy = Y - (mine ? 30 : 16) * this.dpr;
       g.strokeText('!', X, yy); g.fillText('!', X, yy);
     }
+  }
+
+  // First person: my power gauge low in the middle of the screen (I can't see
+  // myself to show it above my head).
+  fpGauge(p) {
+    if (!p.chgBtn) return;
+    const g = this.g, d = this.dpr, cam = this.cam;
+    const u = p.chg / CHG_MAX, gw = 120 * d, X = cam.w / 2, gy = cam.h * 0.8;
+    g.fillStyle = 'rgba(0,0,0,0.6)'; g.fillRect(X - gw / 2 - 2, gy - 2, gw + 4, 9 * d + 4);
+    g.fillStyle = u < 0.6 ? '#7ee06a' : u < 0.88 ? '#f4d03f' : '#ff5a4f';
+    g.fillRect(X - gw / 2, gy, gw * u, 9 * d);
+    const t = p.chgBtn & 7, h = (p.chgBtn >> 3) & 3;
+    const boost = p.tap >= 3 ? ' · MAX' : p.tap === 2 ? ' ×2' : '';
+    const what = KICK_LABEL[t] ? `${KICK_LABEL[t]} · ${(t === 3 ? SHOT_HEIGHT : HEIGHT_LABEL)[h]}${boost}` : '';
+    if (!what) return;
+    g.font = `700 ${Math.round(12 * d)}px system-ui, sans-serif`; g.textAlign = 'center';
+    g.lineWidth = 3 * d; g.strokeStyle = 'rgba(0,0,0,0.65)'; g.strokeText(what, X, gy - 6 * d);
+    g.fillStyle = '#fff'; g.fillText(what, X, gy - 6 * d);
   }
 
   // ---------------------------------------------------------- radar

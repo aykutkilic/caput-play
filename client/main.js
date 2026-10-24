@@ -540,6 +540,15 @@ addEventListener('keydown', (e) => {
   sfx.unlock();
   if (rebinding) return;
   if (e.code === 'F1') { e.preventDefault(); toggleControls(); return; }
+  if (e.code === 'F2') {
+    // cycle the camera: isometric views, first person
+    e.preventDefault();
+    const names = Object.keys(CAMERAS), next = names[(names.indexOf(renderer.preset) + 1) % names.length];
+    renderer.setPreset(next); $('camSel').value = next;
+    try { localStorage.setItem('caput.cam', next); } catch { /* ignore */ }
+    toast(`Camera: ${CAMERAS[next].name}`);
+    return;
+  }
   if (isTyping(e)) return;
   if (e.code === 'Escape') {
     if (!$('editor').hidden) { closeEditor(); return; }
