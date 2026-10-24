@@ -27,8 +27,8 @@ const TAU = Math.PI * 2;
 // in the AI's shoot / pass / keep decisions; claim: how far off his line (m)
 // he comes for a cross.
 const LEVELS = [
-  { react: 18, spin: 0, misread: 0.8, think: 9, block: 0.04, sweep: 0.4, hold: 70, shuffle: false, angle: 0.8, smother: 1.1, read: false, spread: 99, spreadP: 0, misjudge: 0.12, claim: 6 },
-  { react: 10, spin: 0.25, misread: 0.35, think: 5, block: 0.12, sweep: 0.2, hold: 45, shuffle: false, angle: 0.95, smother: 0.85, read: true, spread: 4, spreadP: 0.75, misjudge: 0.05, claim: 8 },
+  { react: 18, spin: 0, misread: 0.8, think: 9, block: 0.04, sweep: 0.4, hold: 70, shuffle: false, angle: 0.9, smother: 1.1, read: false, spread: 99, spreadP: 0, misjudge: 0.12, claim: 6 },
+  { react: 10, spin: 0.25, misread: 0.35, think: 5, block: 0.12, sweep: 0.2, hold: 45, shuffle: false, angle: 1, smother: 0.85, read: true, spread: 4, spreadP: 0.75, misjudge: 0.05, claim: 8 },
   { react: 6, spin: 0.45, misread: 0.12, think: 3, block: 0.3, sweep: 0.05, hold: 28, shuffle: true, angle: 1, smother: 0.7, read: true, spread: 2, spreadP: 0.9, misjudge: 0.015, claim: 10 },
 ];
 // a lagging human's stand-in plays at the middle level, whatever the room's AI
@@ -974,32 +974,43 @@ function gkThink(w, p, c) {
     // a defender would: a standing tackle when he's on him (see the movement)
     const mateOn = w.players.some((q) => q.team === p.team && q.role !== ROLE.GK && q.st !== ST.FALLEN
       && Math.hypot(q.x - owner.x, q.y - owner.y) < Math.min(dBall, 3));
-    if (close && !threat && !shooting && !owner.held && !mateOn && dBall < 4 && inOwnBox(w, p.team, b.x, b.y, 0.5)) {
+    if (close && !threat && !shooting && !owner.held && !mateOn && dBall < 4 && Math.hypot(owner.vx, owner.vy) < 3.5
+      && inOwnBox(w, p.team, b.x, b.y, 0.5)) {
       const [kx, ky] = bisector(w, p.team, owner.x, owner.y);
       moveTo(p, owner.x + kx * 0.8, owner.y + ky * 0.8, 1.5, 0.05);
       if (dBall < 1.8) p.ib |= KT.MATE; // press
       return;
     }
-    // close the angle: a lone attacker is met further out the closer he gets
-    // (the gap between them shrinks faster than he advances)
-    const gap = clamp(0.5 * dGoal, 2.8, 11);
-    const depth = alone || charge ? clamp(dGoal - gap, 1.0, Math.min(6.5, pit.boxD * 0.55))
-      : close ? clamp(dGoal - 2.6, 1.0, Math.min(6, pit.boxD * 0.55))
-        : clamp(0.11 * dGoal + 0.8, 1.0, 3.2);
-    [tx, ty] = anglePoint(w, p.team, b.x, b.y, depth);
+    // Always between the ball and the goal: on the line that splits the goal
+    // the man sees (the frustum from the ball to the posts), where he hides
+    // the most of it. Further out hides more – in the box (or against a man
+    // running in alone) he comes out at him, arms open – but not so far that
+    // he can't keep to that line when the man moves across or cuts back: the
+    // quicker the man is going, the more he holds back (from ~60% of the
+    // man's distance out against one standing to 40% against one in full
+    // flight) – except close in, inside ~8 m, where he goes at him whatever
+    // (it's point-blank: the nearer he is, the less of the goal is left),
+    // to within 1-2 m of him. Aimed at where the ball will be a moment from
+    // now (by the man's run: the ball jumps about with his touches).
+    const ax = b.x + owner.vx * 0.18, ay = b.y + owner.vy * 0.18, fx = Math.max(0.5, (ax - ogx) * dir);
+    const still = 1 - clamp(Math.hypot(owner.vx, owner.vy) / 6, 0, 1), closeIn = clamp((8 - fx) / 3, 0, 1);
+    const share = (0.4 + 0.22 * still) * (1 - closeIn) + 0.62 * closeIn;
+    const depth = alone || charge || close ? clamp(fx * share, 1.0, Math.max(1.0, Math.min(fx - clamp(0.3 * fx, 1.0, 2.2), 6)))
+      : clamp(0.11 * dGoal + 0.8, 1.0, 3.2);
+    [tx, ty] = anglePoint(w, p.team, ax, ay, depth);
     // a defender in the way hides part of the goal: he covers the rest – the
     // biggest part the shooter still sees (not all the way: it may deflect,
     // the defender may move)
-    const { g0, g1, hid } = openGap(w, p.team, b.x, b.y);
+    const { g0, g1, hid } = openGap(w, p.team, ax, ay);
     if (hid > 0.15 && g1 - g0 > 0.3) {
-      const [gx2, gy2] = anglePoint(w, p.team, b.x, b.y, depth, g0, g1);
+      const [gx2, gy2] = anglePoint(w, p.team, ax, ay, depth, g0, g1);
       const k = Math.min(0.7, hid * 1.2);
       tx += (gx2 - tx) * k; ty += (gy2 - ty) * k;
     }
-    // crossing position: a wide ball not yet in shooting angle – stand central, a step out
-    const wideBall = Math.abs(b.y) > pit.goalW / 2 + 4 && (b.x - ogx) * dir < pit.boxD + 8 && (b.x - ogx) * dir > 4;
-    if (!alone && !close && wideBall) { tx = ogx + dir * 1.6; ty = Math.sign(b.y) * pit.goalW * 0.1; }
-    set = shooting || (dGoal < 25 && Math.abs(angDiffAI(owner.face, Math.atan2(-owner.y, ogx - owner.x))) < 0.9 && sep < 1.2);
+    // set (planted, small steps only) when the shot is coming: a wind-up, or a
+    // man facing the goal with the ball under control and hardly moving
+    set = shooting || (dGoal < 25 && Math.abs(angDiffAI(owner.face, Math.atan2(-owner.y, ogx - owner.x))) < 0.9 && sep < 1.2
+      && Math.hypot(owner.vx, owner.vy) < 2.5);
   } else {
     // our ball or a loose one: angle on where the ball is going; further out
     // (sweeper) when we have it
@@ -1017,6 +1028,15 @@ function gkThink(w, p, c) {
     // set: no rushing in or out, but quick side-steps to stay on the angle
     // (closing a man down close in, he gets out there first, then sets)
     if (d < 0.2) p.im = 0; else setMove(p, tx - p.x, ty - p.y, Math.min(0.65, d));
+  } else if (owner && owner.team !== p.team) {
+    // keeping to the line as he moves: brisk, but no quicker than he can pull
+    // up at the spot (a keeper who overruns it is off the line again)
+    if (d < 0.08) p.im = 0;
+    else {
+      const v = Math.sqrt(2 * s.accel * 1.2 * d) * 0.85, fast = v > s.jog * 0.9;
+      setMove(p, tx - p.x, ty - p.y, Math.min(1, Math.max(0.15, v / (fast ? s.sprint : s.jog))));
+      if (fast) p.ib |= BTN.SPRINT;
+    }
   } else moveTo(p, tx, ty, rush ? 1.5 : 3.5, 0.12);
 }
 
