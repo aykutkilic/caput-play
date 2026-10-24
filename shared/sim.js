@@ -1849,15 +1849,28 @@ function movement(w, p, s) {
   if (byPerson(p)) updateMeet(w, p, sx, sy, sm0);
   const assist = byPerson(p) && !own && !pressing && !jockey && !charging && !fetching ? receiveAssist(w, p, sx, sy, sm0) : null;
   p._as = assist; // for the renderer's landing marker (not part of the state)
+  let need = 0;
   if (assist) {
     dx = assist.ux; dy = assist.uy;
     // run just fast enough to be there in time (sprint if needed or asked for)
-    const need = assist.d / Math.max(assist.t, 0.05) * 1.15;
+    need = assist.d / Math.max(assist.t, 0.05) * 1.15;
     const cap = s.sprint;
     // running with a ball in the air means running – not dawdling to arrive just in time
     const run = p.tm === MEET.WITH && assist.d > 0.4 ? s.jog : 0;
     speed = clamp(Math.max(need, run), 1, cap); // (to go flat out for it, there's "get the ball")
     sm = assist.d < 0.3 ? 0 : assist.d < 1 ? Math.max(0.35, assist.d) : 1;
+  }
+  // A ball coming at him that he has to step across to meet: he side-steps,
+  // still facing it, as long as that gets him there in time (side-stepping is
+  // slower than running) – otherwise he turns and runs. The same for an AI
+  // player a pass is played to.
+  let strafe = false;
+  const bv = Math.hypot(b.vx, b.vy);
+  if (!own && b.owner < 0 && bv > 3 && sm > 0.1 && p.st === ST.IDLE && p.tm !== MEET.WITH && (assist || (!person && b.tgt === p.id && b.lastTeam === p.team))) {
+    const tx = p.x - b.x, ty = p.y - b.y, tl = Math.hypot(tx, ty) || 1;
+    const incoming = (tx * b.vx + ty * b.vy) / (tl * bv) > 0.75;
+    const across = Math.abs(dx * b.vx + dy * b.vy) / bv < 0.6;
+    strafe = incoming && across && (assist ? need <= 0.68 * s.sprint && assist.d < 6 : tl / bv > 0.35);
   }
 
   // with the ball near a line it may not cross: no running on out with it –
@@ -1877,6 +1890,7 @@ function movement(w, p, s) {
   if (sm > 0.1) {
     const align = Math.cos(angDiff(p.face, Math.atan2(dy, dx)));
     speed *= align >= 0 || p.role !== ROLE.GK ? 0.72 + 0.28 * Math.max(0, align) : 0.72 + 0.17 * align;
+    if (strafe && assist) speed = Math.max(speed, Math.min(need, 0.72 * s.sprint)); // (still in time)
   }
   const tvx = dx * sm * speed, tvy = dy * sm * speed;
   const v = Math.hypot(p.vx, p.vy), vt = Math.hypot(tvx, tvy);
@@ -1920,6 +1934,8 @@ function movement(w, p, s) {
     const gx = teamDir(w, p.team) * pitchOf(w).L / 2 - p.x, gy = -p.y, gl = Math.hypot(gx, gy) || 1;
     const fx = bx / bl + gx / gl, fy = by / bl + gy / gl;
     if (Math.hypot(fx, fy) > 0.3) turnToward(p, Math.atan2(fy, fx), rate * 1.2);
+  } else if (strafe) {
+    turnToward(p, Math.atan2(b.y - p.y, b.x - p.x), rate * 1.2); // side-stepping across to it, facing it
   } else if ((assist || fetching) && sm > 0.1) {
     turnToward(p, Math.atan2(dy, dx), rate);
   } else if (sm0 > 0.1) {
