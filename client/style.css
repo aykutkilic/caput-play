@@ -17,6 +17,8 @@ html, body { touch-action: pan-x pan-y; -webkit-text-size-adjust: 100%; text-siz
 body.touchui #hud { touch-action: none; }
 body { -webkit-tap-highlight-color: transparent; }
 canvas#game { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; touch-action: none; }
+/* the 3D layer and the overlays over the pitch (input goes to #game) */
+canvas.layer { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; pointer-events: none; }
 button { touch-action: manipulation; -webkit-user-select: none; user-select: none; }
 [hidden] { display: none !important; }
 .muted { color: var(--muted); }

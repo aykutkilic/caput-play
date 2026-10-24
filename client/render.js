@@ -4,8 +4,9 @@
 
 import { GOAL_DEPTH, BALL_R, ST, ROLE, PHASE, KICK, SP, SKILL, KH, PART, GKB } from '../shared/constants.js';
 import { stats } from '../shared/physique.js';
-import { CHG_MAX, pitchOf, DIVE_BASE, DIVE_SPAN, diveReach, SIDEARM_MAX } from '../shared/sim.js';
+import { CHG_MAX, pitchOf, DIVE_BASE, DIVE_SPAN, diveReach, SIDEARM_MAX, teamDir } from '../shared/sim.js';
 import { skeleton, drawFigure } from './figure.js';
+import { Scene3D } from './mesh3d.js';
 
 export { skeleton, drawFigure };
 
@@ -73,6 +74,18 @@ export class Camera {
     return this.h / 2 + ((dx * this.s + dy * this.c) * this.se - z * this.ce) * this.scale;
   }
   depth(x, y) { return x * this.s + y * this.c; }
+  // This projection as a world -> clip matrix (row-major) for the 3D layer:
+  // the same screen position, depth growing away from the viewer.
+  clipMatrix(D = 300) {
+    const k1 = this.scale * 2 / this.w, k2 = this.scale * 2 / this.h, c = this.c, s = this.s, se = this.se, ce = this.ce;
+    const t = this.cx * s + this.cy * c;
+    return [
+      c * k1, -s * k1, 0, (-this.cx * c + this.cy * s) * k1,
+      -s * se * k2, -c * se * k2, ce * k2, t * se * k2,
+      -s * ce / D, -c * ce / D, -se / D, t * ce / D,
+      0, 0, 0, 1,
+    ];
+  }
   // screen direction (x right, y down) -> world ground direction
   screenDirToWorld(sx, sy) {
     const yr = sy; // down on screen == towards the viewer on the ground plane
@@ -113,6 +126,18 @@ export class PerspCam {
   px(x, y, z) { return this.sx(this.toCam(x, y, z)); }
   py(x, y, z) { return this.sy(this.toCam(x, y, z)); }
   depth(x, y) { return -((x - this.ex) * this.F[0] + (y - this.ey) * this.F[1]); } // nearer = bigger
+  // world -> clip (row-major) for the 3D layer
+  clipMatrix(near = 0.1, far = 500) {
+    const kx = this.f / (this.w / 2), ky = this.f / (this.h / 2), R = this.R, U = this.U, F = this.F;
+    const dot = (a) => a[0] * this.ex + a[1] * this.ey + a[2] * this.ez;
+    const A = (far + near) / (far - near), B = -2 * far * near / (far - near);
+    return [
+      kx * R[0], kx * R[1], kx * R[2], -kx * dot(R),
+      ky * U[0], ky * U[1], ky * U[2], -ky * dot(U),
+      A * F[0], A * F[1], A * F[2], -A * dot(F) + B,
+      F[0], F[1], F[2], -dot(F),
+    ];
+  }
   ahead(x, y, z, m = 0) { return this.toCam(x, y, z)[2] > this.near + m; }
   sc(x, y, z) { return this.f / Math.max(this.near, this.toCam(x, y, z)[2]); }
   // the stick: up is where I'm looking
@@ -636,6 +661,14 @@ export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
     this.g = canvas.getContext('2d', { alpha: false });
+    // over this 2D canvas (the pitch, markings, shadows): a 3D layer with the
+    // players, ball, goals and boards, then the 2D overlays (names, gauges)
+    const layer = (id) => { const c = document.createElement('canvas'); c.id = id; c.className = 'layer'; return c; };
+    this.uiCanvas = layer('gameui'); canvas.insertAdjacentElement('afterend', this.uiCanvas);
+    this.glCanvas = layer('game3d'); canvas.insertAdjacentElement('afterend', this.glCanvas);
+    this.gu = this.uiCanvas.getContext('2d');
+    this.s3 = Scene3D.create(this.glCanvas);
+    if (!this.s3) this.glCanvas.remove();
     this.isoCam = new Camera();
     this.tpCam = new PerspCam();
     this.cam = this.isoCam; // the one in use this frame
@@ -668,6 +701,8 @@ export class Renderer {
     this.canvas.height = Math.round(innerHeight * this.dpr);
     for (const c of [this.isoCam, this.tpCam]) { c.w = this.canvas.width; c.h = this.canvas.height; }
     this.tpCam.update();
+    if (this.uiCanvas) { this.uiCanvas.width = this.canvas.width; this.uiCanvas.height = this.canvas.height; }
+    if (this.s3) this.s3.setSize(this.canvas.width, this.canvas.height);
   }
 
   pos(e, alpha, off) {
@@ -735,7 +770,7 @@ export class Renderer {
     // not on the pitch)
     const mine = this.tp && w.players.find((p) => p.id === info.myId);
     const tpOn = !!mine;
-    if (tpOn) cam = this.cam = this.thirdPerson(mine, ppos.get(mine.id), ball, dt);
+    if (tpOn) cam = this.cam = this.thirdPerson(w, mine, ppos.get(mine.id), ball, dt);
     if (this.tpShown !== tpOn) { this.tpShown = tpOn; document.body.classList.toggle('tp', tpOn); }
     // background
     g.fillStyle = '#0e1a14';
@@ -743,7 +778,7 @@ export class Renderer {
     if (cam.persp) this.stadium(pit);
     this.drawGround(pit);
     const far = [], near = [];
-    this.boards(pit, far, near);
+    if (!this.s3) this.boards(pit, far, near); // (3D: they're meshes)
     for (const f of far) f();
 
     // shadows
@@ -754,22 +789,24 @@ export class Renderer {
     this.ballShadow(ball);
     this.meetMarker(w, info.myId);
 
-    // depth-sorted scene: players, ball, goal parts
+    if (this.s3) this.scene3d(w, cam, ppos, Js, ball, info, tpOn, pit, dt);
+    // (no WebGL: a depth-sorted 2D scene of players, ball and goal parts)
     const items = [];
-    for (const p of w.players) {
+    if (!this.s3) for (const p of w.players) {
       const [x, y, z] = ppos.get(p.id);
       if (cam.persp && !cam.ahead(x, y, z + 1, 0.2)) continue;
       // (third person: I'm a little see-through, so the ball at my feet shows)
       const alpha = tpOn && p.id === info.myId ? 0.62 : 1;
       items.push({ d: cam.depth(x, y), fn: () => this.drawPose(p, Js.get(p.id), info, cam.persp ? cam.local(x, y, z + 0.9) : cam, alpha) });
     }
-    if (!cam.persp || cam.ahead(ball[0], ball[1], ball[2])) items.push({ d: cam.depth(ball[0], ball[1]) + 0.05, fn: () => this.drawBall(w, ball, dt) });
-    this.goalParts(pit, items);
+    if (!this.s3 && (!cam.persp || cam.ahead(ball[0], ball[1], ball[2]))) items.push({ d: cam.depth(ball[0], ball[1]) + 0.05, fn: () => this.drawBall(w, ball, dt) });
+    if (!this.s3) this.goalParts(pit, items);
     items.sort((a, b) => a.d - b.d);
     for (const it of items) it.fn();
     for (const f of near) f();
 
     // overlays
+    this.gu.clearRect(0, 0, cam.w, cam.h);
     for (const p of w.players) {
       const [x, y, z] = ppos.get(p.id);
       this.overlay(w, p, x, y, z, info);
@@ -780,14 +817,40 @@ export class Renderer {
     else if (meAt) this.offscreen(w.players.find((p) => p.id === info.myId), meAt);
   }
 
+  // The 3D layer: every player's meshes on his skeleton, the ball, the goals
+  // and the boards, seen through this frame's camera.
+  scene3d(w, cam, ppos, Js, ball, info, tpOn, pit, dt) {
+    const s3 = this.s3;
+    s3.setCamera(cam.clipMatrix());
+    s3.beginFrame();
+    for (const p of w.players) {
+      const [x, y, z] = ppos.get(p.id), J = Js.get(p.id);
+      if (cam.persp && !cam.ahead(x, y, z + 1, 0.2)) continue;
+      const st = stats(p.hgt, p.bld);
+      // (third person: I'm a little see-through, so the ball at my feet shows)
+      s3.player(p.id, J, info.looks.get(p.id) || lookFor(null, p.team, p.role), st.H, st.width, tpOn && p.id === info.myId ? 0.6 : 1);
+      p._headZ = J.head[2];
+    }
+    s3.endFrame();
+    const b = w.ball;
+    s3.ball(ball, [b.vx, b.vy, b.vz], dt, (cam.persp ? 1.15 : 1.75) * (this.ballScale ?? 1),
+      !cam.persp || cam.ahead(ball[0], ball[1], ball[2]), Math.abs(b.spin) > 0.1 && b.owner < 0);
+    s3.goals(pit);
+    // (the boards between the camera and the pitch are see-through, as in 2D)
+    s3.boards(pit, (mx, my) => !cam.persp && cam.depth(mx, my) >= 0, [TEAM_COLORS[0].shirt, TEAM_COLORS[1].shirt]);
+    s3.render();
+  }
+
   // The third-person camera: behind and above my player, a little over his
-  // right shoulder, turning (eased, so a quick turn doesn't whip the view
-  // round) to where he faces and looking ahead of him – up to a high ball in
-  // front of him.
-  thirdPerson(p, [x, y, z], ball, dt) {
+  // right shoulder, always looking from him towards the goal his team
+  // attacks (eased, so it doesn't swing about when he's near it) – and up to
+  // a high ball in front of him.
+  thirdPerson(w, p, [x, y, z], ball, dt) {
     const c = this.tpCam, init = this.tpInit;
-    const k = init ? 1 - Math.exp(-dt * 3.5) : 1;
-    this.tpYaw = init ? this.tpYaw + angDiff(this.tpYaw, p.face) * k : p.face;
+    const gx = teamDir(w, p.team) * pitchOf(w).L / 2;
+    const toGoal = Math.hypot(gx - x, y) > 3 ? Math.atan2(-y, gx - x) : this.tpYaw ?? Math.atan2(0, gx - x);
+    const k = init ? 1 - Math.exp(-dt * 4) : 1;
+    this.tpYaw = init ? this.tpYaw + angDiff(this.tpYaw, toGoal) * k : toGoal;
     const fx = Math.cos(this.tpYaw), fy = Math.sin(this.tpYaw), lx = -fy, ly = fx; // forwards, to his left
     // (closer on a phone held sideways: its view is wider, he'd be small)
     const wide = c.w / c.h > 1.8, back = wide ? 3.5 : 4.6, up = wide ? 2.4 : 2.9, side = wide ? 0.45 : 0.55;
@@ -809,7 +872,7 @@ export class Renderer {
 
   // A badge at the screen edge pointing to my player, with how far away he is.
   offscreen(p, [x, y, z]) {
-    const g = this.g, cam = this.cam, d = this.dpr;
+    const g = this.gu, cam = this.cam, d = this.dpr;
     const zz = p ? z + 0.9 : z;
     let X = cam.px(x, y, zz), Y = cam.py(x, y, zz);
     const m = 10 * d;
@@ -1315,7 +1378,7 @@ export class Renderer {
   }
 
   overlay(w, p, x, y, z, info) {
-    const g = this.g, cam = this.cam, S = cam.persp ? cam.sc(x, y, z) : cam.scale;
+    const g = this.gu, cam = this.cam, S = cam.persp ? cam.sc(x, y, z) : cam.scale;
     const s = stats(p.hgt, p.bld);
     const top = Math.max((p._headZ || s.H) + 0.35, z + 0.6);
     const mine = p.id === info.myId;
@@ -1446,6 +1509,20 @@ export function drawAvatarPreview(canvas, avatar, team, t) {
   g.translate(0, offset);
   g.fillStyle = 'rgba(0,0,0,0.25)';
   g.beginPath(); g.ellipse(W / 2, footY, 0.4 * cam.scale, 0.4 * cam.scale * cam.se, 0, 0, TAU); g.fill();
-  drawFigure(g, cam, J, look, s.H, s.width);
+  // the same 3D model as on the pitch, rendered aside and copied in
+  if (preview3d === undefined) preview3d = Scene3D.create(document.createElement('canvas'), true);
+  if (!preview3d) drawFigure(g, cam, J, look, s.H, s.width);
   g.restore();
+  if (preview3d) {
+    if (preview3d.canvas.width !== W || preview3d.canvas.height !== H) preview3d.setSize(W, H);
+    const m = cam.clipMatrix();
+    m[7] -= offset * 2 / H; // (shifted down like the 2D drawing)
+    preview3d.setCamera(m);
+    preview3d.beginFrame();
+    preview3d.player(0, J, look, s.H, s.width);
+    preview3d.endFrame();
+    preview3d.render();
+    g.drawImage(preview3d.canvas, 0, 0);
+  }
 }
+let preview3d; // (one WebGL context for every preview)
