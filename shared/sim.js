@@ -22,9 +22,11 @@ export const TAP_GAP = 8;           // max ticks between release and the next pr
 export const GOAL_TICKS_LIVE = 520;  // goal pause in a match: celebration + replay (can be skipped)
 
 // Aftertouch (Sensible Soccer style): for a short window after a human kicks
-// the ball, a *fresh* stick input bends it (left/right of its flight), lifts it
-// (pull back) or dips it (push forward). Holding the aim you kicked with does
-// nothing, so PES-style aiming and aftertouch don't fight each other.
+// the ball, a *fresh* stick input bends it, lifts it (pull back) or dips it
+// (push forward). Sideways it curls the ball the other way: aim right of the
+// goal and press further right and it bends back left, into it – and the
+// same on the left. Holding the aim you kicked with does nothing, so PES-style
+// aiming and aftertouch don't fight each other.
 export const AT_TICKS = 33;          // 0.55 s window
 const AT_CURVE = 1.7;                // spin gained per second at full lateral stick
 const AT_SPIN_MAX = 0.65;            // rad/s turn rate of the ball's path
@@ -651,12 +653,13 @@ export function planKick(w, p, kind, power, tx, ty, tid = -1, kh) {
   const ax = sm > 0.3 ? sx : Math.cos(p.face), ay = sm > 0.3 ? sy : Math.sin(p.face);
   if (kind === KICK.SHOT || kind === KICK.FINESSE) {
     const gx = dir * pit.L / 2;
-    // aimed where the stick points: the spot on the goal line along it (kept
-    // inside the posts); pointing away from goal, the corner on that side
-    const half = pit.goalW / 2 - 0.35;
+    // aimed where the stick points: the spot on the goal line along it – up
+    // to a metre wide of a post (to curl it back in with aftertouch);
+    // pointing away from goal, the corner on that side
+    const half = pit.goalW / 2 - 0.35, wide = pit.goalW / 2 + 1.0;
     let aimY = (Math.abs(b.y) < 0.8 ? (p.id % 2 ? 1 : -1) : -Math.sign(b.y)) * pit.goalW * 0.2;
     if (sm > 0.3) {
-      if (sx * dir > 0.15) aimY = clamp(b.y + sy / sx * (gx - b.x), -half, half);
+      if (sx * dir > 0.15) aimY = clamp(b.y + sy / sx * (gx - b.x), -wide, wide);
       else if (Math.abs(sy) > 0.2) aimY = Math.sign(sy) * half;
     }
     p.kx = gx; p.ky = aimY;
@@ -2327,7 +2330,8 @@ function aftertouch(w, b) {
   const ux = b.vx / hs, uy = b.vy / hs;
   const lat = (-uy * sx + ux * sy) * sm;  // + = left of the flight path
   const lon = (ux * sx + uy * sy) * sm;   // + = along the flight path
-  b.spin = clamp(b.spin + lat * AT_CURVE * DT, -AT_SPIN_MAX, AT_SPIN_MAX);
+  // pushing further out to one side curls it back the other way
+  b.spin = clamp(b.spin - lat * AT_CURVE * DT, -AT_SPIN_MAX, AT_SPIN_MAX);
   if (lon < -0.3) b.vz += AT_LIFT * (-lon - 0.3) / 0.7 * DT;
   else if (lon > 0.5 && b.z > BALL_R + 0.05) b.vz -= AT_DIP * (lon - 0.5) / 0.5 * DT;
 }
