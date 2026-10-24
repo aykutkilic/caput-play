@@ -247,9 +247,9 @@ body.touchui #quick kbd { display: none; }
 body.touchui #chatbox { bottom: auto; top: 60px; left: 64px; width: 46vw; }
 body.touchui #chatlog { max-height: 70px; font-size: 11px; }
 body.touchui #radar { top: calc(10px + env(safe-area-inset-top)); bottom: auto; width: 120px; height: 77px; opacity: .85; }
-/* first person: the ball at his feet is at the bottom middle of the screen – the radar moves to the corner */
-body.fp #radar { left: auto; right: calc(14px + env(safe-area-inset-right)); bottom: 34px; transform: none; width: 160px; height: 102px; opacity: .85; }
-body.fp.touchui #radar { top: auto; bottom: calc(10px + env(safe-area-inset-bottom)); left: calc(10px + env(safe-area-inset-left)); right: auto; transform: none; width: 120px; height: 77px; }
+/* third person: my player is at the bottom middle of the screen – the radar moves to the corner */
+body.tp #radar { left: auto; right: calc(14px + env(safe-area-inset-right)); bottom: 34px; transform: none; width: 160px; height: 102px; opacity: .85; }
+body.tp.touchui #radar { top: auto; bottom: calc(10px + env(safe-area-inset-bottom)); left: calc(10px + env(safe-area-inset-left)); right: auto; transform: none; width: 120px; height: 77px; }
 @media (orientation: portrait) and (max-width: 600px) { body.touchui #rotateHint { display: block; } }
 
 /* ---------------- small screens */

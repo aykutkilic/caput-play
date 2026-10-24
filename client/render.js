@@ -28,7 +28,7 @@ export const CAMERAS = {
   iso: { name: 'Isometric', yaw: 45, elev: 33 },
   iso30: { name: 'Isometric (shallow)', yaw: 30, elev: 36 },
   side: { name: 'Classic side', yaw: 0, elev: 46 },
-  fp: { name: 'First person', fp: true },
+  tp: { name: 'Third person', tp: true },
 };
 
 export function lookFor(avatar, team, role) {
@@ -80,7 +80,7 @@ export class Camera {
   }
 }
 
-// First person: a perspective camera at a player's eyes, with the same
+// Third person: a perspective camera behind a player, with the same
 // interface as Camera (px / py / depth / scale / screenDirToWorld) plus what
 // perspective needs – camera space for clipping at the near plane, and the
 // scale at a given point. Screen right is 90 degrees anticlockwise of the
@@ -119,14 +119,6 @@ export class PerspCam {
   screenDirToWorld(sx, sy) {
     const fx = Math.cos(this.yaw), fy = Math.sin(this.yaw);
     return [-fy * sx - fx * sy, fx * sx - fy * sy];
-  }
-  // my own body: each joint its own scale, 0 for one behind the eyes
-  selfView() {
-    const l = this.local(this.ex + this.F[0], this.ey + this.F[1], this.ez - 1);
-    l.self = true;
-    // (nothing nearer than ~30 cm: shoulders and chest are out of sight anyway)
-    l.sAt = (X, Y, Z) => { const zc = this.toCam(X, Y, Z)[2]; return zc > 0.3 ? this.f / zc : 0; };
-    return l;
   }
   // an orthographic stand-in for drawing one figure at (x, y, z): the real
   // projection, with the scale and the view's angles at that point
@@ -645,9 +637,9 @@ export class Renderer {
     this.canvas = canvas;
     this.g = canvas.getContext('2d', { alpha: false });
     this.isoCam = new Camera();
-    this.fpCam = new PerspCam();
+    this.tpCam = new PerspCam();
     this.cam = this.isoCam; // the one in use this frame
-    this.fp = false;
+    this.tp = false;
     this.anim = new Map();
     this.trail = [];
     this.zoom = 1;
@@ -661,20 +653,21 @@ export class Renderer {
   }
 
   setPreset(name) {
+    if (name === 'fp') name = 'tp'; // (first person became third person)
     if (!CAMERAS[name]) name = 'iso';
     this.preset = name;
     const c = CAMERAS[name];
-    this.fp = !!c.fp;
-    if (!c.fp) this.isoCam.set(c.yaw, c.elev);
-    this.fpInit = false;
+    this.tp = !!c.tp;
+    if (!c.tp) this.isoCam.set(c.yaw, c.elev);
+    this.tpInit = false;
   }
 
   resize() {
     this.dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.canvas.width = Math.round(innerWidth * this.dpr);
     this.canvas.height = Math.round(innerHeight * this.dpr);
-    for (const c of [this.isoCam, this.fpCam]) { c.w = this.canvas.width; c.h = this.canvas.height; }
-    this.fpCam.update();
+    for (const c of [this.isoCam, this.tpCam]) { c.w = this.canvas.width; c.h = this.canvas.height; }
+    this.tpCam.update();
   }
 
   pos(e, alpha, off) {
@@ -738,12 +731,12 @@ export class Renderer {
     if (!this.camInit) { this.camX = tx; this.camY = ty; this.camInit = true; }
     this.camX += (tx - this.camX) * k; this.camY += (ty - this.camY) * k;
     cam.cx = this.camX; cam.cy = this.camY;
-    // first person: through my player's eyes (back to the isometric view
-    // while I'm not on the pitch)
-    const mine = this.fp && w.players.find((p) => p.id === info.myId);
-    const fpOn = !!(mine && Js.get(mine.id));
-    if (fpOn) cam = this.cam = this.firstPerson(mine, Js.get(mine.id), ball, dt);
-    if (this.fpShown !== fpOn) { this.fpShown = fpOn; document.body.classList.toggle('fp', fpOn); }
+    // third person: behind my player (back to the isometric view while I'm
+    // not on the pitch)
+    const mine = this.tp && w.players.find((p) => p.id === info.myId);
+    const tpOn = !!mine;
+    if (tpOn) cam = this.cam = this.thirdPerson(mine, ppos.get(mine.id), ball, dt);
+    if (this.tpShown !== tpOn) { this.tpShown = tpOn; document.body.classList.toggle('tp', tpOn); }
     // background
     g.fillStyle = '#0e1a14';
     g.fillRect(0, 0, cam.w, cam.h);
@@ -753,10 +746,8 @@ export class Renderer {
     this.boards(pit, far, near);
     for (const f of far) f();
 
-    // shadows (in first person my own body is drawn last, from the eyes)
-    const drawn = (p) => !(fpOn && p.id === info.myId);
+    // shadows
     for (const p of w.players) {
-      if (!drawn(p)) continue;
       const [x, y, z] = ppos.get(p.id);
       this.shadow(x, y, 0.42 * (stats(p.hgt, p.bld).H / 1.8), 0.28 / (1 + z * 0.8), p);
     }
@@ -767,52 +758,51 @@ export class Renderer {
     const items = [];
     for (const p of w.players) {
       const [x, y, z] = ppos.get(p.id);
-      if (!drawn(p) || (cam.persp && !cam.ahead(x, y, z + 1, 0.2))) continue;
-      items.push({ d: cam.depth(x, y), fn: () => this.drawPose(p, Js.get(p.id), info, cam.persp ? cam.local(x, y, z + 0.9) : cam) });
+      if (cam.persp && !cam.ahead(x, y, z + 1, 0.2)) continue;
+      // (third person: I'm a little see-through, so the ball at my feet shows)
+      const alpha = tpOn && p.id === info.myId ? 0.62 : 1;
+      items.push({ d: cam.depth(x, y), fn: () => this.drawPose(p, Js.get(p.id), info, cam.persp ? cam.local(x, y, z + 0.9) : cam, alpha) });
     }
     if (!cam.persp || cam.ahead(ball[0], ball[1], ball[2])) items.push({ d: cam.depth(ball[0], ball[1]) + 0.05, fn: () => this.drawBall(w, ball, dt) });
     this.goalParts(pit, items);
     items.sort((a, b) => a.d - b.d);
     for (const it of items) it.fn();
     for (const f of near) f();
-    // first person: my own legs, feet, arms and hands, as I'd see them (nearest of all)
-    if (fpOn) this.drawPose(mine, Js.get(mine.id), info, cam.selfView());
 
     // overlays
     for (const p of w.players) {
       const [x, y, z] = ppos.get(p.id);
       this.overlay(w, p, x, y, z, info);
     }
-    // where am I, when the camera can't see me – in first person, where the ball is
+    // where am I, when the camera can't see me – in third person, where the ball is
     const meAt = ppos.get(info.myId);
-    if (fpOn) { if (Math.hypot(ball[0] - meAt[0], ball[1] - meAt[1]) > 1.6) this.offscreen(null, ball); } // (not at my feet)
+    if (tpOn) this.offscreen(null, ball);
     else if (meAt) this.offscreen(w.players.find((p) => p.id === info.myId), meAt);
   }
 
-  // The first-person camera at my player's eyes: it turns to where he faces
-  // (eased, so a quick turn doesn't whip the view round) and tilts towards
-  // the ball when it's in front – down at his feet, up to a high ball.
-  firstPerson(p, J, ball, dt) {
-    const c = this.fpCam, h = J.head;
-    const k = this.fpInit ? 1 - Math.exp(-dt * 5) : 1;
-    let dy = angDiff(c.yaw, p.face);
-    c.yaw += dy * k;
-    if (c.yaw > Math.PI) c.yaw -= TAU; else if (c.yaw < -Math.PI) c.yaw += TAU;
-    // the eyes: just behind the head – looking down he sees his legs, his
-    // boots and the ball at them, and his hands; his chest and head aren't
-    // drawn (see drawFigure)
-    const fx = Math.cos(c.yaw), fy = Math.sin(c.yaw);
-    const ex = h[0] - fx * 0.15, ey = h[1] - fy * 0.15, ez = Math.max(0.3, h[2] + 0.06);
-    c.ex = this.fpInit ? c.ex + (ex - c.ex) * (1 - Math.exp(-dt * 25)) : ex;
-    c.ey = this.fpInit ? c.ey + (ey - c.ey) * (1 - Math.exp(-dt * 25)) : ey;
-    c.ez = this.fpInit ? c.ez + (ez - c.ez) * (1 - Math.exp(-dt * 12)) : ez;
-    const bx = ball[0] - c.ex, by = ball[1] - c.ey, bd = Math.hypot(bx, by);
-    // (standing over it he looks right down at it; at a sprint, ahead)
-    let tp = -0.13;
-    const sp = Math.hypot(p.vx, p.vy);
-    if (bd > 0.1 && (bx * fx + by * fy) / bd > 0.3) tp = clamp(-0.13 + 0.6 * (Math.atan2(ball[2] - c.ez, bd) + 0.15), -0.95 + 0.06 * sp, 0.3);
-    c.pitch = this.fpInit ? c.pitch + (tp - c.pitch) * (1 - Math.exp(-dt * 4)) : tp;
-    this.fpInit = true;
+  // The third-person camera: behind and above my player, a little over his
+  // right shoulder, turning (eased, so a quick turn doesn't whip the view
+  // round) to where he faces and looking ahead of him – up to a high ball in
+  // front of him.
+  thirdPerson(p, [x, y, z], ball, dt) {
+    const c = this.tpCam, init = this.tpInit;
+    const k = init ? 1 - Math.exp(-dt * 3.5) : 1;
+    this.tpYaw = init ? this.tpYaw + angDiff(this.tpYaw, p.face) * k : p.face;
+    const fx = Math.cos(this.tpYaw), fy = Math.sin(this.tpYaw), lx = -fy, ly = fx; // forwards, to his left
+    // (closer on a phone held sideways: its view is wider, he'd be small)
+    const wide = c.w / c.h > 1.8, back = wide ? 3.5 : 4.6, up = wide ? 2.4 : 2.9, side = wide ? 0.45 : 0.55;
+    const ex = x - fx * back - lx * side, ey = y - fy * back - ly * side, ez = z + up;
+    const ke = init ? 1 - Math.exp(-dt * 9) : 1;
+    c.ex += (ex - c.ex) * ke; c.ey += (ey - c.ey) * ke; c.ez += (ez - c.ez) * ke;
+    // where it looks: ahead of him, raised towards a high ball in front
+    let tz = 0.9;
+    const bx = ball[0] - x, by = ball[1] - y, bd = Math.hypot(bx, by);
+    if (ball[2] > 1.4 && bd < 25 && (bx * fx + by * fy) > -1) tz = mix(0.9, ball[2], 0.6);
+    this.tpLook = init ? this.tpLook + (tz - this.tpLook) * (1 - Math.exp(-dt * 3)) : tz;
+    const tx = x + fx * 7, ty = y + fy * 7;
+    c.yaw = Math.atan2(ty - c.ey, tx - c.ex);
+    c.pitch = Math.atan2(this.tpLook - c.ez, Math.hypot(tx - c.ex, ty - c.ey));
+    this.tpInit = true;
     c.update();
     return c;
   }
@@ -861,7 +851,7 @@ export class Renderer {
     const g = this.g, cam = this.cam;
     g.beginPath();
     if (cam.persp) {
-      // first person: clipped at the near plane (the pitch runs on behind me)
+      // perspective: clipped at the near plane (the pitch runs on behind the camera)
       const cp = clipNear(pts.map(([x, y, z = 0]) => cam.toCam(x, y, z)), cam.near);
       cp.forEach((c, i) => { const X = cam.sx(c), Y = cam.sy(c); if (i) g.lineTo(X, Y); else g.moveTo(X, Y); });
       if (cp.length < 3) return;
@@ -892,7 +882,7 @@ export class Renderer {
     g.lineTo(cam.px(x2, y2, z2), cam.py(x2, y2, z2));
   }
 
-  // A painted line on the grass: in first person a strip of its real width
+  // A painted line on the grass: in perspective a strip of its real width
   // (it narrows into the distance); otherwise part of the stroked path.
   paint(x1, y1, x2, y2, wd = 0.12) {
     if (!this.cam.persp) { this.line(x1, y1, 0, x2, y2, 0); return; }
@@ -901,7 +891,7 @@ export class Renderer {
     this.g.beginPath(); // (filled already: nothing left for a stroke() after it)
   }
 
-  // A circle on the grass (shadows, spots, markers): in first person each
+  // A circle on the grass (shadows, spots, markers): in perspective each
   // with the size and the foreshortening of where it is.
   groundEllipse(x, y, r) {
     const g = this.g, cam = this.cam;
@@ -918,7 +908,7 @@ export class Renderer {
   arc(cx, cy, r, a0, a1) {
     const g = this.g, cam = this.cam;
     if (cam.persp) {
-      // first person: along the arc as painted strips
+      // perspective: along the arc as painted strips
       const n = Math.max(6, Math.ceil(Math.abs(a1 - a0) / TAU * 48));
       for (let i = 0; i < n; i++) {
         const u0 = a0 + (a1 - a0) * i / n, u1 = a0 + (a1 - a0) * (i + 1) / n;
@@ -990,7 +980,7 @@ export class Renderer {
     }
   }
 
-  // First person: a night sky over the stadium and the stands all round,
+  // Third person: a night sky over the stadium and the stands all round,
   // rising behind the boards.
   stadium(pit) {
     const g = this.g, cam = this.cam;
@@ -1070,7 +1060,7 @@ export class Renderer {
         const cx = pt.pts.reduce((a, q) => a + q[0], 0) / 4, cy = pt.pts.reduce((a, q) => a + q[1], 0) / 4;
         items.push({ d: cam.depth(cx, cy), fn: net(pt.pts) });
       }
-      const S = (y) => (cam.persp ? cam.sc(gx, y, gh / 2) : cam.scale); // (first person: as thick as where it is)
+      const S = (y) => (cam.persp ? cam.sc(gx, y, gh / 2) : cam.scale); // (perspective: as thick as where it is)
       const post = (y) => () => {
         const g = this.g;
         g.lineCap = 'round';
@@ -1129,7 +1119,7 @@ export class Renderer {
     const g = this.g, cam = this.cam;
     const sp = Math.hypot(w.ball.vx, w.ball.vy, w.ball.vz);
     const X = cam.px(x, y, z), Y = cam.py(x, y, z);
-    // (first person: its real size where it is – a little bigger, to read)
+    // (perspective: its real size where it is – a little bigger, to read)
     const r = (cam.persp ? Math.max(2, BALL_R * 1.15 * cam.sc(x, y, z)) : Math.max(3, BALL_R * 1.75 * cam.scale)) * (this.ballScale ?? 1);
     // trail: shows speed, and the bend of a ball with spin (aftertouch / finesse)
     const curving = Math.abs(w.ball.spin) > 0.1 && w.ball.owner < 0;
@@ -1185,9 +1175,9 @@ export class Renderer {
     return J;
   }
 
-  drawPose(p, J, info, cam = this.cam) {
+  drawPose(p, J, info, cam = this.cam, alpha = 1) {
     const s = stats(p.hgt, p.bld);
-    drawFigure(this.g, cam, J, info.looks.get(p.id) || lookFor(null, p.team, p.role), s.H, s.width);
+    drawFigure(this.g, cam, J, info.looks.get(p.id) || lookFor(null, p.team, p.role), s.H, s.width, alpha);
     p._headZ = J.head[2];
   }
 
@@ -1329,7 +1319,6 @@ export class Renderer {
     const s = stats(p.hgt, p.bld);
     const top = Math.max((p._headZ || s.H) + 0.35, z + 0.6);
     const mine = p.id === info.myId;
-    if (cam.persp && mine) { this.fpGauge(p); return; }
     if (cam.persp && !cam.ahead(x, y, top, 0.3)) return;
     const X = cam.px(x, y, top), Y = cam.py(x, y, top);
     const fs = Math.round(clamp(S * 0.3, 9, 12) * this.dpr);
@@ -1397,24 +1386,6 @@ export class Renderer {
       const yy = Y - (mine ? 30 : 16) * this.dpr;
       g.strokeText('!', X, yy); g.fillText('!', X, yy);
     }
-  }
-
-  // First person: my power gauge low in the middle of the screen (I can't see
-  // myself to show it above my head).
-  fpGauge(p) {
-    if (!p.chgBtn) return;
-    const g = this.g, d = this.dpr, cam = this.cam;
-    const u = p.chg / CHG_MAX, gw = 120 * d, X = cam.w / 2, gy = cam.h * 0.8;
-    g.fillStyle = 'rgba(0,0,0,0.6)'; g.fillRect(X - gw / 2 - 2, gy - 2, gw + 4, 9 * d + 4);
-    g.fillStyle = u < 0.6 ? '#7ee06a' : u < 0.88 ? '#f4d03f' : '#ff5a4f';
-    g.fillRect(X - gw / 2, gy, gw * u, 9 * d);
-    const t = p.chgBtn & 7, h = (p.chgBtn >> 3) & 3;
-    const boost = p.tap >= 3 ? ' · MAX' : p.tap === 2 ? ' ×2' : '';
-    const what = KICK_LABEL[t] ? `${KICK_LABEL[t]} · ${(t === 3 ? SHOT_HEIGHT : HEIGHT_LABEL)[h]}${boost}` : '';
-    if (!what) return;
-    g.font = `700 ${Math.round(12 * d)}px system-ui, sans-serif`; g.textAlign = 'center';
-    g.lineWidth = 3 * d; g.strokeStyle = 'rgba(0,0,0,0.65)'; g.strokeText(what, X, gy - 6 * d);
-    g.fillStyle = '#fff'; g.fillText(what, X, gy - 6 * d);
   }
 
   // ---------------------------------------------------------- radar

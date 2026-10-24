@@ -545,7 +545,7 @@ addEventListener('keydown', (e) => {
   if (rebinding) return;
   if (e.code === 'F1') { e.preventDefault(); toggleControls(); return; }
   if (e.code === 'F2') {
-    // cycle the camera: isometric views, first person
+    // cycle the camera: isometric views, third person
     e.preventDefault();
     const names = Object.keys(CAMERAS), next = names[(names.indexOf(renderer.preset) + 1) % names.length];
     renderer.setPreset(next); $('camSel').value = next;

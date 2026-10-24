@@ -125,33 +125,21 @@ function taper(g, a, b, ra, rb) {
   g.closePath();
 }
 
-// (screen points may carry their own scale as a 4th value: see drawFigure)
-const lerp3 = (a, b, u) => a.length > 3
-  ? [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u, a[3] + (b[3] - a[3]) * u]
-  : [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u];
+const lerp3 = (a, b, u) => [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u];
 // how much a world vector points towards the viewer
 const toward = (cam, v) => (v[0] * cam.s + v[1] * cam.c) * cam.ce + v[2] * cam.se;
 
-// cam.self: my own body in first person – every joint has its own scale (the
-// feet are much further from the eyes than the hands), parts behind the eyes
-// are left out, and there's no head.
 export function drawFigure(g, cam, J, look, H, wd, alpha = 1) {
-  const S = cam.scale, self = !!cam.self;
+  const S = cam.scale;
   const P = {};
-  for (const k in J) {
-    const j = J[k];
-    P[k] = [cam.px(j[0], j[1], j[2]), cam.py(j[0], j[1], j[2]), cam.depth(j[0], j[1]) + j[2] * 0.02];
-    if (self) P[k].push(cam.sAt(j[0], j[1], j[2])); // 0: behind the eyes
-  }
-  const Sa = (a) => (self ? a[3] : S);
-  const ok = (...ps) => !self || ps.every((q) => q[3] > 0);
+  for (const k in J) { const j = J[k]; P[k] = [cam.px(j[0], j[1], j[2]), cam.py(j[0], j[1], j[2]), cam.depth(j[0], j[1]) + j[2] * 0.02]; }
   const headR = 0.094 * H * S;
-  const detail = self || headR > 3.6;
+  const detail = headR > 3.6;
   const items = [];
-  const seg = (a, b, wm, col, d = (a[2] + b[2]) / 2) => ok(a, b) && items.push({ k: 0, a, b, w: Math.max(1, wm * H * (Sa(a) + Sa(b)) / 2), col, d });
-  const dot = (a, rm, col, d = a[2]) => ok(a) && items.push({ k: 1, a, r: Math.max(1, rm * H * Sa(a)), col, d });
+  const seg = (a, b, wm, col, d = (a[2] + b[2]) / 2) => items.push({ k: 0, a, b, w: Math.max(1, wm * H * S), col, d });
+  const dot = (a, rm, col, d = a[2]) => items.push({ k: 1, a, r: Math.max(1, rm * H * S), col, d });
   // a limb part that tapers from radius ra at a to rb at b (radii in heights)
-  const limb = (a, b, ra, rb, col, d = (a[2] + b[2]) / 2) => ok(a, b) && items.push({ k: 4, a, b, ra: Math.max(0.6, ra * H * Sa(a)), rb: Math.max(0.6, rb * H * Sa(b)), col, d });
+  const limb = (a, b, ra, rb, col, d = (a[2] + b[2]) / 2) => items.push({ k: 4, a, b, ra: Math.max(0.6, ra * H * S), rb: Math.max(0.6, rb * H * S), col, d });
   const P3 = (k) => P[k];
   const bulk = (0.85 + 0.3 * (wd - 0.8)) * (look.female ? 0.9 : 1); // a heavier build has thicker limbs
 
@@ -171,10 +159,6 @@ export function drawFigure(g, cam, J, look, H, wd, alpha = 1) {
   }
   for (const s of ['L', 'R']) {
     const sh = P3('sh' + s), el = P3('el' + s), hand = P3('hand' + s);
-    if (self) {
-      // my own arms: just the hands and wrists, at the edge of sight
-      limb(lerp3(el, hand, 0.55), hand, look.longSleeves ? 0.028 * bulk : 0.021 * bulk, look.longSleeves ? 0.024 * bulk : 0.018 * bulk, look.longSleeves ? look.shirt : look.skin);
-    } else {
     // shoulder: a rounded cap where the sleeve starts
     dot(sh, 0.044 * bulk, look.shirt, sh[2] - 0.002);
     if (look.longSleeves) {
@@ -184,7 +168,6 @@ export function drawFigure(g, cam, J, look, H, wd, alpha = 1) {
       limb(sh, lerp3(sh, el, 0.55), 0.041 * bulk, 0.034 * bulk, look.shirt);
       limb(lerp3(sh, el, 0.5), el, 0.029 * bulk, 0.023 * bulk, look.skin);
       limb(el, hand, 0.024 * bulk, 0.018 * bulk, look.skin);
-    }
     }
     // the hand, along the line of the forearm: a keeper's big padded glove
     // with a dark cuff, otherwise a small bare hand
@@ -198,12 +181,10 @@ export function drawFigure(g, cam, J, look, H, wd, alpha = 1) {
     }
   }
   // pelvis / shorts block and torso
-  if (!self) seg(P.hipL, P.hipR, 0.12 * wd, look.shorts, P.hc[2] - 0.01); // (my own: just the legs of the shorts)
-  if (!self) items.push({ k: 2, d: (P.hc[2] + P.neck[2]) / 2, w: 0.085 * H * wd * S }); // (my own chest is under my chin: not in sight)
-  if (!self) {
-    limb(P.neck, lerp3(P.neck, P.head, 0.6), 0.036 * bulk, 0.03 * bulk, look.skin, P.neck[2] + 0.004);
-    items.push({ k: 3, d: P.head[2] + 0.01 });
-  }
+  seg(P.hipL, P.hipR, 0.12 * wd, look.shorts, P.hc[2] - 0.01);
+  items.push({ k: 2, d: (P.hc[2] + P.neck[2]) / 2, w: 0.085 * H * wd * S });
+  limb(P.neck, lerp3(P.neck, P.head, 0.6), 0.036 * bulk, 0.03 * bulk, look.skin, P.neck[2] + 0.004);
+  items.push({ k: 3, d: P.head[2] + 0.01 });
   items.sort((a, b) => a.d - b.d);
 
   // shirt: shoulders tapering to the waist, which sits just over the shorts
