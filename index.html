@@ -52,10 +52,15 @@
         <div class="muted"><span id="codeBit">Code <b id="roomCode">----</b> · </span><span id="roomStatus">Warm-up</span></div>
       </div>
       <div class="hbtns">
-        <button id="copyLink" class="ghost" title="Copy invite link">Copy invite</button>
         <button id="minBtn" class="ghost icon" title="Minimize (Esc)" aria-label="Minimize room panel">–</button>
       </div>
     </header>
+    <div class="invite" id="inviteRow" hidden>
+      <span class="muted small">Invite friends</span>
+      <button id="waBtn" class="wa small" title="Send the invite link on WhatsApp">WhatsApp</button>
+      <button id="shareBtn" class="ghost small" title="Share the invite link" hidden>Share…</button>
+      <button id="copyLink" class="ghost small" title="Copy the invite link">Copy link</button>
+    </div>
     <div class="section friends" id="friends" hidden>
       <h4>Play with friends</h4>
       <p class="muted small" id="p2pInfo">Create a room and send the invite link – friends join this game, right where it is.</p>

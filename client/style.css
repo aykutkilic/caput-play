@@ -37,6 +37,11 @@ button.primary:hover { filter: brightness(1.08); }
 button.ghost { background: transparent; }
 button.danger { background: transparent; color: var(--danger); border-color: rgba(255,106,92,.4); }
 button.small { padding: 4px 8px; font-size: 12px; }
+button.wa { background: #25d366; color: #06371a; border-color: transparent; font-weight: 700; }
+button.wa:hover { filter: brightness(1.08); }
+/* room panel: inviting friends to a room that's open */
+.invite { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: -4px; }
+.invite > span { margin-right: auto; }
 button:disabled { opacity: .4; cursor: default; }
 input, select {
   font: inherit; font-size: 13px; color: var(--text); background: rgba(0,0,0,.35);

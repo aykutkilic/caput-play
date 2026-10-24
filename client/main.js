@@ -217,7 +217,7 @@ async function openRoom() {
     setFriendsStatus('');
   }
   const url = `${location.origin}${location.pathname}${inviteQuery(host.code)}`;
-  try { await navigator.clipboard.writeText(url); toast(`Room ${host.code} is open – invite link copied`); } catch { toast(`Room ${host.code} is open – invite: ${url}`); }
+  try { await navigator.clipboard.writeText(url); toast(`Room ${host.code} is open – link copied, or send it on WhatsApp`); } catch { toast(`Room ${host.code} is open – invite: ${url}`); }
 }
 
 function joinPeer(code) {
@@ -357,7 +357,7 @@ function renderPanel() {
   $('roomName').textContent = offline ? 'Warm-up' : r.name;
   $('roomCode').textContent = r.code;
   $('codeBit').hidden = offline;
-  $('copyLink').hidden = offline;
+  $('inviteRow').hidden = offline;
   $('pillName').textContent = offline ? 'Warm-up · Play with friends' : r.name;
   $('pillCode').textContent = r.code;
   const where = !p2p ? '' : state.host ? ' · hosted in this tab – keep it open' : ' · peer-to-peer';
@@ -421,9 +421,20 @@ $('leaveBtn').onclick = () => {
   else if (state.mode === 'p2p') { if (net) { net.said = true; net.close(); } } else send({ t: 'leave' });
   $('leaveBtn').blur();
 };
+// Inviting friends: the room's link on WhatsApp, through the device's share
+// sheet (phones), or copied.
+function inviteUrl() { return `${location.origin}${location.pathname}${inviteQuery(state.room ? state.room.code : '')}`; }
+function inviteText() { return `Come and play football with me on CAPUT – room ${state.room ? state.room.code : ''}: ${inviteUrl()}`; }
 $('copyLink').onclick = async () => {
-  const url = `${location.origin}${location.pathname}${inviteQuery(state.room ? state.room.code : '')}`;
-  try { await navigator.clipboard.writeText(url); toast('Invite link copied'); } catch { toast(url); }
+  try { await navigator.clipboard.writeText(inviteUrl()); toast('Invite link copied'); } catch { toast(inviteUrl()); }
+};
+$('waBtn').onclick = () => {
+  // wa.me opens the WhatsApp app on a phone, WhatsApp Web / Desktop on a computer
+  window.open(`https://wa.me/?text=${encodeURIComponent(inviteText())}`, '_blank', 'noopener');
+};
+$('shareBtn').hidden = !navigator.share;
+$('shareBtn').onclick = async () => {
+  try { await navigator.share({ title: 'CAPUT', text: inviteText(), url: inviteUrl() }); } catch { /* cancelled */ }
 };
 for (const [k, c] of Object.entries(CAMERAS)) $('camSel').insertAdjacentHTML('beforeend', `<option value="${k}">${c.name}</option>`);
 $('camSel').value = renderer.preset;
