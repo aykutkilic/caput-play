@@ -39,7 +39,7 @@ const KEPT = ['up', 'down', 'left', 'right', 'sprint', 'r2'];
 
 export const ACTION_LABELS = {
   up: 'Up', down: 'Down', left: 'Left', right: 'Right',
-  sprint: 'R1 Get the ball – run to it, or close down whoever has it', r2: 'R2 Precision dribble / finesse / shield',
+  sprint: 'R1 Get the ball – run to it, or close down whoever has it', r2: 'R2 Precision dribble / finesse / shield · defending: guard (face the ball)',
 };
 
 function loadKeys() {

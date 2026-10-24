@@ -9,7 +9,7 @@ import {
   groundSpeedFor, passEndSpeed, MU, CF, byPerson,
 } from './sim.js';
 
-const AI_CARRY = 1, AI_SUPPORT = 2;
+const AI_CARRY = 1, AI_SUPPORT = 2, AI_PRESS = 3, AI_MARK = 4; // (a marker's man in aiY)
 const PATH_N = 25; // 2.5 s look-ahead in 0.1 s steps
 const TAU = Math.PI * 2;
 
@@ -27,8 +27,8 @@ const TAU = Math.PI * 2;
 // in the AI's shoot / pass / keep decisions; claim: how far off his line (m)
 // he comes for a cross.
 const LEVELS = [
-  { react: 18, spin: 0, misread: 0.8, think: 9, block: 0.04, sweep: 0.4, hold: 70, shuffle: false, angle: 0.6, smother: 1.1, read: false, spread: 99, spreadP: 0, misjudge: 0.12, claim: 6 },
-  { react: 10, spin: 0.25, misread: 0.35, think: 5, block: 0.12, sweep: 0.2, hold: 45, shuffle: false, angle: 0.85, smother: 0.85, read: true, spread: 4, spreadP: 0.75, misjudge: 0.05, claim: 8 },
+  { react: 18, spin: 0, misread: 0.8, think: 9, block: 0.04, sweep: 0.4, hold: 70, shuffle: false, angle: 0.8, smother: 1.1, read: false, spread: 99, spreadP: 0, misjudge: 0.12, claim: 6 },
+  { react: 10, spin: 0.25, misread: 0.35, think: 5, block: 0.12, sweep: 0.2, hold: 45, shuffle: false, angle: 0.95, smother: 0.85, read: true, spread: 4, spreadP: 0.75, misjudge: 0.05, claim: 8 },
   { react: 6, spin: 0.45, misread: 0.12, think: 3, block: 0.3, sweep: 0.05, hold: 28, shuffle: true, angle: 1, smother: 0.7, read: true, spread: 2, spreadP: 0.9, misjudge: 0.015, claim: 10 },
 ];
 // a lagging human's stand-in plays at the middle level, whatever the room's AI
@@ -48,6 +48,71 @@ function moveTo(p, tx, ty, sprintDist = 6, arrive = 0.35) {
   setMove(p, dx, dy, Math.min(1, Math.max(0.12, d / 2.2)));
   if (d > sprintDist && p.stam > 0.2) p.ib |= BTN.SPRINT;
   return d;
+}
+
+// Into position facing the ball when he's nearly there (side-steps, backing
+// off – see the guard in the sim's movement); further off, a recovery run.
+function guardTo(p, tx, ty, sprintDist, arrive) {
+  const d = moveTo(p, tx, ty, sprintDist, arrive);
+  if (d < 5) p.ib |= BTN.R2;
+  return d;
+}
+
+// The way from the ball at (bx, by) that splits the angle it sees between our
+// posts: standing on it covers both corners alike.
+function bisector(w, team, bx, by) {
+  const pit = pitchOf(w), ogx = -teamDir(w, team) * pit.L / 2, hw = pit.goalW / 2;
+  const l1 = Math.hypot(ogx - bx, -hw - by) || 1, l2 = Math.hypot(ogx - bx, hw - by) || 1;
+  const kx = (ogx - bx) / l1 + (ogx - bx) / l2, ky = (-hw - by) / l1 + (hw - by) / l2, lk = Math.hypot(kx, ky) || 1;
+  return [kx / lk, ky / lk];
+}
+
+// The spot on the man on the ball's shooting line (the bisector, or the way
+// (kx, ky)), at least rMin ahead of him, that p gets to before he does – where
+// a defender who isn't goal-side recovers to instead of chasing him from behind.
+function coverPoint(w, p, owner, rMin, [kx, ky] = bisector(w, p.team, owner.x, owner.y)) {
+  const pit = pitchOf(w), ogx = -teamDir(w, p.team) * pit.L / 2, dGoal = Math.hypot(owner.x - ogx, owner.y);
+  const vAlong = Math.max(2, owner.vx * kx + owner.vy * ky), rMax = Math.max(1, dGoal - 1.2);
+  let r = Math.min(rMin, rMax);
+  while (r < rMax && reachTime(p, owner.x + kx * r, owner.y + ky * r) > r / vAlong) r += 0.5;
+  r = Math.min(r, rMax);
+  return [owner.x + kx * r, owner.y + ky * r];
+}
+
+// The parts of our goal (as y-ranges on the line) the outfield players (but
+// `except`) hide from a shot at (bx, by): each body a ~0.8 m wide shadow.
+function goalShadow(w, team, bx, by, except) {
+  const pit = pitchOf(w), ogx = -teamDir(w, team) * pit.L / 2, hw = pit.goalW / 2, iv = [];
+  for (const q of w.players) {
+    if (q.team !== team || q === except || q.role === ROLE.GK || q.st === ST.FALLEN || q.st === ST.SLIDE) continue;
+    const dx = q.x - bx, dy = q.y - by, d = Math.hypot(dx, dy);
+    if (d < 0.5 || dx * (ogx - bx) <= 0 || Math.abs(dx) > Math.abs(ogx - bx)) continue; // not in the way
+    const a = Math.atan2(dy, dx), h = Math.asin(Math.min(1, 0.4 / d));
+    const ys = [a - h, a + h].map((t) => (Math.cos(t) * (ogx - bx) <= 0 ? Math.sign(Math.sin(t)) * 99 : by + Math.tan(t) * (ogx - bx)));
+    iv.push([Math.max(-hw, Math.min(...ys)), Math.min(hw, Math.max(...ys))]);
+  }
+  return iv.filter(([a0, a1]) => a1 > a0).sort((p, q) => p[0] - q[0]);
+}
+
+// The biggest part of our goal (y0..y1) still open to a shot from (bx, by)
+// with the outfield players (but `except`) in the way, and how much is hidden.
+function openGap(w, team, bx, by, except) {
+  const hw = pitchOf(w).goalW / 2, sh = goalShadow(w, team, bx, by, except);
+  let cur = -hw, g0 = -hw, g1 = -hw, hid = 0;
+  for (const [a0, a1] of sh) { if (a0 - cur > g1 - g0) { g0 = cur; g1 = a0; } hid += Math.max(0, a1 - Math.max(a0, cur)); cur = Math.max(cur, a1); }
+  if (hw - cur > g1 - g0) { g0 = cur; g1 = hw; }
+  return { g0, g1, hid: hid / (2 * hw) };
+}
+
+// Where a defender stands to hide as much of the goal as he can: on the
+// line splitting the part of it the shooter still sees, r metres out from him.
+function laneSpot(w, p, owner, r) {
+  const pit = pitchOf(w), ogx = -teamDir(w, p.team) * pit.L / 2;
+  const { g0, g1 } = openGap(w, p.team, owner.x, owner.y, p);
+  if (g1 - g0 < 0.3) return coverPoint(w, p, owner, r);
+  const l0 = Math.hypot(ogx - owner.x, g0 - owner.y) || 1, l1 = Math.hypot(ogx - owner.x, g1 - owner.y) || 1;
+  const kx = (ogx - owner.x) / l0 + (ogx - owner.x) / l1, ky = (g0 - owner.y) / l0 + (g1 - owner.y) / l1, lk = Math.hypot(kx, ky) || 1;
+  return coverPoint(w, p, owner, r, [kx / lk, ky / lk]);
 }
 
 // ------------------------------------------------------------ per-tick analysis
@@ -103,6 +168,7 @@ function analyse(w) {
         if (p.team !== team || p.role === ROLE.GK || p.st === ST.FALLEN) continue;
         let d = Math.hypot(p.x - owner.x, p.y - owner.y);
         if ((p.x - owner.x) * dir > 0.5) d += 2.5; // not goal-side
+        if (p.ai === AI_PRESS) d -= 1.5; // the man already on him stays on him
         if (byPerson(p)) hd = Math.min(hd, d);
         else if (d < bd) { bd = d; bp = p; }
       }
@@ -116,7 +182,7 @@ function analyse(w) {
         let bm = null, bmd = 1e9;
         for (const p of markers) {
           if (used.has(p.id)) continue;
-          const d = Math.hypot(p.x - o.x, p.y - o.y);
+          const d = Math.hypot(p.x - o.x, p.y - o.y) - (p.ai === AI_MARK && p.aiY === o.id ? 2 : 0); // (sticking with his man)
           if (d < bmd) { bmd = d; bm = p; }
         }
         if (!bm) break;
@@ -575,12 +641,28 @@ function defendThink(w, p, c, owner) {
     return;
   }
   const ogx = -dir * pit.L / 2;
+  const dGoalB = Math.hypot(owner.x - ogx, owner.y);
+  const mk = c.mark.get(p.id);
+  p.ai = c.presser[p.team] === p.id ? AI_PRESS : mk !== undefined ? AI_MARK : 0;
+  if (mk !== undefined) p.aiY = mk;
   if (c.presser[p.team] === p.id) {
-    let gx = ogx - owner.x, gy = -owner.y;
-    const gd = Math.hypot(gx, gy) || 1; gx /= gd; gy /= gd;
+    // near our goal and not goal-side of him (beaten, or off his shooting
+    // line): no chasing him from behind – back onto the line ahead of him
+    if (dGoalB < 28) {
+      const [kx, ky] = bisector(w, p.team, owner.x, owner.y);
+      const ahead = (p.x - owner.x) * kx + (p.y - owner.y) * ky, off = Math.abs((p.x - owner.x) * ky - (p.y - owner.y) * kx);
+      if (ahead < 0.4 || off > 0.6 + 0.5 * ahead) {
+        const [tx, ty] = coverPoint(w, p, owner, 1.2);
+        guardTo(p, tx, ty, 2.5, 0.1);
+        return;
+      }
+    }
+    // goal-side of him, on his shooting line
+    const [gx, gy] = bisector(w, p.team, owner.x, owner.y);
     const tx = owner.x + owner.vx * 0.2 + gx * 0.8, ty = owner.y + owner.vy * 0.2 + gy * 0.8;
     const d = Math.hypot(owner.x - p.x, owner.y - p.y);
-    moveTo(p, tx, ty, 2.5, 0.05);
+    // closing him down: the last few metres facing him, side-on, goal-side
+    if (d < 6) guardTo(p, tx, ty, 2.5, 0.05); else moveTo(p, tx, ty, 2.5, 0.05);
     if (d < 1.7 && !owner.held) p.ib |= KT.MATE; // press = hold a team-mate key
     if (d > 1.3 && d < 3.0 && p.tcd === 0 && !owner.held && w.m.spTaker !== owner.id) {
       const bx = b.x - p.x, by = b.y - p.y, bd = Math.hypot(bx, by) || 1;
@@ -590,21 +672,26 @@ function defendThink(w, p, c, owner) {
     return;
   }
   // an attacker on the ball near our goal: besides the man pressing him, the
-  // nearest of us gets on the line between the ball and the goal, to block
-  const dGoalB = Math.hypot(owner.x - ogx, owner.y);
-  if (dGoalB < 22) {
-    const k = Math.min(0.45, 3.5 / (dGoalB || 1));
-    const lx = owner.x + (ogx - owner.x) * k, ly = owner.y * (1 - k);
+  // nearest of us gets in the way of his shot – on the line that splits the
+  // goal he sees, a few metres off him – to hide as much of it as he can
+  if (dGoalB < 26) {
+    const [lx, ly] = laneSpot(w, p, owner, Math.min(0.45 * dGoalB, 3.5));
     let best = null, bd = 1e9;
     for (const q of w.players) {
       if (q.team !== p.team || q.role === ROLE.GK || q.id === c.presser[p.team] || q.st === ST.FALLEN) continue;
       const dq = Math.hypot(q.x - lx, q.y - ly);
       if (dq < bd) { bd = dq; best = q; }
     }
-    if (best === p) { moveTo(p, lx, ly, 3, 0.15); return; }
+    if (best === p) { guardTo(p, lx, ly, 3, 0.15); return; }
   }
   const [sx, sy] = slotTarget(w, p, false);
-  const mk = c.mark.get(p.id);
+  // nobody to mark and the man on the ball in range: fill the gap he still
+  // sees, a little further back
+  if (mk === undefined && dGoalB < 26) {
+    const [lx, ly] = laneSpot(w, p, owner, Math.min(0.5 * dGoalB, 6.5));
+    guardTo(p, lx, ly, 3, 0.2);
+    return;
+  }
   let tx = sx, ty = sy;
   if (mk !== undefined) {
     const o = pById(w, mk);
@@ -617,16 +704,18 @@ function defendThink(w, p, c, owner) {
       ty = (ly + dy / d * tight) * 0.8 + sy * 0.2;
     }
   }
-  moveTo(p, tx, ty, 5, 0.5);
+  guardTo(p, tx, ty, 5, 0.5); // (ball and man in view)
 }
 
 // Where a keeper stands against a ball at (bx, by): on the bisector of the
-// angle the shooter sees between the posts (equal cover of both corners),
-// `depth` metres off his line. A ball level with the goal line: near post.
-function anglePoint(w, team, bx, by, depth) {
+// angle the shooter sees between the posts (equal cover of both corners) – or
+// between y0 and y1, the part of the goal left to him – `depth` metres off his
+// line. A ball level with the goal line: near post.
+function anglePoint(w, team, bx, by, depth, y0, y1) {
   const pit = pitchOf(w), dir = teamDir(w, team), ogx = -dir * pit.L / 2, hw = pit.goalW / 2;
-  let ux = ogx - bx, uy = -hw - by; const l1 = Math.hypot(ux, uy) || 1; ux /= l1; uy /= l1;
-  let vx = ogx - bx, vy = hw - by; const l2 = Math.hypot(vx, vy) || 1; vx /= l2; vy /= l2;
+  if (y0 === undefined) { y0 = -hw; y1 = hw; }
+  let ux = ogx - bx, uy = y0 - by; const l1 = Math.hypot(ux, uy) || 1; ux /= l1; uy /= l1;
+  let vx = ogx - bx, vy = y1 - by; const l2 = Math.hypot(vx, vy) || 1; vx /= l2; vy /= l2;
   let kx = ux + vx, ky = uy + vy; const lk = Math.hypot(kx, ky) || 1; kx /= lk; ky /= lk;
   const front = (bx - ogx) * dir; // ball's distance out from the goal line
   if (front < 0.6 || Math.abs(kx) < 0.2) return [ogx + dir * 0.5, clamp(by, -hw + 0.45, hw - 0.45)];
@@ -855,8 +944,17 @@ function gkThink(w, p, c) {
     const gap = clamp(0.5 * dGoal, 2.8, 11);
     const depth = alone || charge ? clamp(dGoal - gap, 1.0, Math.min(6.5, pit.boxD * 0.55))
       : close ? clamp(dGoal - 2.6, 1.0, Math.min(6, pit.boxD * 0.55))
-        : clamp(0.08 * dGoal + 0.7, 0.8, 2.6);
+        : clamp(0.11 * dGoal + 0.8, 1.0, 3.2);
     [tx, ty] = anglePoint(w, p.team, b.x, b.y, depth);
+    // a defender in the way hides part of the goal: he covers the rest – the
+    // biggest part the shooter still sees (not all the way: it may deflect,
+    // the defender may move)
+    const { g0, g1, hid } = openGap(w, p.team, b.x, b.y);
+    if (hid > 0.15 && g1 - g0 > 0.3) {
+      const [gx2, gy2] = anglePoint(w, p.team, b.x, b.y, depth, g0, g1);
+      const k = Math.min(0.7, hid * 1.2);
+      tx += (gx2 - tx) * k; ty += (gy2 - ty) * k;
+    }
     // crossing position: a wide ball not yet in shooting angle – stand central, a step out
     const wideBall = Math.abs(b.y) > pit.goalW / 2 + 4 && (b.x - ogx) * dir < pit.boxD + 8 && (b.x - ogx) * dir > 4;
     if (!alone && !close && wideBall) { tx = ogx + dir * 1.6; ty = Math.sign(b.y) * pit.goalW * 0.1; }

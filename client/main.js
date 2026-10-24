@@ -713,7 +713,7 @@ function showControlMode(w) {
   shownMode = mode;
   const k = (name) => `<b>${esc(keyName(input.keys[name]))}</b>`;
   const lines = {
-    defend: `Defending: ${k('mateG')} press · ${k('goalG')} slide · ${k('selfG')} jockey · ${k('runG')} keeper out (any row)`,
+    defend: `Defending: ${k('mateG')} press · ${k('goalG')} slide · ${k('selfG')} jockey · ${k('runG')} keeper out (any row) · hold ${k('r2')} to face the ball as you move`,
     keeper: `Keeper: ${k('goalG')} dive at his feet · ${k('selfG')} one-on-one block · ${k('runG')} rush out · ${k('mateG')} press`,
     keeperAir: `High ball: you catch it on your own · ${k('goalG')} (any row) <b>punches</b> it clear – aim with the stick`,
     keeperBall: `In your hands: <b>ground</b> row rolls it out · <b>mid</b> row throws it (a drop kick when it's far) · <b>high</b> row punts it`,

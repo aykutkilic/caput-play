@@ -1870,6 +1870,10 @@ function movement(w, p, s) {
   // him, matching his moves – no lunge, so he has to beat you
   const jockey = oppHas && !pressing && (p.ib & KICK_MASK) === KT.SELF && !owner.held && p.chgBtn === 0;
   const charging = p.role === ROLE.GK && !own && (p.team === 0 ? m.gkc0 : m.gkc1) > 0 && byPerson(p);
+  // guarding (R2 held without the ball, the other side on it): he keeps
+  // facing the ball and side-steps or backs off into position – between it
+  // and the goal – instead of turning his back on it to run there
+  const guard = oppHas && !own && (p.ib & BTN.R2) && !pressing && !jockey && !charging;
   if (pressing || charging) {
     const tx = b.x + b.vx * 0.15, ty = b.y + b.vy * 0.15;
     const ddx = tx - p.x, ddy = ty - p.y, dd = Math.hypot(ddx, ddy) || 1;
@@ -1953,7 +1957,7 @@ function movement(w, p, s) {
   }
   const tvx = dx * sm * speed, tvy = dy * sm * speed;
   const v = Math.hypot(p.vx, p.vy), vt = Math.hypot(tvx, tvy);
-  if (v > 1.5 && vt > 0.5 && !assist && !jockey && !prec && p.role !== ROLE.GK) {
+  if (v > 1.5 && vt > 0.5 && !assist && !jockey && !guard && !prec && p.role !== ROLE.GK) {
     // Running: momentum carries. The run bends towards the new direction along
     // an arc (wider the faster you go, tighter for agile players), speed is
     // gained or shed on its own, and a reversal means planting a foot and
@@ -1981,7 +1985,7 @@ function movement(w, p, s) {
   // facing
   const sp = Math.hypot(p.vx, p.vy);
   const rate = s.turn * (own ? (prec ? 1.5 : 0.85) : 1) / (1 + 0.09 * sp) * DT;
-  if (pressing || jockey || (p.role === ROLE.GK && !own)) {
+  if (pressing || jockey || guard || (p.role === ROLE.GK && !own)) {
     turnToward(p, Math.atan2(b.y - p.y, b.x - p.x), rate * 1.4);
   } else if (assist && assist.d < 1.6 && p.tm === MEET.WITH && Math.hypot(b.vx, b.vy) > 1) {
     turnToward(p, Math.atan2(b.vy, b.vx), rate * 1.2); // running with it: face where it's going
