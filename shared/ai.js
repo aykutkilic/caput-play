@@ -719,7 +719,7 @@ function anglePoint(w, team, bx, by, depth, y0, y1) {
   let kx = ux + vx, ky = uy + vy; const lk = Math.hypot(kx, ky) || 1; kx /= lk; ky /= lk;
   const front = (bx - ogx) * dir; // ball's distance out from the goal line
   if (front < 0.6 || Math.abs(kx) < 0.2) return [ogx + dir * 0.5, clamp(by, -hw + 0.45, hw - 0.45)];
-  const dep = Math.min(depth, front * 0.6);
+  const dep = Math.min(depth, Math.max(0.3, front - 0.6)); // (no further out than up to the ball)
   const t = (ogx + dir * dep - bx) / kx;
   return [bx + kx * t, clamp(by + ky * t, -hw + 0.3, hw - 0.3)];
 }
@@ -937,7 +937,7 @@ function gkThink(w, p, c) {
   if (shotOnGoal) { p.im = 0; return; }
 
   // 3. positioning
-  let tx, ty, set = false, rush = false, spotVx = 0, spotVy = 0;
+  let tx, ty, set = false, rush = false, spotVx = 0, spotVy = 0, attackMan = false;
   if (owner && owner.team !== p.team) {
     const dGoal = Math.hypot(owner.x - ogx, owner.y);
     // a breakaway: nobody between him and goal, and running at it (closing
@@ -963,24 +963,25 @@ function gkThink(w, p, c) {
     // – throw yourself at the ball. Not at a ball he has under control from
     // where he can hardly score (a tight angle, his back to goal): that's
     // defended on the feet, like a defender would
+    const pace = Math.hypot(owner.vx, owner.vy);
     if ((alone || charge || close) && !shooting && inOwnBox(w, p.team, b.x, b.y, 0.5) && p.tcd === 0 && b.z < 0.5
-      && dBall < 2.6 && ((sep > lv.smother && dBall < sep + 0.3) || (dBall < 1.3 && threat))) {
+      && dBall < 2.6 && ((sep > lv.smother && dBall < sep + 0.3) || (dBall < 1.3 && threat && pace >= 3.5))) {
       p.tcd = 50;
       beginDive(w, p, Math.atan2(b.y - p.y, b.x - p.x), 0.15, Math.max(0.15, dBall / 7), dBall + 0.3);
       return;
     }
-    // ...so close in without a real chance, he stays up, goal-side, and –
-    // when none of his defenders is on the man already – closes him down like
-    // a defender would: a standing tackle when he's on him (see the movement)
+    // ...a man in the box who stands or walks with it – a real chance or not –
+    // is attacked: when none of his defenders is on him already, the keeper
+    // goes at him on his feet, along his shooting line (staying between him
+    // and the goal all the way – see the depth below), and takes the ball off
+    // him: the last step into it, gathering it at his feet (see the movement
+    // and possession). Only a wind-up has him set instead
     const mateOn = w.players.some((q) => q.team === p.team && q.role !== ROLE.GK && q.st !== ST.FALLEN
       && Math.hypot(q.x - owner.x, q.y - owner.y) < Math.min(dBall, 3));
-    if (close && !threat && !shooting && !owner.held && !mateOn && dBall < 4 && Math.hypot(owner.vx, owner.vy) < 3.5
-      && inOwnBox(w, p.team, b.x, b.y, 0.5)) {
-      const [kx, ky] = bisector(w, p.team, owner.x, owner.y);
-      moveTo(p, owner.x + kx * 0.8, owner.y + ky * 0.8, 1.5, 0.05);
-      if (dBall < 1.8) p.ib |= KT.MATE; // press
-      return;
-    }
+    // (he has to be dawdling: half a second at walking pace – not just setting off)
+    p.aiX = pace < 2.5 ? Math.min(255, p.aiX + 1) : 0;
+    attackMan = close && !shooting && !owner.held && !mateOn && dBall < 7 && p.aiX > 30 && inOwnBox(w, p.team, b.x, b.y, 0.5);
+    if (attackMan && dBall < 1.3) { p.ib |= KT.MATE; return; } // into it
     // Always between the ball and the goal: on the line that splits the goal
     // the man sees (the frustum from the ball to the posts), where he hides
     // the most of it. Further out hides more – in the box (or against a man
@@ -998,9 +999,13 @@ function gkThink(w, p, c) {
     const gl = Math.hypot(ogx - owner.x, owner.y) || 1, across = Math.abs(owner.vx * -owner.y - owner.vy * (ogx - owner.x)) / gl;
     const still = 1 - clamp(across / 6, 0, 1), closeIn = clamp((8 - fx) / 3, 0, 1);
     const share = (0.4 + 0.22 * still) * (1 - closeIn) + 0.62 * closeIn;
-    const depth = alone || charge || close ? clamp(fx * share, 1.0, Math.max(1.0, Math.min(fx - clamp(0.3 * fx, 1.0, 2.2), 6)))
-      : clamp(0.11 * dGoal + 0.8, 1.0, 3.2);
+    const depth = attackMan ? Math.max(1.0, fx - 0.9)
+      : alone || charge || close ? clamp(fx * share, 1.0, Math.max(1.0, Math.min(fx - clamp(0.3 * fx, 1.0, 2.2), 6)))
+        : clamp(0.11 * dGoal + 0.8, 1.0, 3.2);
     [tx, ty] = anglePoint(w, p.team, ax, ay, depth);
+    // going at a man dawdling on it: just in front of the ball on his line,
+    // whatever the angle (from by the byline too)
+    if (attackMan) { const [kx, ky] = bisector(w, p.team, ax, ay); tx = ax + kx * 0.9; ty = ay + ky * 0.9; }
     // how that spot moves across with his run: the keeper moves with it (in
     // and out is left to the pull below – backing off fast he can't do, and
     // it would slow him getting across)
@@ -1018,10 +1023,9 @@ function gkThink(w, p, c) {
       const k = Math.min(0.7, hid * 1.2);
       tx += (gx2 - tx) * k; ty += (gy2 - ty) * k;
     }
-    // set (planted, small steps only) when the shot is coming: a wind-up, or a
-    // man facing the goal with the ball under control and hardly moving
-    set = shooting || (dGoal < 25 && Math.abs(angDiffAI(owner.face, Math.atan2(-owner.y, ogx - owner.x))) < 0.9 && sep < 1.2
-      && Math.hypot(owner.vx, owner.vy) < 2.5);
+    // set (planted, small steps only) when the shot is coming: a wind-up
+    // (a man just standing on the ball is gone at, above)
+    set = shooting;
   } else {
     // our ball or a loose one: angle on where the ball is going; further out
     // (sweeper) when we have it
