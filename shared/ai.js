@@ -704,12 +704,13 @@ function gkThink(w, p, c) {
   if (shotOnGoal && b.kt === lv.spread && p.tcd === 0 && (p.x - b.x) / b.vx > 0.04 && rnd(w) < lv.spreadP) {
     const dB = Math.hypot(b.x - p.x, b.y - p.y), tk = (p.x - b.x) / b.vx;
     const kind = blockKind(w, b.x, b.y, dB);
-    // (the star only for one just out of his reach standing, not one at him,
-    // and at a height his arms cover – it leaves a gap at his hips)
+    // each block for the height it covers: spread on the ground for a low one,
+    // the K-barrier up to his waist, the star for a high one just out of his
+    // standing reach (it leaves a gap at his hips) and only when there's no
+    // time to dive; a shot at him at chest height he takes standing
     const off = Math.abs(b.y + b.vy * tk - p.y), zk = b.z + b.vz * tk - 0.5 * G * tk * tk;
     const nearHim = off > 0.55 && off < 1.15 && zk > 1.0 && zk < 2.3;
-    // (the star jump only when there's no time to dive: under a quarter second)
-    if (dB < 4.5 || (kind === GKB.STAR && nearHim && tk < 0.25) || (kind === GKB.KNEE && dB < 6.5)) {
+    if ((kind === GKB.SPREAD && dB < 4.5 && zk < 0.7) || (kind === GKB.STAR && nearHim && tk < 0.25) || (kind === GKB.KNEE && dB < 6.5 && zk < 1.1)) {
       p.tcd = 50;
       beginBlock1v1(w, p, Math.atan2(-b.vy, -b.vx), kind);
       return;
@@ -735,6 +736,14 @@ function gkThink(w, p, c) {
           if (q) { moveTo(p, (q.x - ogx) * dir < 0.2 ? ogx + dir * 0.2 : q.x, q.y, 0.5, 0.05); return; }
         }
         const dy = yk - p.y;
+        // low and just wide, too quick to dive for: a leg slid out along the grass
+        // (when there's really no time – otherwise it's a dive, which can hold it)
+        if (zk < 0.45 && Math.abs(dy) > 0.5 && Math.abs(dy) < 1.5 && p.tcd === 0 && (tt < 0.18 || (tt < 0.24 && rnd(w) < 0.4))) {
+          const to = Math.atan2(b.y - p.y, b.x - p.x);
+          p.tcd = 40;
+          beginBlock1v1(w, p, to, GKB.SPLITS, Math.cos(to) * dy >= 0 ? 1 : -1);
+          return;
+        }
         if (Math.abs(dy) > 0.65 && tt < 0.4 + s.h * 0.08) {
           const ey = dy + (rnd(w) - 0.5) * 2 * lv.misread;
           beginDive(w, p, Math.atan2(ey, dir * 0.25 * Math.abs(ey)), Math.min(zk, 2.3), tt, Math.abs(ey) * 1.03);

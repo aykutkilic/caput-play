@@ -48,6 +48,7 @@ export function lookFor(avatar, team, role) {
     gloves: gk ? '#f7f7f7' : null,
     longSleeves: gk,
     number: a.number || 0,
+    female: a.sex === 1,
   };
 }
 
@@ -88,7 +89,7 @@ export class PerspCam {
   constructor() {
     this.persp = true;
     this.w = 800; this.h = 600; this.ex = 0; this.ey = 0; this.ez = 1.7;
-    this.yaw = 0; this.pitch = -0.12; this.near = 0.25; this.fov = 64 * D2R;
+    this.yaw = 0; this.pitch = -0.12; this.near = 0.25; this.fov = 72 * D2R;
     this.update();
   }
   update() {
@@ -96,8 +97,8 @@ export class PerspCam {
     this.F = [cy * cp, sy * cp, sp]; this.R = [-sy, cy, 0]; this.U = [-cy * sp, -sy * sp, cp];
     // a wide screen sees more across, not less up and down (a phone held
     // sideways a little more of both: the ball at his feet stays in view)
-    const fov = this.w / this.h > 1.8 ? 74 * D2R : this.fov;
-    this.f = Math.min(this.h / 2 / Math.tan(fov / 2), this.w / 2 / Math.tan(47 * D2R));
+    const fov = this.w / this.h > 1.8 ? 78 * D2R : this.fov;
+    this.f = Math.min(this.h / 2 / Math.tan(fov / 2), this.w / 2 / Math.tan(50 * D2R));
     this.cx = this.ex; this.cy = this.ey;
     // what code written for the orthographic camera reads: the view straight ahead
     this.c = -sy; this.s = -cy; this.se = Math.max(0.05, Math.sin(-this.pitch)); this.ce = Math.cos(this.pitch);
@@ -118,6 +119,14 @@ export class PerspCam {
   screenDirToWorld(sx, sy) {
     const fx = Math.cos(this.yaw), fy = Math.sin(this.yaw);
     return [-fy * sx - fx * sy, fx * sx - fy * sy];
+  }
+  // my own body: each joint its own scale, 0 for one behind the eyes
+  selfView() {
+    const l = this.local(this.ex + this.F[0], this.ey + this.F[1], this.ez - 1);
+    l.self = true;
+    // (nothing nearer than ~30 cm: shoulders and chest are out of sight anyway)
+    l.sAt = (X, Y, Z) => { const zc = this.toCam(X, Y, Z)[2]; return zc > 0.3 ? this.f / zc : 0; };
+    return l;
   }
   // an orthographic stand-in for drawing one figure at (x, y, z): the real
   // projection, with the scale and the view's angles at that point
@@ -444,6 +453,19 @@ export function poseFor(p, ctx) {
         P.lk = mix(P.lk, 0.18, e); P.rk = mix(P.rk, 0.18, e); P.lean = mix(P.lean, 0.06, e); P.tw *= 1 - e;
         break;
       }
+      if (p.spr === GKB.SPLITS) {
+        // splits save: the leading leg slid out along the grass to the ball,
+        // the other bent under him, body low over it, the near hand down
+        const e = clamp(k / 4, 0, 1) * clamp((p.stDur - k) / 12, 0, 1);
+        const side = Math.sin(ctx.diveRel) >= 0 ? 1 : -1;
+        P.drop = mix(P.drop, 0.3 * H, e); P.lean = mix(P.lean, 0.25, e); P.roll = mix(P.roll, -0.25 * side, e); P.tw *= 1 - e;
+        const hz = 0.53 * H - P.drop;
+        legIK(P, side, 0.05 * H, side * (0.35 + 0.2 * e) * H, -hz + 0.05, H, e);   // out along the grass
+        legIK(P, -side, 0.12 * H, -side * 0.1 * H, -hz, H, e);                      // bent under him
+        armIK(P, side, 0.18 * H, side * 0.3 * H, 0.15 * H, H, e);                  // near hand down to the ground
+        if (side > 0) { P.lsh = mix(P.lsh, 1.4, e); P.lab = mix(P.lab, 1.1, e); } else { P.rsh = mix(P.rsh, 1.4, e); P.rab = mix(P.rab, 1.1, e); }
+        break;
+      }
       if (p.spr === GKB.KNEE) {
         // K-barrier: down on one knee towards the near post, the shin along
         // the grass, the other foot planted, body upright, hands cupped low
@@ -731,7 +753,7 @@ export class Renderer {
     this.boards(pit, far, near);
     for (const f of far) f();
 
-    // shadows (in first person not my own: I'm not drawn)
+    // shadows (in first person my own body is drawn last, from the eyes)
     const drawn = (p) => !(fpOn && p.id === info.myId);
     for (const p of w.players) {
       if (!drawn(p)) continue;
@@ -753,6 +775,8 @@ export class Renderer {
     items.sort((a, b) => a.d - b.d);
     for (const it of items) it.fn();
     for (const f of near) f();
+    // first person: my own legs, feet, arms and hands, as I'd see them (nearest of all)
+    if (fpOn) this.drawPose(mine, Js.get(mine.id), info, cam.selfView());
 
     // overlays
     for (const p of w.players) {
@@ -774,16 +798,19 @@ export class Renderer {
     let dy = angDiff(c.yaw, p.face);
     c.yaw += dy * k;
     if (c.yaw > Math.PI) c.yaw -= TAU; else if (c.yaw < -Math.PI) c.yaw += TAU;
-    // eyes: a little behind and above the head – it never fills the view, and
-    // a ball at his feet is still in sight when he looks down at it
+    // the eyes: just behind the head – looking down he sees his legs, his
+    // boots and the ball at them, and his hands; his chest and head aren't
+    // drawn (see drawFigure)
     const fx = Math.cos(c.yaw), fy = Math.sin(c.yaw);
-    const ex = h[0] - fx * 0.35, ey = h[1] - fy * 0.35, ez = Math.max(0.3, h[2] + 0.1);
+    const ex = h[0] - fx * 0.15, ey = h[1] - fy * 0.15, ez = Math.max(0.3, h[2] + 0.06);
     c.ex = this.fpInit ? c.ex + (ex - c.ex) * (1 - Math.exp(-dt * 25)) : ex;
     c.ey = this.fpInit ? c.ey + (ey - c.ey) * (1 - Math.exp(-dt * 25)) : ey;
     c.ez = this.fpInit ? c.ez + (ez - c.ez) * (1 - Math.exp(-dt * 12)) : ez;
     const bx = ball[0] - c.ex, by = ball[1] - c.ey, bd = Math.hypot(bx, by);
+    // (standing over it he looks right down at it; at a sprint, ahead)
     let tp = -0.13;
-    if (bd > 0.2 && (bx * fx + by * fy) / bd > 0.5) tp = clamp(-0.13 + 0.5 * (Math.atan2(ball[2] - c.ez, bd) + 0.15), -0.68, 0.3);
+    const sp = Math.hypot(p.vx, p.vy);
+    if (bd > 0.1 && (bx * fx + by * fy) / bd > 0.3) tp = clamp(-0.13 + 0.6 * (Math.atan2(ball[2] - c.ez, bd) + 0.15), -0.95 + 0.06 * sp, 0.3);
     c.pitch = this.fpInit ? c.pitch + (tp - c.pitch) * (1 - Math.exp(-dt * 4)) : tp;
     this.fpInit = true;
     c.update();
@@ -1293,7 +1320,8 @@ export class Renderer {
       const kh = carrying >= 0 ? 1 : 1 - Math.exp(-dt * (ctx.reach ? 32 + 40 * ctx.reach.e : 20));
       for (const key in target) a.P[key] += (target[key] - a.P[key]) * (ARM_KEYS.has(key) ? kh : kb);
     }
-    return skeleton(p, a.P, s.H, s.width, x, y, z, p.face);
+    const look = info.looks && info.looks.get(p.id);
+    return skeleton(p, a.P, s.H, s.width, x, y, z, p.face, look && look.female);
   }
 
   overlay(w, p, x, y, z, info) {
@@ -1439,7 +1467,7 @@ export function drawAvatarPreview(canvas, avatar, team, t) {
   const p = { id: 0, st: ST.IDLE, stT: 0, stA: 0, stDur: 1, kk: 0, z: 0 };
   const P = poseFor(p, { H: s.H, speed: sp, phase: ph, time: t, gkStance: 0, diveRel: 0 });
   const face = t * 0.7;
-  const J = skeleton(p, P, s.H, s.width, 0, 0, 0, face);
+  const J = skeleton(p, P, s.H, s.width, 0, 0, 0, face, look.female);
   // shift so that the figure stands on the lower part of the canvas
   const footY = cam.py(0, 0, 0);
   const offset = H * 0.88 - footY;

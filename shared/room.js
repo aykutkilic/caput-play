@@ -39,11 +39,12 @@ const hex = (v, d) => (typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v) ? v 
 export function sanitizeProfile(p) {
   const a = (p && p.avatar) || {};
   const name = String((p && p.name) || 'Player').replace(/[^\p{L}\p{N} _.\-]/gu, '').trim().slice(0, 16) || 'Player';
+  const sex = clampInt(a.sex, 0, 1, 0); // 0: man, 1: woman (looks only – the body sliders set the attributes)
   return {
     name,
     avatar: {
-      skin: hex(a.skin, '#e0ac69'), hair: clampInt(a.hair, 0, 9, 1), hairColor: hex(a.hairColor, '#2b1b10'),
-      beard: clampInt(a.beard, 0, 4, 0),
+      sex, skin: hex(a.skin, '#e0ac69'), hair: clampInt(a.hair, 0, 11, 1), hairColor: hex(a.hairColor, '#2b1b10'),
+      beard: sex ? 0 : clampInt(a.beard, 0, 4, 0),
       boots: hex(a.boots, '#111111'), number: clampInt(a.number, 1, 99, 10),
       phys: { h: clampInt(a.phys && a.phys.h, 160, 200, 180), b: clampInt(a.phys && a.phys.b, 0, 100, 50) },
     },
@@ -52,6 +53,24 @@ export function sanitizeProfile(p) {
 
 const AI_SKINS = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#a26b45'];
 const AI_HAIR = ['#1b1b1b', '#3b2416', '#7a4a1f', '#d9b25f', '#9c9c9c', '#b5532d'];
+const AI_HAIR_W = [3, 6, 6, 7, 10, 11, 1, 8]; // long, ponytail (×2), bun, bob, braids, short, curly
+
+// An AI player's looks, the same every time for the same id. aiSex (room
+// setting): 0 mixed, 1 men, 2 women.
+function aiAvatar(id, role, aiSex) {
+  const r = (k) => (id * 2654435761 + k * 40503) >>> 0;
+  const sex = aiSex === 1 ? 0 : aiSex === 2 ? 1 : r(9) % 2;
+  const gk = role === ROLE.GK;
+  return {
+    sex, skin: AI_SKINS[r(1) % AI_SKINS.length],
+    hair: sex ? AI_HAIR_W[r(2) % AI_HAIR_W.length] : r(2) % 10, hairColor: AI_HAIR[r(3) % (sex ? 5 : AI_HAIR.length)],
+    beard: !sex && r(7) % 3 === 0 ? 1 + (r(8) % 4) : 0,
+    boots: '#222222', number: gk ? 1 : 2 + (r(4) % 20),
+    phys: sex
+      ? { h: gk ? 176 + (r(5) % 12) : 160 + (r(5) % 18), b: 20 + (r(6) % 45) }
+      : { h: gk ? 186 + (r(5) % 10) : 168 + (r(5) % 22), b: 30 + (r(6) % 45) },
+  };
+}
 
 export class Room {
   constructor(code, name, onEmpty) {
@@ -61,7 +80,7 @@ export class Room {
     this.members = new Map(); // clientId -> member
     this.ai = new Map();      // playerId -> ai spec
     this.hostId = null;
-    this.settings = { matchLen: 240, pitch: 'auto', goals: GOAL_SIZE_DEFAULT, ai: 1 };
+    this.settings = { matchLen: 240, pitch: 'auto', goals: GOAL_SIZE_DEFAULT, ai: 1, aiSex: 0 };
     this.world = createWorld(1, (Math.random() * 2 ** 31) | 0);
     this.world.auth = true; // inputs that don't arrive are missing here (see BOT_AFTER)
     this.world.m.matchLen = this.settings.matchLen;
@@ -161,16 +180,10 @@ export class Room {
     if (role === ROLE.GK && this.hasKeeper(team)) return;
     if (this.teamCount(team) >= MAX_PER_TEAM || this.world.players.length >= MAX_PLAYERS) return;
     const id = this.freeId();
-    const r = (k) => (id * 2654435761 + k * 40503) >>> 0;
     const spec = {
       playerId: id, team, role,
       name: role === ROLE.GK ? 'AI Keeper' : `AI ${id}`,
-      avatar: {
-        skin: AI_SKINS[r(1) % AI_SKINS.length], hair: r(2) % 10, hairColor: AI_HAIR[r(3) % AI_HAIR.length],
-        beard: r(7) % 3 === 0 ? 1 + (r(8) % 4) : 0,
-        boots: '#222222', number: role === ROLE.GK ? 1 : 2 + (r(4) % 20),
-        phys: { h: role === ROLE.GK ? 186 + (r(5) % 10) : 168 + (r(5) % 22), b: 30 + (r(6) % 45) },
-      },
+      avatar: aiAvatar(id, role, this.settings.aiSex),
     };
     this.ai.set(id, spec);
     addPlayer(this.world, { id, team, role, human: 0, hgt: spec.avatar.phys.h, bld: spec.avatar.phys.b });
@@ -213,6 +226,14 @@ export class Room {
     if (['auto', '0', '1', '2', 0, 1, 2].includes(s.pitch)) this.settings.pitch = String(s.pitch);
     if ([0, 1, 2].includes(Number(s.goals))) this.settings.goals = Number(s.goals);
     if ([0, 1, 2].includes(Number(s.ai))) this.settings.ai = Number(s.ai);
+    if ([0, 1, 2].includes(Number(s.aiSex)) && Number(s.aiSex) !== this.settings.aiSex) {
+      // the AI players on the pitch change to match (their bodies too)
+      this.settings.aiSex = Number(s.aiSex);
+      for (const a of this.ai.values()) {
+        a.avatar = aiAvatar(a.playerId, a.role, this.settings.aiSex);
+        updatePlayerSpec(this.world, { id: a.playerId, team: a.team, role: a.role, human: 0, hgt: a.avatar.phys.h, bld: a.avatar.phys.b });
+      }
+    }
     if (!this.world.m.live) {
       this.world.m.matchLen = this.settings.matchLen;
       this.world.m.goalS = this.settings.goals; // the goals don't change size mid-match

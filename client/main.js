@@ -18,7 +18,7 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 // ------------------------------------------------------------------ profile
 
 const SKINS = ['#ffdbac', '#f1c27d', '#e0ac69', '#c68642', '#a26b45', '#8d5524', '#5c3a21'];
-const HAIR_STYLES = ['Bald', 'Short', 'Buzz', 'Long', 'Afro', 'Mohawk', 'Ponytail', 'Bun', 'Curly', 'Side part'];
+const HAIR_STYLES = ['Bald', 'Short', 'Buzz', 'Long', 'Afro', 'Mohawk', 'Ponytail', 'Bun', 'Curly', 'Side part', 'Bob', 'Braids'];
 const BEARDS = ['None', 'Stubble', 'Beard', 'Moustache', 'Goatee'];
 const HAIR_COLS = ['#1b1b1b', '#3b2416', '#6b4423', '#a0662f', '#d9b25f', '#e8d9a8', '#9c9c9c', '#b5532d', '#3d6fd1', '#d94c8a'];
 const BOOTS = ['#111111', '#f5f5f5', '#e5483b', '#2f6be0', '#f2c230', '#3fd08f', '#ff8a00', '#b05cff'];
@@ -27,7 +27,10 @@ function defaultProfile() {
   const r = (a) => a[(Math.random() * a.length) | 0];
   return {
     name: 'Player' + ((Math.random() * 900 + 100) | 0),
-    avatar: { skin: r(SKINS), hair: 1 + ((Math.random() * 7) | 0), hairColor: r(HAIR_COLS.slice(0, 7)), boots: r(BOOTS), number: 2 + ((Math.random() * 20) | 0), phys: { h: 178, b: 45 } },
+    avatar: (() => {
+      const sex = Math.random() < 0.5 ? 1 : 0;
+      return { sex, skin: r(SKINS), hair: sex ? r([3, 6, 7, 10, 11]) : 1 + ((Math.random() * 7) | 0), hairColor: r(HAIR_COLS.slice(0, 7)), boots: r(BOOTS), number: 2 + ((Math.random() * 20) | 0), phys: { h: sex ? 168 : 178, b: 45 } };
+    })(),
   };
 }
 function loadProfile() {
@@ -385,7 +388,8 @@ function renderPanel() {
   $('pitchSel').value = String(r.settings.pitch);
   $('goalSel').value = String(r.settings.goals ?? GOAL_SIZE_DEFAULT);
   $('aiSel').value = String(r.settings.ai ?? 1);
-  $('matchLen').disabled = $('pitchSel').disabled = $('aiSel').disabled = !isHost;
+  $('aiSexSel').value = String(r.settings.aiSex ?? 0);
+  $('matchLen').disabled = $('pitchSel').disabled = $('aiSel').disabled = $('aiSexSel').disabled = !isHost;
   // the goals can't be resized during a match
   $('goalSel').disabled = !isHost || !!(game.world && game.world.m.live);
   $('startBtn').disabled = !isHost;
@@ -407,9 +411,9 @@ document.querySelector('.teams').addEventListener('click', (e) => {
 $('spectate').onclick = () => send({ t: 'team', team: -1, role: 0 });
 $('matchLen').onchange = () => send({
   t: 'settings', matchLen: Number($('matchLen').value), pitch: $('pitchSel').value,
-  goals: Number($('goalSel').value), ai: Number($('aiSel').value),
+  goals: Number($('goalSel').value), ai: Number($('aiSel').value), aiSex: Number($('aiSexSel').value),
 });
-$('pitchSel').onchange = $('goalSel').onchange = $('aiSel').onchange = $('matchLen').onchange;
+$('pitchSel').onchange = $('goalSel').onchange = $('aiSel').onchange = $('aiSexSel').onchange = $('matchLen').onchange;
 $('startBtn').onclick = () => { send({ t: state.room && state.room.live ? 'stop' : 'start' }); $('startBtn').blur(); };
 $('leaveBtn').onclick = () => {
   if (state.host) state.host.goOffline();
@@ -609,6 +613,20 @@ function openEditor() {
   const syncBeard = () => beard.querySelectorAll('button').forEach((b) => b.classList.toggle('on', Number(b.dataset.i) === (a.beard || 0)));
   beard.onclick = (e) => { if (e.target.dataset.i) { a.beard = Number(e.target.dataset.i); syncBeard(); } };
   syncBeard();
+  // man or woman: the look only – height and build set the attributes, as for anyone
+  const sexEl = $('edSex');
+  sexEl.innerHTML = ['Man', 'Woman'].map((n, i) => `<button data-i="${i}">${n}</button>`).join('');
+  const syncSex = () => {
+    sexEl.querySelectorAll('button').forEach((b) => b.classList.toggle('on', Number(b.dataset.i) === (a.sex || 0)));
+    $('edBeardLbl').hidden = $('edBeard').hidden = a.sex === 1;
+  };
+  sexEl.onclick = (e) => {
+    if (!e.target.dataset.i) return;
+    a.sex = Number(e.target.dataset.i);
+    if (a.sex === 1) { a.beard = 0; syncBeard(); }
+    syncSex();
+  };
+  syncSex();
   $('edH').value = a.phys.h; $('edB').value = a.phys.b;
   updatePhys();
   $('editor').hidden = false;

@@ -40,10 +40,11 @@ export const ST = {
   PUNCH: 16, TIP: 17, // keeper: punching a high ball clear / tipping one over the bar (contact point in kx, ky, stB)
 };
 
-// A keeper's one-on-one blocks (ST.DIVE with p.spr set): spread on his side
-// across the shot, the star jump (an X in the air) and the K-barrier (down on
-// one knee, the shin across the near post side)
-export const GKB = { SPREAD: 1, STAR: 2, KNEE: 3 };
+// A keeper's blocks (ST.DIVE with p.spr set): spread on his side across the
+// shot, the star jump (an X in the air), the K-barrier (down on one knee, the
+// shin across the near post side) and the splits save (a leg slid out sideways
+// along the grass at a low shot just wide of him, too quick to dive for)
+export const GKB = { SPREAD: 1, STAR: 2, KNEE: 3, SPLITS: 4 };
 
 // Controlling a ball out of the air (ST.CONTROL, part in the player's stB)
 export const PART = { FOOT: 0, THIGH: 1, CHEST: 2, HEAD: 3 };

@@ -50,12 +50,11 @@ export function ratings(heightCm, build) {
   const s = stats(heightCm, build);
   const r = (v, lo, hi) => Math.round(clamp((v - lo) / (hi - lo), 0, 1) * 60 + 35);
   return [
-    ['Top speed', r(s.sprint, 7.3, 8.7)],
+    ['Top speed', r(s.sprint, 9.6, 11.0)],
     ['Acceleration', r(s.accel, 9.2, 16.8)],
     ['Agility', r(s.turn, 7.8, 14.3)],
     ['Strength', r(s.strength, 0.12, 0.88)],
     ['Aerial', r(s.reach, 1.95, 2.52)],
     ['Shot power', r(s.shot, 0.915, 1.085)],
-    ['Stamina', r(s.stamina, 0.68, 1.33)],
   ];
 }

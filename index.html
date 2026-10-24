@@ -119,6 +119,11 @@
           <option value="0">Casual</option><option value="1">Normal</option><option value="2">Pro</option>
         </select>
       </label>
+      <label>AI players
+        <select id="aiSexSel">
+          <option value="0">Mixed</option><option value="1">Men</option><option value="2">Women</option>
+        </select>
+      </label>
       <button id="startBtn" class="primary">Start match</button>
     </div>
     <div class="section">
@@ -156,10 +161,11 @@
             <label>Name <input id="edName" maxlength="16"></label>
             <label>Number <input id="edNum" type="number" min="1" max="99"></label>
           </div>
+          <div class="lbl">Player</div><div class="chips" id="edSex"></div>
           <div class="lbl">Skin</div><div class="swatches" id="edSkin"></div>
           <div class="lbl">Hair</div><div class="chips" id="edHair"></div>
           <div class="lbl">Hair colour</div><div class="swatches" id="edHairCol"></div>
-          <div class="lbl">Facial hair</div><div class="chips" id="edBeard"></div>
+          <div class="lbl" id="edBeardLbl">Facial hair</div><div class="chips" id="edBeard"></div>
           <div class="lbl">Boots</div><div class="swatches" id="edBoots"></div>
           <div class="lbl">Height <b id="edHval"></b></div>
           <input id="edH" type="range" min="160" max="200" step="1">
