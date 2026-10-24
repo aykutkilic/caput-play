@@ -1837,9 +1837,9 @@ function receiveAssist(w, p, sx, sy, sm) {
     if (sm > 0.25 && d > 0.5 && c < -0.2) return null;
   } else if (sm > 0.25) {
     // the stick is his: the assist only helps while he's heading for the ball
-    // anyway (even one played to him – he may want to run elsewhere)
+    // anyway – one played to him, unless he's running away from it
     const c = d > 1e-3 ? (sx * dx + sy * dy) / d : 1;
-    if (d > 0.5 && c < (mine || aerial ? 0.35 : 0.5)) return null;
+    if (d > 0.5 && c < (mine ? -0.2 : aerial ? 0.35 : 0.5)) return null;
     if (d <= 0.5 && c < -0.3) return null; // right by it, pushing away: he goes
   } else if (!mine && !aerial) return null;
   return { x: at.x, y: at.y, z: at.z, t: at.t, d, ux: d > 1e-3 ? dx / d : 0, uy: d > 1e-3 ? dy / d : 0, dive: at.dive || 0 };

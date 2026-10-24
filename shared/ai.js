@@ -255,7 +255,28 @@ function shotChance(w, p) {
 // The best pass by expected value: to feet, into the space ahead of a runner,
 // or lofted (chest-high / head-high) when the ground route is shut – each
 // candidate raced against the defenders.
-function bestPass(w, p) {
+// When a ball played d m gets there: in the air its planned flight, along the
+// ground the roll (rolled out of a keeper's hands it can't be as quick).
+function arrival(kh, d, pw, fromHands) {
+  if (kh !== KH.GROUND) return loftTime(d, kh, pw);
+  const v0 = Math.min(groundSpeedFor(d, passEndSpeed(KICK.PASS, d, pw)), fromHands ? 17 : 28), K = MU / CF;
+  for (let t = 0.05; t < 5; t += 0.05) if ((v0 + K) * (1 - Math.exp(-CF * t)) / CF - K * t >= d) return t;
+  return 5;
+}
+// Where to play it to a team-mate on the move: where he'll be when it gets
+// there – a person led a little less (he may stop or turn; the receive assist
+// takes him the rest of the way)
+function leadTo(w, p, q, kh, pw) {
+  const b = w.ball, k = byPerson(q) ? 0.7 : 0.8, hands = b.held === 1 && b.owner === p.id;
+  let tx = q.x, ty = q.y;
+  for (let i = 0; i < 3; i++) {
+    const T = arrival(kh, Math.hypot(tx - b.x, ty - b.y), pw, hands);
+    tx = q.x + q.vx * T * k; ty = q.y + q.vy * T * k;
+  }
+  return [tx, ty];
+}
+
+function bestPass(w, p, forPeople = 0.08) {
   const dir = teamDir(w, p.team), b = w.ball, pit = pitchOf(w);
   const gx = dir * pit.L / 2;
   const wide = Math.abs(p.y) > pit.boxW / 2 - 3 && (gx - p.x) * dir < pit.boxD + 10;
@@ -264,7 +285,7 @@ function bestPass(w, p) {
     tx = clamp(tx, -pit.L / 2 + 0.8, pit.L / 2 - 0.8); ty = clamp(ty, -pit.W / 2 + 0.8, pit.W / 2 - 0.8);
     const odds = passOdds(w, p.team, b.x, b.y, tx, ty, kind, kh, pw, t);
     let v = odds * spotValue(w, p.team, tx, ty) - (1 - odds) * lossCost(w, p.team, (b.x + tx) / 2);
-    if (byPerson(t)) v += 0.08 * odds;   // give it to the people playing
+    if (byPerson(t)) v += forPeople * odds;   // give it to the people playing
     // forwards rather than back: ground gained counts a little, and back to
     // the keeper is the last way out
     v += 0.015 * odds * clamp((tx - b.x) * dir / 12, 0, 1.5);
@@ -645,18 +666,32 @@ function gkThink(w, p, c) {
     const outs = w.players.filter((q) => q.role !== ROLE.GK);
     const q = outs[Math.floor(rnd(w) * outs.length)];
     const d = Math.hypot(q.x - b.x, q.y - b.y), up = d > 30 || rnd(w) < 0.3;
-    const T = up ? 1.1 + d / 30 : 0.35 + d / 14;
-    const tx = q.x + q.vx * T, ty = q.y + q.vy * T;
-    if (up) aiKick(w, p, KICK.LONG, 0.6, tx, ty, q.id, d > 30 ? KH.HIGH : KH.MID);
+    const kh = up ? (d > 30 ? KH.HIGH : KH.MID) : KH.GROUND;
+    const [tx, ty] = leadTo(w, p, q, kh, up ? 0.6 : 0.5);
+    if (up) aiKick(w, p, KICK.LONG, 0.6, tx, ty, q.id, kh);
     else aiKick(w, p, KICK.PASS, 0.5, tx, ty, q.id, KH.GROUND);
     return;
   }
   if (b.owner === p.id) {
     // in his hands he can take his time; at his feet (a back-pass) he moves it on
-    if (p.ai !== AI_CARRY) { p.ai = AI_CARRY; p.aiT = b.held ? lv.hold + Math.floor(rnd(w) * 30) : 10 + Math.floor(rnd(w) * 12); }
+    if (p.ai !== AI_CARRY) { p.ai = AI_CARRY; p.aiT = b.held ? lv.hold + Math.floor(rnd(w) * 30) : 10 + Math.floor(rnd(w) * 12); p.aiX = 0; }
+    p.aiX++;
+    // a person on his side calling for it gets it, once the keeper is set
+    // (his goal kick placed): rolled or passed to feet if the way is clear,
+    // otherwise thrown, drop-kicked or chipped to him
+    const req = p.team === 0 ? m.req0 : m.req1, r = req >= 0 && req !== p.id ? pById(w, req) : null;
+    if (r && r.team === p.team && (m.spTaker === p.id ? m.cd >= 25 : p.aiX > 15)) {
+      const d = Math.hypot(r.x - p.x, r.y - p.y);
+      const kh = d > 30 || (d > 9 && laneBlocked(w, p.team, b.x, b.y, r.x, r.y, 1.2)) ? (d > 30 ? KH.HIGH : KH.MID) : KH.GROUND;
+      const [tx, ty] = leadTo(w, p, r, kh, 0.5);
+      aiKick(w, p, KICK.PASS, 0.5, tx, ty, r.id, kh);
+      if (p.team === 0) { m.req0 = -1; m.req0T = 0; } else { m.req1 = -1; m.req1T = 0; }
+      return;
+    }
     if (m.spTaker === p.id && m.cd < 45) return;
-    // quick distribution: a team-mate already free gets it straight away
-    const bp = bestPass(w, p);
+    // quick distribution: a team-mate already free gets it straight away – a
+    // person playing rather than an AI one, when he's anywhere near as free
+    const bp = bestPass(w, p, 0.25);
     const d = bp ? Math.hypot(bp.tx - p.x, bp.ty - p.y) : 99;
     const clear = bp && bp.kh === KH.GROUND && bp.odds > 0.85 && d < 32;
     // ball at his feet with someone closing in: no time to wait – out of his
@@ -680,7 +715,7 @@ function gkThink(w, p, c) {
       let best = null;
       const tryTarget = (tx, ty, q) => {
         const odds = passOdds(w, p.team, b.x, b.y, tx, ty, KICK.LONG, KH.HIGH, 0.8, q);
-        const v = odds * (0.3 + spotValue(w, p.team, tx, ty));
+        const v = odds * (0.3 + spotValue(w, p.team, tx, ty) + (q && byPerson(q) ? 0.25 : 0));
         if (!best || v > best.v) best = { tx, ty, tid: q ? q.id : -1, v };
       };
       for (const q of w.players) if (q.team === p.team && q !== p && (q.x - p.x) * dir > 12) tryTarget(q.x, q.y, q);
