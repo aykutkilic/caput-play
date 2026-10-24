@@ -713,7 +713,7 @@ function showControlMode(w) {
     keeperAir: `High ball: you catch it on your own · ${k('goalG')} (any row) <b>punches</b> it clear – aim with the stick`,
     keeperBall: `In your hands: <b>ground</b> row rolls it out · <b>mid</b> row throws it (a drop kick when it's far) · <b>high</b> row punts it`,
     block: 'Hard ball coming: any kick key <b>blocks</b> it',
-    after: 'Aftertouch – push the stick <b>further out</b> to curl it back in (further right bends it left) · <b>back</b> lifts it · <b>forward</b> dips it',
+    after: 'Aftertouch – push the stick <b>sideways</b> to bend it that way · <b>back</b> lifts it · <b>forward</b> dips it',
     freekick: 'Your free kick – turn with the stick, a kick key plays it · or <b>hold a direction</b> to take it quickly and run with it',
     throwin: 'Your throw-in – aim with the stick, a kick key throws it',
     penalty: 'Penalty – aim with the stick (it picks the spot), Goal key shoots',
