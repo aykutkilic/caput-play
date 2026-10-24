@@ -84,6 +84,7 @@ const sfx = new Sfx();
 try { renderer.setPreset(localStorage.getItem('caput.cam') || 'iso'); renderer.zoom = Number(localStorage.getItem('caput.zoom')) || 1; } catch { renderer.setPreset('iso'); }
 
 const replay = new Replay();
+if (params.has('debug')) window.caput = { game, state, renderer, input }; // (for tests and poking around)
 const NO_OFFSETS = new Map();
 let lastButtons = 0;
 

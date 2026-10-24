@@ -1761,6 +1761,7 @@ function receiveAssist(w, p, sx, sy, sm) {
   if (b.owner >= 0 || m.spTaker >= 0 || (m.phase !== PHASE.PLAY && m.phase !== PHASE.WARMUP)) return null;
   if (p.role === ROLE.GK && inOwnBox(w, p.team, p.x, p.y, 2)) return null;
   if (b.last === p.id && b.kt < 20 && b.tgt !== p.id) return null; // the kicker isn't chasing his own pass (unless it's to himself)
+  if (b.nut === p.id) return null; // it has just slipped past him: he can't take it, the stick is his
   const mine = b.tgt === p.id;
   const aerial = b.z > 0.6 || b.vz > 1.5;
   const me = meetBall(w, p);
@@ -1786,6 +1787,7 @@ function receiveAssist(w, p, sx, sy, sm) {
     // anyway (even one played to him – he may want to run elsewhere)
     const c = d > 1e-3 ? (sx * dx + sy * dy) / d : 1;
     if (d > 0.5 && c < (mine || aerial ? 0.35 : 0.5)) return null;
+    if (d <= 0.5 && c < -0.3) return null; // right by it, pushing away: he goes
   } else if (!mine && !aerial) return null;
   return { x: at.x, y: at.y, z: at.z, t: at.t, d, ux: d > 1e-3 ? dx / d : 0, uy: d > 1e-3 ? dy / d : 0, dive: at.dive || 0 };
 }
@@ -2673,7 +2675,8 @@ function slideContacts(w) {
 // and he can't touch it again on its way past (b.nut).
 function slipsPast(w, p) {
   const b = w.ball;
-  if (b.lastTeam < 0 || b.lastTeam === p.team || p.role === ROLE.GK) return false;
+  // (a ball played to him – a keeper's serve in the warm-up – is his to take)
+  if (b.lastTeam < 0 || b.lastTeam === p.team || p.role === ROLE.GK || b.tgt === p.id) return false;
   const rvx = b.vx - p.vx, rvy = b.vy - p.vy, v = Math.hypot(rvx, rvy);
   if (v < 4) return false;
   const ux = rvx / v, uy = rvy / v;
@@ -2716,7 +2719,9 @@ function possession(w) {
     }
     return;
   }
-  if (b.nut >= 0) { const q = pById(w, b.nut); if (!q || Math.hypot(b.x - q.x, b.y - q.y) > 1.3) b.nut = -1; }
+  // the man it slipped past can't take it while it's getting away from him –
+  // once it's well past him, or has slowed down, it's anyone's
+  if (b.nut >= 0) { const q = pById(w, b.nut); if (!q || Math.hypot(b.x - q.x, b.y - q.y) > 1.3 || Math.hypot(b.vx, b.vy) < 3) b.nut = -1; }
   let best = null, bestD = 1e9, zone = 0, rival = null;
   for (const p of w.players) {
     if (b.nut === p.id) continue;
