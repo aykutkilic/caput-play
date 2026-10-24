@@ -49,13 +49,27 @@
     <header>
       <div>
         <div id="roomName">Room</div>
-        <div class="muted">Code <b id="roomCode">----</b> · <span id="roomStatus">Warm-up</span></div>
+        <div class="muted"><span id="codeBit">Code <b id="roomCode">----</b> · </span><span id="roomStatus">Warm-up</span></div>
       </div>
       <div class="hbtns">
         <button id="copyLink" class="ghost" title="Copy invite link">Copy invite</button>
         <button id="minBtn" class="ghost icon" title="Minimize (Esc)" aria-label="Minimize room panel">–</button>
       </div>
     </header>
+    <div class="section friends" id="friends" hidden>
+      <h4>Play with friends</h4>
+      <p class="muted small" id="p2pInfo">Create a room and send the invite link – friends join this game, right where it is.</p>
+      <ul id="roomList"></ul>
+      <div class="row" id="createRow">
+        <input id="newRoomName" placeholder="Room name (optional)" maxlength="28">
+        <button id="createBtn" class="primary">Create room</button>
+      </div>
+      <div class="row">
+        <input id="joinCode" placeholder="Room code" maxlength="4" style="text-transform:uppercase">
+        <button id="joinBtn">Join</button>
+      </div>
+      <div id="friendsStatus" class="muted small"></div>
+    </div>
     <div class="teams">
       <div class="teamcol" data-team="0">
         <h3 class="a">TEAM A</h3>
@@ -114,6 +128,8 @@
       <label class="check"><input id="netChk" type="checkbox"> Net stats</label>
       <label class="check"><input id="touchChk" type="checkbox"> Touch controls</label>
       <button id="fsBtn" class="ghost small">Fullscreen</button>
+      <button id="installBtn" class="primary small" hidden>⬇ Install app</button>
+      <div id="iosHint" class="muted small" hidden>Install on your phone/tablet: tap <b>Share</b> → <b>Add to Home Screen</b></div>
     </div>
     <div class="section">
       <h4>Sound</h4>
@@ -125,47 +141,6 @@
       <button id="leaveBtn" class="danger">Leave</button>
     </footer>
   </aside>
-
-  <!-- home screen -->
-  <section id="home">
-    <div class="brand">
-      <div class="logo">CAPUT</div>
-      <div class="tag">minimal isometric football · Team A vs Team B</div>
-      <div class="pwa">
-        <button id="soundBtn" class="ghost small" title="Music &amp; sound">🔊 Sound</button>
-        <button id="installBtn" class="primary small" hidden>⬇ Install app</button>
-        <span id="iosHint" class="muted small" hidden>Install on your phone/tablet: tap <b>Share</b> → <b>Add to Home Screen</b></span>
-      </div>
-    </div>
-    <div id="homeMixer" class="mixer pop" hidden></div>
-    <div class="homegrid">
-      <div class="card me">
-        <canvas id="homePreview" width="200" height="240"></canvas>
-        <div class="who">
-          <div id="homeName">Player</div>
-          <div class="muted" id="homeMeta"></div>
-          <button id="editBtn" class="ghost">Edit player</button>
-        </div>
-      </div>
-      <div class="card lobby">
-        <h3 id="roomsTitle">Rooms</h3>
-        <ul id="roomList"><li class="muted">Connecting…</li></ul>
-        <div class="row">
-          <input id="newRoomName" placeholder="Room name (optional)" maxlength="28">
-          <button id="createBtn" class="primary">Create room</button>
-        </div>
-        <div class="row">
-          <input id="joinCode" placeholder="Code" maxlength="4" style="text-transform:uppercase;width:90px">
-          <button id="joinBtn">Join</button>
-        </div>
-        <div id="homeStatus" class="muted small"></div>
-      </div>
-    </div>
-    <div class="foot muted">Arrows move · kick keys are a grid – columns <b>Q/A/Z</b> run path · <b>W/S/X</b> team-mate ·
-      <b>E/D/C</b> goal · <b>R/F/V</b> self; rows high · ground · mid; hold for power, double / triple press for more ·
-      <b>Shift</b> get the ball · <b>Space</b> close control — or a gamepad, or touch on phones &amp; tablets<br>
-      After kicking, steer to bend, lift or dip the ball (aftertouch)</div>
-  </section>
 
   <!-- avatar editor -->
   <div id="editor" class="modal" hidden>

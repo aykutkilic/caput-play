@@ -4,9 +4,10 @@
 //    serves the newest files whenever the device is online.
 //  * Compares the running build (VERSION, stamped at deploy) with the deployed
 //    one (version.json) on launch, when the app returns to the foreground and
-//    every few minutes. Outside a match it reloads straight into the new
-//    version; during a match it only announces it, and the update is applied
-//    when the player leaves the room – a game is never interrupted.
+//    every few minutes. Warming up alone it reloads straight into the new
+//    version; during a match (or with others in the room) it only announces
+//    it, and the update is applied when the player leaves the room – a game
+//    is never interrupted.
 //  * Exposes the browser's install prompt (Android / desktop Chrome & Edge);
 //    iOS has no prompt, so the UI shows the Share → Add to Home Screen hint.
 

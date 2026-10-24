@@ -93,6 +93,8 @@ function toView(b) {
 
 // ---------------------------------------------------------------- host
 
+const cleanName = (n) => String(n).replace(/[<>]/g, '').slice(0, 28);
+
 export class HostSession {
   constructor() {
     this.peer = null;
@@ -105,6 +107,22 @@ export class HostSession {
   }
 
   async start(roomName) {
+    this.startLocal(roomName);
+    await this.goOnline(roomName);
+    return this.code;
+  }
+
+  // A room only this tab plays in (solo warm-up): no network at all.
+  startLocal(roomName) {
+    this.room = new Room('', cleanName(roomName), () => {});
+    this.startTicker();
+  }
+
+  get online() { return !!this.peer; }
+
+  // Open the room to others, keeping what's on the pitch: it gets a code
+  // and becomes reachable through the broker.
+  async goOnline(roomName) {
     const Peer = await loadPeer();
     let err = null;
     for (let i = 0; i < 5 && !this.peer; i++) {
@@ -119,13 +137,31 @@ export class HostSession {
       }
     }
     if (!this.peer) throw err || new Error('could not open a room');
-    this.room = new Room(this.code, String(roomName).replace(/[<>]/g, '').slice(0, 28), () => {});
-    this.peer.on('connection', (conn) => this.accept(conn));
+    const peer = this.peer;
+    peer.on('connection', (conn) => { if (this.peer === peer) this.accept(conn); else conn.close(); });
     // stay reachable for new joiners if the signalling socket drops
-    this.peer.on('disconnected', () => { if (!this.closed) this.peer.reconnect(); });
-    this.peer.on('error', (e) => console.warn('[host] peer error:', e.type));
-    this.startTicker();
+    peer.on('disconnected', () => { if (!this.closed && this.peer === peer) peer.reconnect(); });
+    peer.on('error', (e) => console.warn('[host] peer error:', e.type));
+    this.room.code = this.code;
+    if (roomName) this.room.name = cleanName(roomName);
+    this.room.broadcastRoom();
     return this.code;
+  }
+
+  // Close the room to others but play on: the guests are sent back to their
+  // own warm-up and the room loses its code.
+  goOffline() {
+    const peer = this.peer;
+    if (!peer) return;
+    for (const g of [...this.guests]) {
+      g.sendText(JSON.stringify({ t: 'error', text: 'The host closed the room' }));
+      this.drop(g);
+    }
+    this.peer = null;
+    this.code = null;
+    setTimeout(() => { try { peer.destroy(); } catch { /* ignore */ } }, 200);
+    this.room.code = '';
+    this.room.broadcastRoom();
   }
 
   startTicker() {
@@ -222,7 +258,7 @@ export class HostSession {
       g.sendText(JSON.stringify({ t: 'error', text: 'The host closed the room' }));
       this.drop(g);
     }
-    setTimeout(() => { try { this.peer.destroy(); } catch { /* ignore */ } }, 200);
+    if (this.peer) setTimeout(() => { try { this.peer.destroy(); } catch { /* ignore */ } }, 200);
   }
 }
 

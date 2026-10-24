@@ -61,6 +61,8 @@ const state = {
   lastPhase: -1,
   lastRoomCode: null,
   wantJoin: params.get('room'),
+  joining: false,  // (server) asked to join a room after (re)connecting
+  roomNet: null,   // the transport the current room came through
   // 'server': a dedicated game server is reachable; 'p2p': rooms are hosted in a player's browser
   mode: params.has('p2p') || STATIC_HOST ? 'p2p' : 'server',
   everConnected: false,
@@ -102,11 +104,13 @@ function inviteQuery(code) {
 }
 
 // Wires a transport (dedicated server, serverless host loopback or serverless
-// guest) to the game. Only the current transport's events are honoured.
-function useTransport(t, onOpen, onClose) {
-  net = t;
-  game.net = t;
+// guest) to the game. Only the current transport's events are honoured. A
+// deferred one (joining someone's room) takes over once it's connected, so
+// the warm-up goes on meanwhile – and does if it fails.
+function useTransport(t, onOpen, onClose, deferred = false) {
+  if (!deferred) activate(t);
   t.on('open', () => {
+    if (deferred) activate(t);
     if (net !== t) return;
     t.send({ t: 'hello', profile: state.profile });
     if (onOpen) onOpen();
@@ -114,7 +118,7 @@ function useTransport(t, onOpen, onClose) {
   t.on('close', (info) => onClose(info || {}));
   t.on('snap', (snap) => { if (net === t && state.inRoom) game.onSnapshot(snap); });
   t.on('msg', (msg) => {
-    if (net !== t) return;
+    if (net !== t) { if (msg.t === 'error') toast(msg.text); return; }
     switch (msg.t) {
       case 'welcome': state.clientId = msg.id; break;
       case 'rooms': renderRoomList(msg.rooms); break;
@@ -123,10 +127,29 @@ function useTransport(t, onOpen, onClose) {
         addChat(msg.from, msg.text);
         if (msg.pid >= 0) { state.bubbles.set(msg.pid, { text: msg.text, until: performance.now() + 2500 }); sfx.chat(); }
         break;
-      case 'error': toast(msg.text); break;
+      case 'error':
+        toast(msg.text);
+        t.said = true; // (no second toast if this is the end of the connection)
+        // couldn't get back into a room after reconnecting: a fresh one of your own
+        if (state.mode === 'server' && state.joining && !state.inRoom) send({ t: 'create' });
+        state.joining = false;
+        break;
       case 'left': leaveRoomUi(); break;
     }
   });
+}
+
+// Makes t the transport the game talks through. The room this tab was
+// hosting (the solo warm-up) closes when another one takes over.
+function activate(t) {
+  const prev = net;
+  net = t;
+  game.net = t;
+  if (!prev || prev === t) return;
+  if (state.host && prev === state.host.local) { state.host = null; prev.close(); }
+  // nothing from the old room any more; the new one starts with its 'room' message
+  state.inRoom = false;
+  game.reset();
 }
 
 function connectServer() {
@@ -134,8 +157,11 @@ function connectServer() {
   useTransport(t, () => {
     state.everConnected = true;
     t.send({ t: 'list' });
+    // straight into a room: the one you were invited to (or were in), else your own
     const code = state.wantJoin || state.lastRoomCode;
-    if (code) { t.send({ t: 'join', code }); state.wantJoin = null; }
+    state.wantJoin = null;
+    state.joining = !!code;
+    t.send(code ? { t: 'join', code } : { t: 'create' });
   }, ({ wasOpen }) => {
     if (net !== t) return;
     // nothing listening on /ws (static hosting): switch to serverless rooms
@@ -150,24 +176,16 @@ function connectServer() {
 function enterP2PMode() {
   state.mode = 'p2p';
   net = null;
-  renderHomeMode();
+  startSolo();
   if (state.wantJoin) { const c = state.wantJoin; state.wantJoin = null; joinPeer(c); }
+  else banner('CAPUT', 'Warm up · create a room to play with friends');
 }
 
-async function hostRoom(name) {
-  if (state.busy) return;
-  state.busy = true;
-  setHomeStatus('Opening a room…');
+// Your own room, run in this tab and offline: you warm up (or play the AI)
+// until you open it to friends or join someone else's.
+function startSolo() {
   const host = new HostSession();
-  try {
-    await host.start(name || `${state.profile.name}'s room`);
-  } catch (e) {
-    toast(`Could not open a room (${e.type || e.message}) – check your connection`);
-    return;
-  } finally {
-    state.busy = false;
-    setHomeStatus('');
-  }
+  host.startLocal(`${state.profile.name}'s room`);
   state.host = host;
   const t = host.local;
   useTransport(t, null, () => {
@@ -178,41 +196,54 @@ async function hostRoom(name) {
   t.connect();
 }
 
+// Opens the room you're in to others: it gets a code and an invite link,
+// and everything on the pitch carries on.
+async function openRoom() {
+  const host = state.host;
+  if (!host || host.online || state.busy) return;
+  state.busy = true;
+  setFriendsStatus('Opening the room…');
+  try {
+    await host.goOnline($('newRoomName').value.trim() || `${state.profile.name}'s room`);
+  } catch (e) {
+    toast(`Could not open a room (${e.type || e.message}) – check your connection`);
+    return;
+  } finally {
+    state.busy = false;
+    setFriendsStatus('');
+  }
+  const url = `${location.origin}${location.pathname}${inviteQuery(host.code)}`;
+  try { await navigator.clipboard.writeText(url); toast(`Room ${host.code} is open – invite link copied`); } catch { toast(`Room ${host.code} is open – invite: ${url}`); }
+}
+
 function joinPeer(code) {
   if (state.busy) return;
   state.busy = true;
-  setHomeStatus(`Connecting to room ${code}…`);
+  setFriendsStatus(`Connecting to room ${code}…`);
   const t = new PeerNet(code);
-  const done = () => { state.busy = false; setHomeStatus(''); };
+  const done = () => { state.busy = false; setFriendsStatus(''); };
   useTransport(t, done, ({ wasOpen }) => {
     done();
     if (net !== t) return;
-    if (wasOpen && state.inRoom) toast('Disconnected from the host');
+    if (wasOpen && state.inRoom && !t.said) toast('Disconnected from the host');
     leaveRoomUi();
-  });
+  }, true);
   t.connect();
 }
 
 if (state.mode === 'server') connectServer(); else enterP2PMode();
 
-setInterval(() => { if (state.mode === 'server' && !state.inRoom && net && net.connected) net.send({ t: 'list' }); }, 3000);
+// the server's room list, while the panel shows it
+setInterval(() => { if (state.mode === 'server' && net && net.connected && !$('panel').hidden) net.send({ t: 'list' }); }, 3000);
 
-// ------------------------------------------------------------------ home
+// ------------------------------------------------------------------ play with friends
 
-function renderHomeMode() {
-  const p2p = state.mode === 'p2p';
-  $('roomsTitle').textContent = p2p ? 'Play with friends' : 'Rooms';
-  if (p2p) {
-    $('roomList').innerHTML = `<li class="muted info">Serverless: the player who creates a room hosts it in their browser and
-      everyone else connects to them directly (peer-to-peer). Create a room and share the invite link, or enter a code.</li>`;
-  }
-}
+function setFriendsStatus(text) { $('friendsStatus').textContent = text; }
 
-function setHomeStatus(text) { $('homeStatus').textContent = text; }
-
+// (dedicated server only) the other rooms you could join
 function renderRoomList(rooms) {
   const ul = $('roomList');
-  if (!rooms.length) { ul.innerHTML = '<li class="muted">No rooms yet – create one!</li>'; return; }
+  rooms = rooms.filter((r) => !state.room || r.code !== state.room.code);
   ul.innerHTML = rooms.map((r) => `
     <li><div><div class="rn">${esc(r.name)} <span class="muted">· ${r.code}</span></div>
     <div class="rm">${r.humans} player${r.humans === 1 ? '' : 's'}${r.ai ? ` · ${r.ai} AI` : ''}${r.live ? ` · LIVE ${r.score[0]}–${r.score[1]}` : ' · warm-up'}</div></div>
@@ -222,15 +253,14 @@ $('roomList').addEventListener('click', (e) => {
   const code = e.target.dataset && e.target.dataset.code;
   if (code) { sfx.unlock(); send({ t: 'join', code }); }
 });
-$('createBtn').onclick = () => {
-  sfx.unlock();
-  const name = $('newRoomName').value.trim();
-  if (state.mode === 'p2p') hostRoom(name); else send({ t: 'create', name });
-};
+$('createBtn').onclick = () => { sfx.unlock(); openRoom(); $('createBtn').blur(); };
+$('newRoomName').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('createBtn').click(); });
 $('joinBtn').onclick = () => {
   sfx.unlock();
   const c = $('joinCode').value.trim().toUpperCase();
   if (!c) return;
+  $('joinCode').value = '';
+  $('joinBtn').blur();
   if (state.mode === 'p2p') joinPeer(c); else send({ t: 'join', code: c });
 };
 $('joinCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('joinBtn').click(); });
@@ -239,34 +269,32 @@ addEventListener('beforeunload', (e) => {
   if (state.host && state.room && state.room.members.length > 1) { e.preventDefault(); e.returnValue = ''; }
 });
 
-function refreshHomeCard() {
-  const p = state.profile, s = stats(p.avatar.phys.h, p.avatar.phys.b);
-  $('homeName').textContent = p.name;
-  $('homeMeta').textContent = `#${p.avatar.number} · ${p.avatar.phys.h} cm · ${Math.round(s.mass)} kg (${buildWord(p.avatar.phys.b)})`;
-}
-refreshHomeCard();
-
 // ------------------------------------------------------------------ room
 
 function onRoom(msg) {
-  const first = !state.inRoom || (state.room && state.room.code !== msg.code);
+  // a room of its own when the transport changes or it's another server room
+  // (not when the one you host opens to others or closes again)
+  const first = !state.inRoom || state.roomNet !== net || (state.room && state.room.code !== msg.code && state.room.code && msg.code);
   // a chime when someone joins or leaves
   if (!first && state.room) {
     const before = state.room.members.length, after = msg.members.length;
     if (after > before) sfx.joined(); else if (after < before) sfx.left();
   }
   state.room = msg;
-  state.lastRoomCode = msg.code;
+  state.lastRoomCode = msg.code || null;
+  state.joining = false;
+  const query = msg.code ? inviteQuery(msg.code) : '';
+  if (location.search !== query) history.replaceState(null, '', query || location.pathname);
   if (first) {
     state.inRoom = true;
+    state.roomNet = net;
     game.reset();
     state.lastPhase = -1;
-    $('home').hidden = true;
     $('hud').hidden = false;
     $('chatlog').innerHTML = '';
-    history.replaceState(null, '', inviteQuery(msg.code));
-    let minimized = false;
-    try { minimized = localStorage.getItem('caput.panel') === 'min'; } catch { /* ignore */ }
+    // your own warm-up starts with the pitch clear (the pill opens the panel)
+    let minimized = !msg.code || msg.members.length === 1;
+    try { minimized ||= localStorage.getItem('caput.panel') === 'min'; } catch { /* ignore */ }
     showPanel(!minimized, false);
     touch.setVisible(state.touchUI);
   }
@@ -280,13 +308,15 @@ function onRoom(msg) {
   renderPanel();
 }
 
+// Out of a room: back to a warm-up of your own (unless the server connection
+// dropped – reconnecting takes you back in).
 function leaveRoomUi(keepCode = false) {
   state.inRoom = false;
   state.room = null;
+  state.roomNet = null;
   if (!keepCode) state.lastRoomCode = null;
   state.myId = -1;
   game.reset();
-  $('home').hidden = false;
   $('hud').hidden = true;
   showPanel(false);
   touch.setVisible(false);
@@ -294,13 +324,15 @@ function leaveRoomUi(keepCode = false) {
   replay.stop(); state.replayAt = 0;
   if (pwa.updateReady) pwa.apply(); // a newer version was announced during the match
   if (!keepCode) history.replaceState(null, '', location.pathname);
-  if (state.mode === 'server' && net && net.connected) net.send({ t: 'list' });
+  if (state.mode === 'p2p') startSolo();
+  else if (!keepCode && net && net.connected) send({ t: 'create' });
 }
 
 // The room panel can be minimized to a small pill; the choice is remembered.
 function showPanel(on, remember = true) {
   $('panel').hidden = !on;
   $('panelPill').hidden = on || !state.inRoom;
+  if (on && state.mode === 'server' && net && net.connected) net.send({ t: 'list' });
   if (remember && state.inRoom) { try { localStorage.setItem('caput.panel', on ? 'open' : 'min'); } catch { /* ignore */ } }
 }
 $('minBtn').onclick = () => showPanel(false);
@@ -316,14 +348,26 @@ function renderPanel() {
   const r = state.room;
   if (!r) return;
   const isHost = r.hostId === state.clientId;
-  $('roomName').textContent = r.name;
+  const p2p = state.mode === 'p2p', offline = !r.code; // your own warm-up, not open to anyone yet
+  const alone = r.members.length === 1;
+  $('roomName').textContent = offline ? 'Warm-up' : r.name;
   $('roomCode').textContent = r.code;
-  $('pillName').textContent = r.name;
+  $('codeBit').hidden = offline;
+  $('copyLink').hidden = offline;
+  $('pillName').textContent = offline ? 'Warm-up · Play with friends' : r.name;
   $('pillCode').textContent = r.code;
-  const where = state.mode !== 'p2p' ? '' : state.host ? ' · hosted in this tab – keep it open' : ' · peer-to-peer';
-  $('roomStatus').textContent = (r.live ? 'Match in progress' : 'Warm-up') + where;
+  const where = !p2p ? '' : state.host ? ' · hosted in this tab – keep it open' : ' · peer-to-peer';
+  $('roomStatus').textContent = offline ? `${r.live ? 'Match in progress' : 'Just you'} · offline` : (r.live ? 'Match in progress' : 'Warm-up') + where;
+  // play with friends: open this room to them or join theirs (from the
+  // server's list or by code) – from your own warm-up
+  $('friends').hidden = p2p ? !offline : !alone;
+  $('p2pInfo').hidden = !p2p;
+  $('createRow').hidden = !p2p;
+  // leaving: closing the room you host takes it offline (you play on);
+  // leaving someone else's takes you back to a warm-up of your own
+  $('leaveBtn').hidden = p2p ? offline : alone;
   $('leaveBtn').textContent = state.host ? 'Close room' : 'Leave';
-  $('leaveBtn').title = state.host ? 'You are hosting: this ends the room for everyone' : '';
+  $('leaveBtn').title = state.host ? 'Sends everyone else back to their own warm-up – you play on' : '';
   for (const col of document.querySelectorAll('.teamcol')) {
     const team = Number(col.dataset.team);
     const rows = [];
@@ -368,7 +412,9 @@ $('matchLen').onchange = () => send({
 $('pitchSel').onchange = $('goalSel').onchange = $('aiSel').onchange = $('matchLen').onchange;
 $('startBtn').onclick = () => { send({ t: state.room && state.room.live ? 'stop' : 'start' }); $('startBtn').blur(); };
 $('leaveBtn').onclick = () => {
-  if (state.mode === 'p2p') { if (net) net.close(); } else send({ t: 'leave' });
+  if (state.host) state.host.goOffline();
+  else if (state.mode === 'p2p') { if (net) { net.said = true; net.close(); } } else send({ t: 'leave' });
+  $('leaveBtn').blur();
 };
 $('copyLink').onclick = async () => {
   const url = `${location.origin}${location.pathname}${inviteQuery(state.room ? state.room.code : '')}`;
@@ -406,11 +452,10 @@ document.addEventListener('change', (e) => {
   sfx.setMuted(!e.target.checked);
   syncMixers();
 });
-$('soundBtn').onclick = () => { sfx.unlock(); $('homeMixer').hidden = !$('homeMixer').hidden; };
 // a soft click for buttons (not the in-game touch controls)
 document.addEventListener('click', (e) => {
   const b = e.target.closest && e.target.closest('button');
-  if (b && !b.closest('#touch')) sfx.click();
+  if (b && !b.closest('#touch')) { sfx.unlock(); sfx.click(); }
 });
 $('netChk').checked = state.showNet;
 $('netChk').onchange = () => { state.showNet = $('netChk').checked; try { localStorage.setItem('caput.net', state.showNet ? '1' : '0'); } catch { /* ignore */ } };
@@ -419,7 +464,8 @@ $('netChk').onchange = () => { state.showNet = $('netChk').checked; try { localS
 
 // installable app + automatic updates (applied between matches, never during one)
 const pwa = initPwa({
-  busy: () => state.inRoom,
+  // a match, others in the room or the player editor open: update afterwards
+  busy: () => !!state.room && (state.room.live || state.room.members.length > 1) || !$('editor').hidden,
   onUpdateReady: () => { $('updateBtn').hidden = false; },
   onInstallable: (on) => { $('installBtn').hidden = !on || pwa.standalone; },
 });
@@ -583,10 +629,8 @@ $('edSave').onclick = () => {
   state.profile = draft;
   saveProfile(draft);
   send({ t: 'profile', profile: draft });
-  refreshHomeCard();
   closeEditor();
 };
-$('editBtn').onclick = openEditor;
 $('editBtn2').onclick = openEditor;
 
 // How excited the crowd is: the ball near a goal, more so in a real match.
@@ -835,7 +879,6 @@ function loop(now) {
   } else {
     const g = renderer.g;
     g.fillStyle = '#0e1a14'; g.fillRect(0, 0, renderer.cam.w, renderer.cam.h);
-    drawAvatarPreview($('homePreview'), state.profile.avatar, 0, now / 1000);
   }
   if (draft && !$('editor').hidden) drawAvatarPreview($('edPreview'), draft.avatar, kit, now / 1000);
 }

@@ -44,34 +44,23 @@ input:focus, select:focus { border-color: rgba(182,243,106,.6); }
 label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
 label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
 
-/* ---------------- home */
-#home {
-  position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 26px; padding: 24px; background: radial-gradient(ellipse at 50% 40%, rgba(14,40,26,.55), rgba(8,14,11,.92));
-  overflow: auto;
-}
-.brand { text-align: center; }
-.logo { font-size: 64px; font-weight: 900; letter-spacing: 10px; line-height: 1;
-  background: linear-gradient(90deg, var(--a), #fff 50%, var(--b)); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.tag { color: var(--muted); margin-top: 8px; letter-spacing: 1px; }
-.homegrid { display: grid; grid-template-columns: 300px minmax(320px, 440px); gap: 18px; }
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px; backdrop-filter: blur(8px); }
-.card h3 { margin: 0 0 10px; font-size: 15px; letter-spacing: 1px; }
-.card.me { display: flex; flex-direction: column; align-items: center; gap: 8px; }
-.card.me .who { text-align: center; display: flex; flex-direction: column; gap: 6px; align-items: center; }
-#homeName { font-size: 20px; font-weight: 800; }
-#roomList { list-style: none; margin: 0 0 12px; padding: 0; max-height: 260px; overflow: auto; }
+/* ---------------- room panel: play with friends */
+.friends > * { grid-column: 1 / -1; }
+.friends p { margin: 0; line-height: 1.5; }
+.friends .row { margin-top: 0; }
+.friends .row .primary { padding: 7px 12px; }
+#roomList { list-style: none; margin: 0; padding: 0; max-height: 180px; overflow: auto; }
+#roomList:empty { display: none; }
 #roomList li { display: flex; align-items: center; justify-content: space-between; padding: 9px 10px; border-radius: 10px; gap: 10px; }
 #roomList li:hover { background: rgba(255,255,255,.05); }
 #roomList .rn { font-weight: 700; }
 #roomList .rm { font-size: 12px; color: var(--muted); }
 #roomList li.info { display: block; line-height: 1.55; font-size: 13px; }
-#homeStatus { margin-top: 10px; min-height: 16px; color: var(--accent); }
+#friendsStatus { color: var(--accent); }
+#friendsStatus:empty { display: none; }
+#iosHint { grid-column: 1 / -1; }
 .row { display: flex; gap: 8px; margin-top: 8px; }
 .row input { flex: 1; }
-.foot { font-size: 12px; text-align: center; max-width: 760px; line-height: 1.7; }
-.foot b { color: var(--text); }
-@media (max-width: 760px) { .homegrid { grid-template-columns: 1fr; } .logo { font-size: 44px; } }
 
 /* ---------------- HUD */
 #hud { position: fixed; inset: 0; pointer-events: none; }
@@ -274,17 +263,6 @@ body.touchui #radar { top: calc(10px + env(safe-area-inset-top)); bottom: auto; 
   .sheet { padding: 16px; }
 }
 
-/* home: centre when it fits, scroll from the top when it doesn't */
-#home { justify-content: flex-start; }
-#home::before, #home::after { content: ''; margin: auto; }
-@media (max-height: 500px) {
-  #home { gap: 12px; padding: 12px; }
-  .logo { font-size: 34px; letter-spacing: 6px; }
-  .tag { margin-top: 2px; font-size: 12px; }
-  .card { padding: 12px; }
-  #homePreview { width: 110px; height: 132px; }
-}
-@media (pointer: coarse) { .foot { display: none; } }
 @media (max-width: 480px) {
   #scorebar .team { font-size: 0; gap: 0; }
   #panelPill #pillName { display: none; }
@@ -304,14 +282,12 @@ body.touchui #replayBadge { top: calc(52px + env(safe-area-inset-top)); }
 body.replaying #radar { visibility: hidden; }
 
 /* install / update */
-.pwa { margin-top: 12px; display: flex; justify-content: center; gap: 10px; min-height: 0; }
-.pwa b { color: var(--text); }
 #updateBtn { position: fixed; bottom: calc(14px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); z-index: 30;
   background: var(--accent); color: #10200c; font-weight: 700; border: none; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
 body.touchui #updateBtn { bottom: auto; top: calc(56px + env(safe-area-inset-top)); }
 #verTag { position: fixed; right: calc(10px + env(safe-area-inset-right)); bottom: calc(6px + env(safe-area-inset-bottom));
   font-size: 10px; color: rgba(255,255,255,.28); pointer-events: none; }
-#hud:not([hidden]) ~ #verTag { display: none; }
+#panel[hidden] ~ #verTag { display: none; } /* shown with the room panel */
 
 /* ---------------- mixer */
 .mixer { display: grid; gap: 6px; }
@@ -319,5 +295,4 @@ body.touchui #updateBtn { bottom: auto; top: calc(56px + env(safe-area-inset-top
 .section .mixer label.mix { display: grid; grid-template-columns: 74px 1fr; }
 .mixer label.mix { display: grid; grid-template-columns: 74px 1fr; align-items: center; gap: 8px; font-size: 13px; }
 .mixer input[type=range] { width: 100%; }
-.mixer.pop { position: relative; margin: -6px auto 14px; width: min(320px, 92vw); padding: 12px 14px; border-radius: 12px;
-  background: var(--panel, rgba(16,26,21,.92)); border: 1px solid var(--line); }
+

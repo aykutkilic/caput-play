@@ -34,6 +34,7 @@ export class Sfx {
     this.track = 0;
     this.audio = null;
     this.excite = 0;
+    this.bus = {}; // (the channels exist once audio is unlocked; sounds before that are silent)
   }
 
   unlock() {

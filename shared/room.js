@@ -86,7 +86,7 @@ export class Room {
     const c0 = this.teamCount(0, true), c1 = this.teamCount(1, true);
     const team = c0 <= c1 ? 0 : 1;
     if (this.teamCount(team) < MAX_PER_TEAM && this.world.players.length < MAX_PLAYERS) this.setTeam(m, team, ROLE.OUT, true);
-    this.system(`${m.name} joined`);
+    if (this.members.size > 1) this.system(`${m.name} joined`);
     this.broadcastRoom();
     this.sendSnapshotTo(m, this.encode());
   }
