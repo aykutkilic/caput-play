@@ -2010,11 +2010,10 @@ function movement(w, p, s) {
 
   if (taker && m.spTaker === p.id) { p.vx = 0; p.vy = 0; }
 
-  // (a keeper in his box doesn't poke it away when he can get to it: he
-  // gathers it at his feet – see possession; with the man between him and the
-  // ball, shielding it, he reaches round with a foot like anyone)
-  const gather = p.role === ROLE.GK && owner && keeperHands(w, p) && inOwnBox(w, p.team, b.x, b.y, 0.3)
-    && Math.hypot(b.x - p.x, b.y - p.y) < Math.hypot(owner.x - p.x, owner.y - p.y);
+  // (a keeper in his box doesn't poke it away – it would only run loose: he
+  // gets to it and gathers it at the man's feet, going round to the side of
+  // it when he's shielding it – see possession and the AI)
+  const gather = p.role === ROLE.GK && keeperHands(w, p) && inOwnBox(w, p.team, b.x, b.y, 0.3);
   if (pressing && p.tcd === 0 && !gather) {
     const bd = Math.hypot(b.x - p.x, b.y - p.y);
     const fd = (Math.cos(p.face) * (b.x - p.x) + Math.sin(p.face) * (b.y - p.y)) / (bd || 1);

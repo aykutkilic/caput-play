@@ -978,10 +978,17 @@ function gkThink(w, p, c) {
     // and possession). Only a wind-up has him set instead
     const mateOn = w.players.some((q) => q.team === p.team && q.role !== ROLE.GK && q.st !== ST.FALLEN
       && Math.hypot(q.x - owner.x, q.y - owner.y) < Math.min(dBall, 3));
-    // (he has to be dawdling: half a second at walking pace – not just setting off)
+    // (he has to be dawdling – half a second at walking pace, not just setting
+    // off – or holding it up with his back to goal, where he can't shoot)
     p.aiX = pace < 2.5 ? Math.min(255, p.aiX + 1) : 0;
-    attackMan = close && !shooting && !owner.held && !mateOn && dBall < 7 && p.aiX > 30 && inOwnBox(w, p.team, b.x, b.y, 0.5);
-    if (attackMan && dBall < 1.3) { p.ib |= KT.MATE; return; } // into it
+    const backTurned = Math.cos(angDiffAI(owner.face, Math.atan2(-owner.y, ogx - owner.x))) < -0.3;
+    attackMan = close && !shooting && !owner.held && !mateOn && dBall < 7 && (p.aiX > 30 || (backTurned && pace < 4.5))
+      && inOwnBox(w, p.team, b.x, b.y, 0.5);
+    // shielding it, his back to the keeper: no reaching through him from
+    // behind (that's a foul) – round to the side of the ball first
+    // (clearly beside him or in front: he may turn as the foot goes in)
+    const behindHim = ((p.x - owner.x) * Math.cos(owner.face) + (p.y - owner.y) * Math.sin(owner.face)) / (Math.hypot(p.x - owner.x, p.y - owner.y) || 1) < 0.1;
+    if (attackMan && dBall < 1.3 && !behindHim) { p.ib |= KT.MATE; return; } // into it
     // Always between the ball and the goal: on the line that splits the goal
     // the man sees (the frustum from the ball to the posts), where he hides
     // the most of it. Further out hides more – in the box (or against a man
@@ -1003,9 +1010,6 @@ function gkThink(w, p, c) {
       : alone || charge || close ? clamp(fx * share, 1.0, Math.max(1.0, Math.min(fx - clamp(0.3 * fx, 1.0, 2.2), 6)))
         : clamp(0.11 * dGoal + 0.8, 1.0, 3.2);
     [tx, ty] = anglePoint(w, p.team, ax, ay, depth);
-    // going at a man dawdling on it: just in front of the ball on his line,
-    // whatever the angle (from by the byline too)
-    if (attackMan) { const [kx, ky] = bisector(w, p.team, ax, ay); tx = ax + kx * 0.9; ty = ay + ky * 0.9; }
     // how that spot moves across with his run: the keeper moves with it (in
     // and out is left to the pull below – backing off fast he can't do, and
     // it would slow him getting across)
@@ -1014,6 +1018,20 @@ function gkThink(w, p, c) {
     spotVx = (nx - tx) / 0.1; spotVy = (ny - ty) / 0.1;
     const along = (spotVx * lx + spotVy * ly) / ll;
     spotVx -= along * lx / ll; spotVy -= along * ly / ll;
+    // going at a man dawdling on it: just in front of the ball on his line,
+    // whatever the angle (from by the byline too) – that spot goes with him
+    if (attackMan) {
+      spotVx = owner.vx; spotVy = owner.vy;
+      const [kx, ky] = bisector(w, p.team, ax, ay);
+      tx = ax + kx * 0.9; ty = ay + ky * 0.9;
+      // (with his body between that spot and the ball – shielding it – the
+      // side of the ball nearer the keeper instead)
+      const ox = b.x - owner.x, oy = b.y - owner.y, ol = Math.hypot(ox, oy) || 1;
+      if ((tx - owner.x) * ox + (ty - owner.y) * oy < 0) {
+        const sx = -oy / ol, sy = ox / ol, sg = (p.x - owner.x) * sx + (p.y - owner.y) * sy >= 0 ? 1 : -1;
+        tx = b.x + sx * sg * 0.75; ty = b.y + sy * sg * 0.75;
+      }
+    }
     // a defender in the way hides part of the goal: he covers the rest – the
     // biggest part the shooter still sees (not all the way: it may deflect,
     // the defender may move)
