@@ -1505,6 +1505,10 @@ function launch(w, p, tech) {
       // pace from the hold, height from the key row (low / mid / top corner)
       const techF = { [ST.KICK]: 1, [ST.VOLLEY]: 1.06, [ST.HEADER]: 0.62, [ST.OVERHEAD]: 0.95, [ST.DIVEHEAD]: 0.7, [ST.THROW]: 0.5 }[tech] || 1;
       let speed = (12 + 13 * pw) * s.shot * techF;
+      // struck along the grass it's quicker still; in the air a little quicker
+      // too – but not a soft one meant to loop up (a chip stays a chip)
+      if (p.kh === KH.GROUND && tech === ST.KICK) speed *= 1.2;
+      else speed *= 1 + 0.1 * clamp((pw - 0.2) / 0.3, 0, 1);
       // a header: neck and jump, plus the run he put into it
       if (isHead) speed = (8 + 8 * pw) * (0.9 + 0.2 * s.h) + 0.45 * Math.max(0, p.vx * ux + p.vy * uy);
       if (kind === KICK.FINESSE) speed *= 0.85;
