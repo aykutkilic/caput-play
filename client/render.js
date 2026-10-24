@@ -2,7 +2,7 @@
 // skeletal animation: every pose is computed from simulation state each frame,
 // so animations stay fluid and always agree with what the physics is doing.
 
-import { GOAL_DEPTH, BALL_R, ST, ROLE, PHASE, KICK, SP, SKILL, KH, PART, GKB } from '../shared/constants.js';
+import { GOAL_DEPTH, BALL_R, ST, ROLE, PHASE, KICK, SP, SKILL, KH, PART, GKB, KQ } from '../shared/constants.js';
 import { stats } from '../shared/physique.js';
 import { CHG_MAX, pitchOf, DIVE_BASE, DIVE_SPAN, diveReach, SIDEARM_MAX, teamDir } from '../shared/sim.js';
 import { skeleton, drawFigure } from './figure.js';
@@ -343,6 +343,18 @@ export function poseFor(p, ctx) {
   const k = p.stT;
   switch (p.st) {
     case ST.KICK: {
+      if (p.kq === KQ.HEEL) {
+        // back-heel: the foot steps over the ball, then the heel snaps back
+        // into it and the leg swings through behind him
+        const cT = Math.max(1, p.stA), dT = Math.max(cT + 1, p.stDur);
+        const u = k < cT ? ease(k / cT) : 1, f = k < cT ? 0 : clamp((k - cT) / (dT - cT), 0, 1);
+        const snap = Math.min(1, f / 0.3), back = f < 0.3 ? snap : 1 - (f - 0.3) / 0.7;
+        P.rh = k < cT ? 0.4 * u : mix(0.4, -0.55, snap) * (f < 0.3 ? 1 : back);
+        P.rk = k < cT ? 0.3 + 0.35 * u : mix(0.65, 1.25, snap) * (f < 0.3 ? 1 : 0.3 + 0.7 * back);
+        P.lh = 0.08; P.lk = 0.3; P.lean = 0.1 + 0.08 * back;
+        P.lsh = 0.45; P.lab = 0.8; P.rsh = 0.25; P.rab = 0.6;
+        break;
+      }
       const big = p.kk === KICK.PASS || p.kk === KICK.THROUGH ? 0.6 : 1;
       const cT = Math.max(1, p.stA), dT = Math.max(cT + 1, p.stDur);
       let rh, rk;
@@ -356,6 +368,17 @@ export function poseFor(p, ctx) {
       }
       P.rh = rh; P.rk = rk; P.lh = 0.12; P.lk = 0.3;
       P.lsh = 0.55; P.lab = 0.9; P.rsh = -0.35; P.rab = 0.45; P.lean = 0.02 - 0.1 * big;
+      if (p.kq === KQ.TURN && k < cT) {
+        // turning with the ball first: little steps round on the spot, the
+        // leg drawing back only as he comes round to face the goal
+        let left = Math.atan2(p.ky - p.y, p.kx - p.x) - p.face;
+        left = Math.abs(Math.atan2(Math.sin(left), Math.cos(left)));
+        const u = clamp(1 - (left - 0.9) / 0.6, 0, 1), st = Math.sin(k * 1.1);
+        P.rh = mix(0.3 * st, rh, u); P.rk = mix(0.35 + 0.35 * Math.max(0, st), rk, u);
+        P.lh = mix(-0.3 * st, 0.12, u); P.lk = mix(0.35 + 0.35 * Math.max(0, -st), 0.3, u);
+        P.tw = mix(0, P.tw, u); P.lean = mix(0.08, P.lean, u);
+        P.lsh = mix(0.35, P.lsh, u); P.rsh = mix(0.35, P.rsh, u); P.lab = mix(0.5, P.lab, u); P.rab = mix(0.5, P.rab, u);
+      }
       if (ctx.fromHands) {
         // punt: ball held out in front, dropped onto the boot, arms out for
         // balance (a drop kick lets go of it earlier: it lands first)

@@ -8,7 +8,7 @@ import { Sfx, CHANNELS } from './audio.js';
 import { TouchControls, isTouchDevice, lockZoom } from './touch.js';
 import { Replay } from './replay.js';
 import { initPwa } from './pwa.js';
-import { encodeStick, pById, wantsBlock, inOwnBox, pitchOf, keeperHands, shootingPractice } from '../shared/sim.js';
+import { encodeStick, pById, wantsBlock, inOwnBox, pitchOf, keeperHands, shootingPractice, teamDir } from '../shared/sim.js';
 import { PHASE, SP, SP_NAME, ROLE, TEAM_NAMES, TICK_RATE, QUICK_CHAT, KICK_MASK, GOAL_SIZE_DEFAULT } from '../shared/constants.js';
 import { ratings, stats } from '../shared/physique.js';
 
@@ -698,12 +698,17 @@ function controlMode(w) {
   if (gk && !owner && keeperHands(w, me) && (b.z > 1.2 || b.vz > 2) && inOwnBox(w, me.team, b.x, b.y, 3)) return 'keeperAir';
   if (owner && owner.team !== me.team) return me.role === ROLE.GK && inOwnBox(w, me.team, me.x, me.y, 2) ? 'keeper' : 'defend';
   if (!owner && wantsBlock(w, me)) return 'block';
+  if (owner === me && !b.held) {
+    // with his back to goal, in range: how to shoot from there
+    const gdx = teamDir(w, me.team) * pitchOf(w).L / 2 - me.x, gd = Math.hypot(gdx, me.y) || 1;
+    if (gd < 25 && (Math.cos(me.face) * gdx - Math.sin(me.face) * me.y) / gd < -0.35) return 'backGoal';
+  }
   return 'attack';
 }
 let shownMode = '';
 function showControlMode(w) {
   const mode = w ? controlMode(w) : 'attack';
-  touch.setMode(['after', 'throwin', 'penalty', 'freekick', 'restart', 'keeperBall'].includes(mode) ? 'attack' : mode);
+  touch.setMode(['after', 'throwin', 'penalty', 'freekick', 'restart', 'keeperBall', 'backGoal'].includes(mode) ? 'attack' : mode);
   if (mode === shownMode) return;
   shownMode = mode;
   const k = (name) => `<b>${esc(keyName(input.keys[name]))}</b>`;
@@ -713,6 +718,7 @@ function showControlMode(w) {
     keeperAir: `High ball: you catch it on your own · ${k('goalG')} (any row) <b>punches</b> it clear – aim with the stick`,
     keeperBall: `In your hands: <b>ground</b> row rolls it out · <b>mid</b> row throws it (a drop kick when it's far) · <b>high</b> row punts it`,
     block: 'Hard ball coming: any kick key <b>blocks</b> it',
+    backGoal: 'Back to goal: a Goal key <b>turns and shoots</b> (it takes a moment) · close in, a quick tap <b>back-heels</b> it',
     after: 'Aftertouch – push the stick <b>sideways</b> to bend it that way · <b>back</b> lifts it · <b>forward</b> dips it',
     freekick: 'Your free kick – turn with the stick, a kick key plays it · or <b>hold a direction</b> to take it quickly and run with it',
     throwin: 'Your throw-in – aim with the stick, a kick key throws it',

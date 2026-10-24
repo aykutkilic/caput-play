@@ -8,7 +8,7 @@
 
 import {
   DT, G, BALL_R, PLAYER_R, BTN, KT, KH, KICK_MASK, packKick, PHASE, ST, ROLE, SP, KICK, PITCHES, GOAL_DEPTH, POST_R, SKILL,
-  GOAL_SIZES, PART, MEET, GKB,
+  GOAL_SIZES, PART, MEET, GKB, KQ,
 } from './constants.js';
 import { stats } from './physique.js';
 import { aiThink } from './ai.js';
@@ -268,7 +268,7 @@ export function makePlayer(id, team, role, human, hgt = 180, bld = 50) {
     id, team, role, human: human ? 1 : 0, hgt, bld,
     x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, face: 0,
     st: 0, stT: 0, stDur: 0, stA: 0, stB: 0, hit: 0,
-    kk: 0, kp: 0, kx: 0, ky: 0, kt: -1, kv: 0, kh: 0,
+    kk: 0, kp: 0, kx: 0, ky: 0, kt: -1, kv: 0, kh: 0, kq: 0,
     chg: 0, chgBtn: 0, stam: 1, pb: 0, kcd: 0, tcd: 0, tap: 0, tapT: 255, tapK: 0, tapH: 0, spr: 0,
     bot: 0, miss: 0, tm: 0, qk: 0,
     qa: 0, qt: 0, qp: 0, dph: 0, hold: 0,
@@ -750,6 +750,26 @@ export function planKick(w, p, kind, power, tx, ty, tid = -1, kh) {
 // throwing range, or punted (high and long).
 export const SIDEARM_MAX = 20, THROW_MAX = 34;
 
+// A shot off the ground with his back to the goal: he turns with the ball
+// first and strikes it at full power – but the turn takes time (more for a
+// big, heavy man) and he can be tackled meanwhile; or close in, a quick tap
+// back-heels it without turning – weak. (A ball in the air: an overhead kick,
+// see tryQueued.)
+const TURN_OK = 0.9;   // rad off the shooting line he still strikes it at
+const TURN_K = 0.65;   // his turn rate with the ball, as a share of his agility
+const HEEL_MIS = 1.9;  // rad off the line: it has to go back past him
+const HEEL_MAX = 10;   // m to the goal at most
+const HEEL_PW = 0.3;   // a quick tap: the gauge under this
+
+// how far off the line to his target he'd be striking the ball (at bx, by) facing `face`
+const shotMis = (p, face, bx, by) => Math.abs(angDiff(face, Math.atan2(p.ky - by, p.kx - bx)));
+function shotWay(p, face, bx, by) {
+  if (p.kk !== KICK.SHOT && p.kk !== KICK.FINESSE) return KQ.PLAIN;
+  const mis = shotMis(p, face, bx, by);
+  if (mis > HEEL_MIS && byPerson(p) && p.kp < HEEL_PW && Math.hypot(p.kx - bx, p.ky - by) <= HEEL_MAX) return KQ.HEEL;
+  return mis > TURN_OK ? KQ.TURN : KQ.PLAIN;
+}
+
 // wound: ticks of wind-up already shown while the key was held – the foot
 // comes through that much sooner (straight away after a proper hold).
 export function startKick(w, p, kind, power, quick = false, tx, ty, tid = -1, kh, wound = 0) {
@@ -765,6 +785,8 @@ export function startKick(w, p, kind, power, quick = false, tx, ty, tid = -1, kh
   else contact = quick ? 2 : 4;
   if (!fromHands && wound > 0) contact = Math.max(1, contact - wound);
   p.st = fromHands && kind !== KICK.PUNT && kind !== KICK.DROP ? ST.THROW : ST.KICK;
+  p.kq = p.st === ST.KICK && b.owner === p.id && !fromHands ? shotWay(p, p.face, b.x, b.y) : KQ.PLAIN;
+  if (p.kq === KQ.HEEL) contact = Math.min(contact, 4); // a flick
   p.stT = 0; p.stA = contact; p.stDur = contact + (fromHands ? 12 : 11); p.stB = 0; p.hit = 0;
   p.chgBtn = 0; p.chg = 0; p.qa = 0; p.qt = 0;
 }
@@ -1255,7 +1277,9 @@ export function tryQueued(w, p) {
   if (kind === KICK.SELF) techs.push(ST.KICK); // pass to self off the ground; in the air it's brought down (tryControl)
   else if (p.tm === MEET.AT) {
     // running at the ball: head it, jumping as high as it takes – volley or
-    // kick it only if it comes in lower
+    // kick it only if it comes in lower; with his back to goal, an overhead
+    // kick if it's up there
+    if (isShot && awayFromGoal) techs.push(ST.OVERHEAD);
     techs.push(ST.HEADER, ST.VOLLEY, ST.KICK);
   } else if (p.tm === MEET.WITH) {
     // running with it: volley it if he gets there in time, otherwise a flying
@@ -1283,6 +1307,13 @@ export function tryQueued(w, p) {
       // (a dive covers at most 10 m/s – see beginTechnique)
       case ST.DIVEHEAD: ok = bz >= 0.25 && bz <= 1.05 && h > 1.0 && Math.hypot(bx - p.x, by - p.y) - 0.75 <= 10 * t && front > 0.75; break;
     }
+    if (ok && isShot && (tech === ST.KICK || tech === ST.VOLLEY || tech === ST.DIVEHEAD)) {
+      // back to goal he can't strike it first time: a back-heel off the
+      // ground, otherwise he brings it under control first (and then turns
+      // with it – see possession)
+      planKick(w, p, kind, power, undefined, undefined, -1, kh);
+      if (shotMis(p, p.face, bx, by) > HEEL_MIS && !(tech === ST.KICK && shotWay(p, p.face, bx, by) === KQ.HEEL)) continue;
+    }
     if (ok) { beginTechnique(w, p, tech, kind, power, bx, by, bz, kh); return true; }
   }
   return false;
@@ -1293,7 +1324,8 @@ function beginTechnique(w, p, tech, kind, power, bx, by, bz, kh) {
   // aim before turning to meet the ball, so a neutral stick means "the way I
   // was facing" rather than back towards whoever played it
   planKick(w, p, kind, power, undefined, undefined, -1, kh);
-  p.face = Math.atan2(by - p.y, bx - p.x);
+  p.kq = tech === ST.KICK && shotWay(p, p.face, bx, by) === KQ.HEEL ? KQ.HEEL : KQ.PLAIN;
+  if (p.kq !== KQ.HEEL) p.face = Math.atan2(by - p.y, bx - p.x); // (a back-heel keeps his back to goal)
   p.st = tech; p.stT = 0; p.stA = T_CONTACT[tech]; p.stDur = T_DUR[tech]; p.stB = 1; p.hit = 0;
   p.qa = 0; p.qt = 0; p.chgBtn = 0; p.chg = 0;
   const t = p.stA * DT;
@@ -1463,6 +1495,8 @@ function launch(w, p, tech) {
     b.z = kind === KICK.PUNT ? 0.45 : kind === KICK.DROP ? 0.16 : w.m.spTaker === p.id ? 2.0
       : p.kh === KH.GROUND ? 0.3 : kind === KICK.THROW && dt <= SIDEARM_MAX ? 1.35 : 2.0;
   }
+  const heel = p.kq === KQ.HEEL && tech === ST.KICK;
+  if (heel) { b.x = p.x - Math.cos(p.face) * 0.12; b.y = p.y - Math.sin(p.face) * 0.12; } // off his heel
   let dx = p.kx - b.x, dy = p.ky - b.y;
   let d = Math.hypot(dx, dy);
   if (d < 0.1) { dx = Math.cos(p.face); dy = Math.sin(p.face); d = 1; }
@@ -1509,6 +1543,15 @@ function launch(w, p, tech) {
       break;
     }
     case KICK.SHOT: case KICK.FINESSE: {
+      if (heel) {
+        // a back-heel: soft and low, and only roughly where he meant it
+        vh = (8 + 8 * pw) * s.shot;
+        vz = p.kh === KH.GROUND ? 0.3 : Math.min(3, vzToReach(vh, b.z, d, Math.min(0.7, targetHeight(w, p, kind, p.kh))));
+        err = 0.09 + 0.004 * d + pressure;
+        zErr = 0.15;
+        spin = gauss(w) * 0.05;
+        break;
+      }
       // pace from the hold, height from the key row (low / mid / top corner)
       const techF = { [ST.KICK]: 1, [ST.VOLLEY]: 1.06, [ST.HEADER]: 0.62, [ST.OVERHEAD]: 0.95, [ST.DIVEHEAD]: 0.7, [ST.THROW]: 0.5 }[tech] || 1;
       let speed = (12 + 13 * pw) * s.shot * techF;
@@ -1974,10 +2017,15 @@ function stateUpdate(w, p, s) {
     case ST.KICK: case ST.THROW: {
       const owned = b.owner === p.id;
       // passes are played on the run; a shot or a long ball plants the foot a bit more
-      const keep = p.st === ST.THROW ? 0.88 : p.kk === KICK.PASS || p.kk === KICK.THROUGH || p.kk === KICK.SELF ? 0.975 : 0.93;
+      const keep = p.st === ST.THROW || p.kq === KQ.TURN ? 0.88 : p.kk === KICK.PASS || p.kk === KICK.THROUGH || p.kk === KICK.SELF ? 0.975 : 0.93;
       p.vx *= keep; p.vy *= keep;
-      if (p.stB === 0 && owned && p.stT < p.stA) {
-        turnToward(p, Math.atan2(p.ky - p.y, p.kx - p.x), s.turn * 1.6 * DT);
+      if (p.stB === 0 && owned && !p.hit) {
+        const want = Math.atan2(p.ky - p.y, p.kx - p.x);
+        if (p.kq === KQ.TURN) {
+          // turning with the ball to face the goal: the strike waits for it
+          turnToward(p, want, s.turn * TURN_K * DT);
+          if (p.stT === p.stA && Math.abs(angDiff(p.face, want)) > TURN_OK) { p.stA++; p.stDur++; }
+        } else if (p.kq !== KQ.HEEL && p.stT < p.stA) turnToward(p, want, s.turn * 1.6 * DT);
       }
       if (!p.hit) {
         if (p.stB === 0) {
@@ -2268,7 +2316,7 @@ function updateBall(w) {
       if (o.dph > 1000) o.dph -= 1000;
       const ease = (1 - Math.cos(2 * Math.PI * (o.dph - Math.floor(o.dph)))) / 2;
       const amp = (prec ? 0.1 : sprint ? 0.6 : 0.35) * Math.min(1, sp / 4) / s.control;
-      const ahead = o.st === ST.KICK || o.st === ST.SKILL ? 0.42 : 0.42 + amp * ease;
+      const ahead = o.st === ST.KICK && o.kq === KQ.HEEL ? 0.12 : o.st === ST.KICK || o.st === ST.SKILL ? 0.42 : 0.42 + amp * ease;
       const fx = Math.cos(o.face), fy = Math.sin(o.face);
       const tx = o.x + fx * ahead, ty = o.y + fy * ahead;
       const k = 1 - Math.exp(-DT * 16 * s.control * (prec ? 1.5 : 1));
