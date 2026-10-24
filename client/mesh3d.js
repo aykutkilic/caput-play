@@ -146,7 +146,9 @@ export class Scene3D {
         g.beginPath(); g.ellipse(px, py, 15 / Math.max(0.35, Math.cos(lat)), 15, 0, 0, Math.PI * 2); g.fill();
       }
       const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
-      this.ballMesh = new THREE.Mesh(this.geo.sphere, new THREE.MeshLambertMaterial({ map: tex }));
+      // (lit like everything else, plus a glow of its own so the white stays white
+      // on its shaded side – the patches stay dark)
+      this.ballMesh = new THREE.Mesh(this.geo.sphere, new THREE.MeshLambertMaterial({ map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.42 }));
       this.scene.add(this.ballMesh);
       for (let i = 0; i < 16; i++) {
         const m = new THREE.Mesh(this.geo.lowSphere, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false }));
