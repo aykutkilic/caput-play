@@ -441,7 +441,10 @@ function placeKickoff(w) {
 
 // Warm-up with nobody but humans in the outfield and AI keepers in goal:
 // shooting practice. The keepers pick up every dead ball and serve it to a
-// player (see the AI keeper) instead of the usual restarts.
+// player (see the AI keeper) instead of the usual restarts. Any other warm-up
+// is played by the rules – throw-ins, corners, goal kicks, free kicks, a
+// kick-off by the team that conceded – just without a clock, a score or
+// celebrations.
 export function shootingPractice(w) {
   if (w.m.live) return false;
   let outfield = 0, aiKeeper = false;
@@ -546,8 +549,11 @@ function takeSetPiece(w) {
   resumePhase(w);
 }
 
-function spRadius(type) {
-  return type === SP.THROWIN ? 2 : type === SP.PENALTY ? 9 : type === SP.KICKOFF ? 0 : 5.5;
+// how far the other team has to stay from the ball until it's played: 2 m at
+// a throw-in, outside the box and arc at a penalty, otherwise the centre
+// circle's radius (9.15 m on a full-size pitch)
+function spRadius(w, type) {
+  return type === SP.THROWIN ? 2 : type === SP.PENALTY ? 9 : Math.max(5.5, pitchOf(w).centerR);
 }
 
 function foul(w, offender, victim) {
@@ -556,7 +562,7 @@ function foul(w, offender, victim) {
   if (w.ball.owner === victim.id) { w.ball.owner = -1; w.ball.held = 0; }
   w.events.push({ k: 'foul', x: victim.x, y: victim.y });
   if (m.phase !== PHASE.PLAY && m.phase !== PHASE.WARMUP) return;
-  if (!m.live) return; // the warm-up plays on: no free kicks or penalties
+  if (!m.live && shootingPractice(w)) return; // shooting practice plays on
   const pit = pitchOf(w);
   if (inOwnBox(w, offender.team, victim.x, victim.y)) {
     const dir = teamDir(w, victim.team);
@@ -1577,6 +1583,8 @@ function launch(w, p, tech) {
   // arm aftertouch for human kickers, remembering the stick they aimed with
   const at = byPerson(p) && kind !== KICK.THROW;
   b.atk = at ? p.id : -1; b.atT = at ? AT_TICKS : 0; b.atA = p.ia; b.atM = p.im; b.atOn = 0;
+  // a throw-in: no goal straight from it (sh -2, with the thrower in atk)
+  if (fromHands && w.m.spTaker === p.id && w.m.spType === SP.THROWIN) { b.sh = -2; b.atk = p.id; }
   if (b.z < BALL_R) b.z = BALL_R;
   p.kcd = 12; p.hit = 1; p.hold = 0;
   if (w.m.spTaker === p.id) w.m.spTaker = -1;
@@ -2798,7 +2806,7 @@ function interact(w) {
     const t = pById(w, m.spTaker);
     if (!t || b.owner !== t.id) { m.spTaker = -1; return; }
     m.cd++;
-    const r = spRadius(m.spType);
+    const r = spRadius(w, m.spType);
     for (const p of w.players) {
       if (p.team === t.team) continue;
       const dx = p.x - b.x, dy = p.y - b.y, d = Math.hypot(dx, dy);
@@ -2819,6 +2827,14 @@ function checkBall(w) {
     const side = Math.sign(b.x);
     if (Math.abs(b.y) < pit.goalW / 2 && b.z < pit.goalH) {
       const team = teamDir(w, 0) === side ? 0 : 1;
+      // straight in from a throw-in, nobody else touching it: no goal – a
+      // goal kick (or a corner, thrown into his own goal)
+      if (b.sh === -2 && b.last === b.atk && (m.live || !shootingPractice(w))) {
+        const ys = Math.sign(b.y) || 1, defending = 1 - team;
+        if (b.lastTeam === defending) startSetPiece(w, SP.CORNER, team, side * (hx - 0.3), ys * (hy - 0.3));
+        else startSetPiece(w, SP.GOALKICK, defending, side * (hx - pit.areaD), ys * pit.areaW * 0.3);
+        return;
+      }
       // a shot that went in off the keeper or a defender is the shooter's goal
       const shooter = b.sh >= 0 ? pById(w, b.sh) : null;
       const credit = b.lastTeam !== team && shooter && shooter.team === team ? shooter.id : b.last;
@@ -2832,13 +2848,13 @@ function checkBall(w) {
     }
     const defending = teamDir(w, 0) === -side ? 0 : 1;
     const ys = Math.sign(b.y) || 1;
-    if (!m.live) { if (!m.wr) m.wr = WARM_OUT; return; } // warm-up: no corners or goal kicks (see rules)
+    if (!m.live && shootingPractice(w)) { if (!m.wr) m.wr = WARM_OUT; return; } // shooting practice: a keeper serves the next one
     if (b.lastTeam === defending) startSetPiece(w, SP.CORNER, 1 - defending, side * (hx - 0.3), ys * (hy - 0.3));
     else startSetPiece(w, SP.GOALKICK, defending, side * (hx - pit.areaD), ys * pit.areaW * 0.3);
     return;
   }
   if (Math.abs(b.y) > hy + BALL_R) {
-    if (!m.live) { if (!m.wr) m.wr = WARM_OUT; return; } // warm-up: no throw-ins (see rules)
+    if (!m.live && shootingPractice(w)) { if (!m.wr) m.wr = WARM_OUT; return; } // shooting practice: a keeper serves the next one
     const team = b.lastTeam === 0 ? 1 : 0;
     startSetPiece(w, SP.THROWIN, team, clamp(b.x, -hx + 0.5, hx - 0.5), Math.sign(b.y) * hy);
   }
@@ -2873,8 +2889,8 @@ function rules(w) {
         if (m.live && m.clock >= halfTicks * m.half) {
           setPhase(w, m.half === 1 ? PHASE.HALFTIME : PHASE.FULLTIME);
           w.events.push({ k: 'whistle', n: m.half === 1 ? 2 : 3 });
-        } else if (!m.live) warmRestart(w, m.lastGoalTeam >= 0 ? 1 - m.lastGoalTeam : -1, 0, 0);
-        else startKickoff(w, m.lastGoalTeam >= 0 ? 1 - m.lastGoalTeam : 0);
+        } else if (!m.live && shootingPractice(w)) warmRestart(w, m.lastGoalTeam >= 0 ? 1 - m.lastGoalTeam : -1, 0, 0);
+        else startKickoff(w, m.lastGoalTeam >= 0 ? 1 - m.lastGoalTeam : 0); // the team that conceded kicks off
       }
       break;
     case PHASE.SETPIECE:
@@ -2893,6 +2909,10 @@ function rules(w) {
           taker.x = -dir * 0.45; taker.y = 0; taker.face = dir > 0 ? 0 : Math.PI;
           b.owner = taker.id; b.last = taker.id; b.lastTeam = taker.team;
           b.x = 0; b.y = 0;
+          // the kick-off team plays it first: the taker plays it on (as at a
+          // set piece) while the other team waits outside the centre circle
+          // (shooting practice: it's just his ball)
+          if (m.live || !shootingPractice(w)) { m.spTaker = taker.id; m.spType = SP.KICKOFF; m.spTeam = taker.team; m.cd = 0; }
         }
         resumePhase(w);
         w.events.push({ k: 'whistle', n: 1 });

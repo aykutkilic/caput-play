@@ -8,7 +8,7 @@ import { Sfx, CHANNELS } from './audio.js';
 import { TouchControls, isTouchDevice, lockZoom } from './touch.js';
 import { Replay } from './replay.js';
 import { initPwa } from './pwa.js';
-import { encodeStick, pById, wantsBlock, inOwnBox, pitchOf, keeperHands } from '../shared/sim.js';
+import { encodeStick, pById, wantsBlock, inOwnBox, pitchOf, keeperHands, shootingPractice } from '../shared/sim.js';
 import { PHASE, SP, SP_NAME, ROLE, TEAM_NAMES, TICK_RATE, QUICK_CHAT, KICK_MASK, GOAL_SIZE_DEFAULT } from '../shared/constants.js';
 import { ratings, stats } from '../shared/physique.js';
 
@@ -809,10 +809,9 @@ function onPhaseChange(prev, m) {
       break;
     }
     case PHASE.KICKOFF:
-      if (m.live && prev !== PHASE.GOAL) {
-        banner('KICK-OFF', `${TEAM_NAMES[0]} vs ${TEAM_NAMES[1]}`);
-        showPanel(false, false); // the match is on: get the room panel out of the way
-      }
+      // who kicks off (not in shooting practice, where it's just your ball)
+      if (m.live || !shootingPractice(game.world)) banner('KICK-OFF', TEAM_NAMES[m.ko], teamCol(m.ko));
+      if (m.live && prev !== PHASE.GOAL) showPanel(false, false); // the match is on: get the room panel out of the way
       break;
     case PHASE.PLAY:
       if (prev === PHASE.KICKOFF) sfx.whistle(1);
