@@ -841,30 +841,43 @@ export class Renderer {
     s3.render();
   }
 
-  // The third-person camera: behind and above my player, a little over his
-  // right shoulder, always looking from him towards the goal his team
-  // attacks (eased, so it doesn't swing about when he's near it) – and up to
-  // a high ball in front of him.
+  // The third-person camera: behind and above my player on his line to the
+  // goal his team attacks, framing the three things that matter – him, the
+  // ball and that goal. It pulls back (and up) only as far as it takes to get
+  // all three in, turns just enough to frame them, tilts for a high ball, and
+  // eases every change so the view doesn't jump about.
   thirdPerson(w, p, [x, y, z], ball, dt) {
-    const c = this.tpCam, init = this.tpInit;
-    const gx = teamDir(w, p.team) * pitchOf(w).L / 2;
-    const toGoal = Math.hypot(gx - x, y) > 3 ? Math.atan2(-y, gx - x) : this.tpYaw ?? Math.atan2(0, gx - x);
-    const k = init ? 1 - Math.exp(-dt * 4) : 1;
-    this.tpYaw = init ? this.tpYaw + angDiff(this.tpYaw, toGoal) * k : toGoal;
-    const fx = Math.cos(this.tpYaw), fy = Math.sin(this.tpYaw), lx = -fy, ly = fx; // forwards, to his left
+    const c = this.tpCam, init = this.tpInit, pit = pitchOf(w);
+    const gx = teamDir(w, p.team) * pit.L / 2;
+    const toGoal = Math.hypot(gx - x, y) > 3 ? Math.atan2(-y, gx - x) : this.tpBase ?? Math.atan2(0, gx - x);
+    const k = init ? 1 - Math.exp(-dt * 3) : 1;
+    this.tpBase = init ? this.tpBase + angDiff(this.tpBase, toGoal) * k : toGoal;
+    const fx = Math.cos(this.tpBase), fy = Math.sin(this.tpBase), lx = -fy, ly = fx; // forwards, to his left
     // (closer on a phone held sideways: its view is wider, he'd be small)
-    const wide = c.w / c.h > 1.8, back = wide ? 3.5 : 4.6, up = wide ? 2.4 : 2.9, side = wide ? 0.45 : 0.55;
-    const ex = x - fx * back - lx * side, ey = y - fy * back - ly * side, ez = z + up;
-    const ke = init ? 1 - Math.exp(-dt * 9) : 1;
-    c.ex += (ex - c.ex) * ke; c.ey += (ey - c.ey) * ke; c.ez += (ez - c.ez) * ke;
-    // where it looks: ahead of him, raised towards a high ball in front
-    let tz = 0.9;
-    const bx = ball[0] - x, by = ball[1] - y, bd = Math.hypot(bx, by);
-    if (ball[2] > 1.4 && bd < 25 && (bx * fx + by * fy) > -1) tz = mix(0.9, ball[2], 0.6);
-    this.tpLook = init ? this.tpLook + (tz - this.tpLook) * (1 - Math.exp(-dt * 3)) : tz;
-    const tx = x + fx * 7, ty = y + fy * 7;
-    c.yaw = Math.atan2(ty - c.ey, tx - c.ex);
-    c.pitch = Math.atan2(this.tpLook - c.ez, Math.hypot(tx - c.ex, ty - c.ey));
+    const wide = c.w / c.h > 1.8, near = wide ? 3.5 : 4.6, side = wide ? 0.45 : 0.55;
+    const hHalf = Math.atan(c.w / 2 / c.f) * 0.8, vHalf = Math.atan(c.h / 2 / c.f) * 0.8;
+    // what has to be in shot: him (feet and head), the ball, the goal (its
+    // mouth on the grass and its bar)
+    const pts = [[x, y, z], [x, y, z + 1.9], ball, [gx, 0, 0], [gx, 0, pit.goalH]];
+    let pick = null;
+    for (const back of [near, near * 1.35, near * 1.8, near * 2.4, near * 3.2, near * 4.2, near * 5.5]) {
+      const up = (wide ? 2.4 : 2.9) + 0.12 * (back - near);
+      const ex = x - fx * back - lx * side, ey = y - fy * back - ly * side, ez = z + up;
+      let lo = 9, hi = -9, elo = 9, ehi = -9, ok = true;
+      for (const q of pts) {
+        const dx = q[0] - ex, dy = q[1] - ey, along = dx * fx + dy * fy;
+        if (along < 1.5) { ok = false; break; } // behind the camera: further back
+        const a = angDiff(this.tpBase, Math.atan2(dy, dx)), e = Math.atan2(q[2] - ez, Math.hypot(dx, dy));
+        lo = Math.min(lo, a); hi = Math.max(hi, a); elo = Math.min(elo, e); ehi = Math.max(ehi, e);
+      }
+      pick = { back, ex, ey, ez, yaw: this.tpBase + (lo + hi) / 2, pitch: clamp((elo + ehi) / 2, -0.6, 0.35) };
+      if (ok && hi - lo < 2 * hHalf && ehi - elo < 2 * vHalf) break;
+    }
+    const ke = init ? 1 - Math.exp(-dt * 4) : 1;
+    c.ex += (pick.ex - c.ex) * ke; c.ey += (pick.ey - c.ey) * ke; c.ez += (pick.ez - c.ez) * ke;
+    this.tpYaw = init ? this.tpYaw + angDiff(this.tpYaw, pick.yaw) * ke : pick.yaw;
+    this.tpPitch = init ? this.tpPitch + (pick.pitch - this.tpPitch) * ke : pick.pitch;
+    c.yaw = this.tpYaw; c.pitch = this.tpPitch;
     this.tpInit = true;
     c.update();
     return c;

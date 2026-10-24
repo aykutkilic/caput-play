@@ -1512,8 +1512,9 @@ function launch(w, p, tech) {
       // too – but not a soft one meant to loop up (a chip stays a chip)
       if (p.kh === KH.GROUND && tech === ST.KICK) speed *= 1.2;
       else speed *= 1 + 0.1 * clamp((pw - 0.2) / 0.3, 0, 1);
-      // a header: neck and jump, plus the run he put into it
-      if (isHead) speed = (8 + 8 * pw) * (0.9 + 0.2 * s.h) + 0.45 * Math.max(0, p.vx * ux + p.vy * uy);
+      // a header: neck and jump, plus the run he put into it – well short of a
+      // kick (a standing one ~45 km/h at most, met on the run ~55-60)
+      if (isHead) speed = (6.5 + 6 * pw) * (0.9 + 0.2 * s.h) + 0.4 * Math.max(0, p.vx * ux + p.vy * uy);
       if (kind === KICK.FINESSE) speed *= 0.85;
       let tz = targetHeight(w, p, kind, p.kh);
       if (pw > 0.9) tz += (pw - 0.9) * 3; // a blasted shot climbs

@@ -264,8 +264,11 @@ function bestPass(w, p) {
     tx = clamp(tx, -pit.L / 2 + 0.8, pit.L / 2 - 0.8); ty = clamp(ty, -pit.W / 2 + 0.8, pit.W / 2 - 0.8);
     const odds = passOdds(w, p.team, b.x, b.y, tx, ty, kind, kh, pw, t);
     let v = odds * spotValue(w, p.team, tx, ty) - (1 - odds) * lossCost(w, p.team, (b.x + tx) / 2);
-    if (byPerson(t)) v += 0.06 * odds;   // give it to the people playing
-    if (t.role === ROLE.GK) v -= 0.08;
+    if (byPerson(t)) v += 0.08 * odds;   // give it to the people playing
+    // forwards rather than back: ground gained counts a little, and back to
+    // the keeper is the last way out
+    v += 0.015 * odds * clamp((tx - b.x) * dir / 12, 0, 1.5);
+    if (t.role === ROLE.GK) v -= 0.1;
     if (!best || v > best.v) best = { t, kind, kh, pw, tx, ty, v, odds };
   };
   for (const t of w.players) {
