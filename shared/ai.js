@@ -724,6 +724,19 @@ function anglePoint(w, team, bx, by, depth, y0, y1) {
   return [bx + kx * t, clamp(by + ky * t, -hw + 0.3, hw - 0.3)];
 }
 
+// How much of our goal the man on the ball at (bx, by) still sees past the
+// keeper standing where he is (body and arms ~1.6 m across).
+function openPastKeeper(w, team, bx, by, gk) {
+  const pit = pitchOf(w), ogx = -teamDir(w, team) * pit.L / 2, hw = pit.goalW / 2;
+  const dx = gk.x - bx, dy = gk.y - by, d = Math.hypot(dx, dy), gl = ogx - bx;
+  if (d < 0.3) return 0;
+  if (dx * gl <= 0) return 1; // not in the way at all
+  const a = Math.atan2(dy, dx), h = Math.asin(Math.min(1, 0.8 / d));
+  const proj = (t) => (Math.cos(t) * gl <= 0 ? Math.sign(Math.sin(t)) * 99 : by + Math.tan(t) * gl);
+  const y0 = Math.max(-hw, Math.min(proj(a - h), proj(a + h))), y1 = Math.min(hw, Math.max(proj(a - h), proj(a + h)));
+  return 1 - Math.max(0, y1 - y0) / (2 * hw);
+}
+
 // Is anyone of ours between the ball carrier and our goal (inside the cone
 // he'd shoot through)?
 function defenderBetween(w, team, o, ogx, keeper) {
@@ -930,13 +943,31 @@ function gkThink(w, p, c) {
     // whether or not he's running at it
     const close = dGoal < 11 && inOwnBox(w, p.team, owner.x, owner.y, 0);
     rush = close; // closing him down: quick off the line
-    // smother: the attacker has let the ball run away from him, or walked into
-    // the keeper; spread: he's about to shoot from close in – no time to react,
-    // so throw yourself at the ball as he strikes it
+    // a real chance for him: facing the goal from in front of it – or from a
+    // tight angle with a good part of it still to aim at past the keeper
+    const facingGoal = Math.cos(angDiffAI(owner.face, Math.atan2(-owner.y, ogx - owner.x))) > 0.3;
+    const tight = Math.atan2(Math.abs(owner.y), Math.max(0.01, (owner.x - ogx) * dir)) > 1.0;
+    const threat = facingGoal && (!tight || openPastKeeper(w, p.team, b.x, b.y, p) > 0.4);
+    // smother: the attacker has let the ball run away from him (and the keeper
+    // is nearer it), or he has a real chance from right in front of the keeper
+    // – throw yourself at the ball. Not at a ball he has under control from
+    // where he can hardly score (a tight angle, his back to goal): that's
+    // defended on the feet, like a defender would
     if ((alone || charge || close) && !shooting && inOwnBox(w, p.team, b.x, b.y, 0.5) && p.tcd === 0 && b.z < 0.5
-      && dBall < 2.6 && (sep > lv.smother || dBall < 1.3)) {
+      && dBall < 2.6 && ((sep > lv.smother && dBall < sep + 0.3) || (dBall < 1.3 && threat))) {
       p.tcd = 50;
       beginDive(w, p, Math.atan2(b.y - p.y, b.x - p.x), 0.15, Math.max(0.15, dBall / 7), dBall + 0.3);
+      return;
+    }
+    // ...so close in without a real chance, he stays up, goal-side, and –
+    // when none of his defenders is on the man already – closes him down like
+    // a defender would: a standing tackle when he's on him (see the movement)
+    const mateOn = w.players.some((q) => q.team === p.team && q.role !== ROLE.GK && q.st !== ST.FALLEN
+      && Math.hypot(q.x - owner.x, q.y - owner.y) < Math.min(dBall, 3));
+    if (close && !threat && !shooting && !owner.held && !mateOn && dBall < 4 && inOwnBox(w, p.team, b.x, b.y, 0.5)) {
+      const [kx, ky] = bisector(w, p.team, owner.x, owner.y);
+      moveTo(p, owner.x + kx * 0.8, owner.y + ky * 0.8, 1.5, 0.05);
+      if (dBall < 1.8) p.ib |= KT.MATE; // press
       return;
     }
     // close the angle: a lone attacker is met further out the closer he gets
