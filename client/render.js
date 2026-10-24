@@ -4,7 +4,7 @@
 
 import { GOAL_DEPTH, BALL_R, ST, ROLE, PHASE, KICK, SP, SKILL, KH, PART, GKB, KQ } from '../shared/constants.js';
 import { stats } from '../shared/physique.js';
-import { CHG_MAX, pitchOf, DIVE_BASE, DIVE_SPAN, diveReach, SIDEARM_MAX, teamDir } from '../shared/sim.js';
+import { CHG_MAX, pitchOf, DIVE_BASE, DIVE_SPAN, diveReach, SIDEARM_MAX, teamDir, keeperBig } from '../shared/sim.js';
 import { skeleton, drawFigure } from './figure.js';
 import { Scene3D } from './mesh3d.js';
 
@@ -284,6 +284,14 @@ export function poseFor(p, ctx) {
     P.bob += 0.022 * Math.abs(Math.sin(t * 6.5 + p.id)) * g; // on his toes
     const sway = 0.012 * H * Math.sin(t * 3.1 + p.id);
     for (const side of [-1, 1]) armIK(P, side, (0.24 + 0.03 * set) * H, side * (0.17 + 0.04 * set) * H, (0.53 + 0.07 * set) * H + sway, H, g);
+  }
+  if (ctx.gkBig > 0) {
+    // making himself big against a man close in: arms out wide and a little
+    // down, palms to the ball, knees bent, feet apart – on the move too
+    const g = ctx.gkBig, still = 1 - Math.min(1, A * 1.5);
+    P.lh += 0.12 * g * still; P.rh += 0.12 * g * still; P.lk += 0.2 * g * still; P.rk += 0.2 * g * still;
+    P.la = P.ra = mix(P.la, 0.24, g * still); P.drop += 0.03 * H * g;
+    for (const side of [-1, 1]) armIK(P, side, 0.1 * H, side * 0.52 * H, 0.47 * H, H, g);
   }
   if (ctx.reach) {
     // hands to the ball coming at him, the catch shaped by its height:
@@ -1338,6 +1346,7 @@ export class Renderer {
     const ctx = {
       H: s.H, speed: a.sp, phase: a.ph, time: this.time,
       gkStance: p.role === ROLE.GK && b.owner !== p.id ? 1 : 0,
+      gkBig: 0,
       holding,
       // cradled at his midriff (the ball itself is drawn in his hands)
       holdAt: holding && (p.st === ST.IDLE || p.st === ST.STUMBLE)
@@ -1362,6 +1371,9 @@ export class Renderer {
       // set: hands up a little while an opponent has the ball within shooting range
       const o = b.owner >= 0 ? w.players.find((q) => q.id === b.owner) : null;
       if (o && o.team !== p.team) ctx.gkSet = clamp((26 - Math.hypot(o.x - p.x, o.y - p.y)) / 8, 0, 1);
+      // big: eased in and out over a few frames
+      a.big = clamp((a.big || 0) + (keeperBig(w, p) ? dt : -dt) * 6, 0, 1);
+      ctx.gkBig = ease(a.big);
     }
     // winding up a kick with the ball at the feet (not the lift / skill key)
     const kicking = p.chgBtn & 7;

@@ -2513,6 +2513,27 @@ function punchClear(w, p, at, contest) {
   w.events.push({ k: 'punch', x: b.x, y: b.y, z: b.z, v: pw, id: p.id });
 }
 
+// A keeper making himself big: a man on the ball close to him in the box, or
+// a ball just struck from there – arms out wide, knees bent, feet apart, so
+// that what comes near him meets a hand or a leg (see gkSave and the AI).
+export function keeperBig(w, p) {
+  if (p.role !== ROLE.GK || p.st !== ST.IDLE || p.z > 0.05) return false;
+  const b = w.ball;
+  if (b.owner >= 0) {
+    const o = pById(w, b.owner);
+    return !!o && o.team !== p.team && !b.held && inOwnBox(w, p.team, o.x, o.y, 0) && Math.hypot(o.x - p.x, o.y - p.y) < 8;
+  }
+  // a ball just struck by them from inside the box (roughly where it came from)
+  const t = b.kt * DT;
+  return b.lastTeam >= 0 && b.lastTeam !== p.team && b.kt < 30 && Math.hypot(b.x - p.x, b.y - p.y) < 10
+    && inOwnBox(w, p.team, b.x - b.vx * t, b.y - b.vy * t, 0);
+}
+// how far to his side the big stance reaches at height z: his feet low down,
+// his hands at hip to shoulder height, only his body above that
+export function bigReach(s, z) {
+  return z < 0.45 ? 0.5 * s.H : z < 0.85 * s.H ? 0.53 * s.H : 0.3;
+}
+
 function gkSave(w, p) {
   const b = w.ball, m = w.m;
   if (p.kcd > 0 || p.role !== ROLE.GK) return false;
@@ -2531,7 +2552,7 @@ function gkSave(w, p) {
   const s = stOf(p);
   // the parts of him that can get to it – segments, how close counts for each,
   // and which are legs (no hands: a block, never a catch)
-  let segs, tols, legPart = [];
+  let segs, tols, legPart = [], armPart = [];
   if (p.st === ST.DIVE && p.spr === GKB.SPREAD) {
     // spread: body across the shot, both ends covered, low
     const ca = Math.cos(p.stA), sa = Math.sin(p.stA), half = 0.55 * s.H + 0.35; // fingertips to boots
@@ -2556,6 +2577,16 @@ function gkSave(w, p) {
     const fx = Math.cos(p.face) * 0.2, fy = Math.sin(p.face) * 0.2;
     segs = [[p.x + fx, p.y + fy, p.z + 0.1, p.x + fx, p.y + fy, p.z + s.H + 0.25]];
     tols = [0.6];
+    if (keeperBig(w, p)) {
+      // made himself big: an arm out to each side, shoulder to open hand
+      for (const side of [-1, 1]) {
+        const lx = -Math.sin(p.face) * side, ly = Math.cos(p.face) * side;
+        segs.push([p.x + lx * 0.13 * s.H + fx, p.y + ly * 0.13 * s.H + fy, p.z + 0.8 * s.H,
+          p.x + lx * 0.53 * s.H + fx, p.y + ly * 0.53 * s.H + fy, p.z + 0.45 * s.H]);
+        tols.push(0.25); // (a glove's width, and a reflex)
+        armPart.push(segs.length - 1);
+      }
+    }
     // a low ball going by beside him: a foot goes out to it (a leg's length
     // from his hip – further than he can get his hands down in time)
     const bl = -Math.sin(p.face) * (b.x - p.x) + Math.cos(p.face) * (b.y - p.y);
@@ -2586,7 +2617,7 @@ function gkSave(w, p) {
   // two hands or one: standing, it comes to his body / between his hands
   // rather than to the limit of his reach; diving, along his arms rather than
   // at the fingertips of the top one
-  let twoHands = dPass < 0.33;
+  let twoHands = dPass < 0.33 && !armPart.includes(part); // (out on an arm: one hand)
   const leg = legPart.includes(part); // a foot / leg save
   if (p.st === ST.DIVE && !p.spr) {
     const sg = segs[0], vx = sg[3] - sg[0], vy = sg[4] - sg[1], vz = sg[5] - sg[2];

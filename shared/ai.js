@@ -6,7 +6,7 @@ import { G, BTN, KT, KH, KICK_MASK, packKick, PHASE, ST, ROLE, SP, KICK, GKB } f
 import {
   rnd, teamDir, pitchOf, pById, stOf, startKick, beginSlide, beginDive, beginBlock1v1, blockKind, slotOf, slotIndex, shootingPractice,
   inOwnBox, clamp, encodeStick, ballPath, blockPlan, beginBlock, wantsBlock, loftTime,
-  groundSpeedFor, passEndSpeed, MU, CF, byPerson,
+  groundSpeedFor, passEndSpeed, MU, CF, byPerson, keeperBig, bigReach,
 } from './sim.js';
 
 const AI_CARRY = 1, AI_SUPPORT = 2, AI_PRESS = 3, AI_MARK = 4; // (a marker's man in aiY)
@@ -841,6 +841,13 @@ function gkThink(w, p, c) {
   // always come off: then it's hands, a dive or his legs): the K-barrier from
   // a tight angle, spread close in, the star jump a little further out at a
   // shot coming near him (one wide of him is still a dive)
+  // made big against a man close in, with the shot coming within reach of a
+  // hand: he stays big and it's saved there (a shuffle across to it at most)
+  // – no going down. (A low one: a foot, or a leg slid out – see below.)
+  if (shotOnGoal && keeperBig(w, p)) {
+    const tk = (p.x - b.x) / b.vx, yk = b.y + b.vy * tk, zk = b.z + b.vz * tk - 0.5 * G * tk * tk;
+    if (tk > 0 && zk >= 0.45 && Math.abs(yk - p.y) < bigReach(s, zk)) { moveTo(p, p.x, yk, 99, 0.05); return; }
+  }
   if (shotOnGoal && b.kt === lv.spread && p.tcd === 0 && (p.x - b.x) / b.vx > 0.04 && rnd(w) < lv.spreadP) {
     const dB = Math.hypot(b.x - p.x, b.y - p.y), tk = (p.x - b.x) / b.vx;
     const kind = blockKind(w, b.x, b.y, dB);
@@ -876,6 +883,9 @@ function gkThink(w, p, c) {
           if (q) { moveTo(p, (q.x - ogx) * dir < 0.2 ? ogx + dir * 0.2 : q.x, q.y, 0.5, 0.05); return; }
         }
         const dy = yk - p.y;
+        // made big, with it coming within reach of a hand: that's where it's
+        // saved – he stays on his feet and shuffles across to it
+        if (keeperBig(w, p) && zk >= 0.45 && Math.abs(dy) < bigReach(s, zk)) { moveTo(p, p.x + dir * 0.05, yk, 99, 0.05); return; }
         // low and just wide, too quick to dive for: a leg slid out along the grass
         // (when there's really no time – otherwise it's a dive, which can hold it)
         if (zk < 0.45 && Math.abs(dy) > 0.5 && Math.abs(dy) < 1.5 && p.tcd === 0 && (tt < 0.18 || (tt < 0.24 && rnd(w) < 0.4))) {
@@ -941,7 +951,7 @@ function gkThink(w, p, c) {
     const sep = Math.hypot(b.x - owner.x, b.y - owner.y), dBall = Math.hypot(b.x - p.x, b.y - p.y);
     // close in, in the box: come off the line at him to make the goal small,
     // whether or not he's running at it
-    const close = dGoal < 11 && inOwnBox(w, p.team, owner.x, owner.y, 0);
+    const close = inOwnBox(w, p.team, owner.x, owner.y, 0);
     rush = close; // closing him down: quick off the line
     // a real chance for him: facing the goal from in front of it – or from a
     // tight angle with a good part of it still to aim at past the keeper
