@@ -939,6 +939,16 @@ function defendThink(w, p, c, owner) {
 // angle the shooter sees between the posts (equal cover of both corners) – or
 // between y0 and y1, the part of the goal left to him – `depth` metres off his
 // line. A ball level with the goal line: near post.
+// How far off his line a keeper stands against a ball dGoal from his goal:
+// as real keepers do (SkillCorner) – 2.3 m with it within a fifth of the
+// pitch, stepping up as it goes away: 2.7 m a third of the way out, 4.5 m at
+// halfway, 7.2 m beyond (on a 105 m pitch; the steps up scale with ours)
+function keeperDepth(pit, dGoal) {
+  const f = dGoal / pit.L;
+  const extra = f < 0.19 ? 0 : f < 0.33 ? 0.4 * (f - 0.19) / 0.14 : f < 0.5 ? 0.4 + 1.8 * (f - 0.33) / 0.17 : f < 0.6 ? 2.2 + 2.7 * (f - 0.5) / 0.1 : 4.9;
+  return 2.3 + extra * pit.L / 105;
+}
+
 function anglePoint(w, team, bx, by, depth, y0, y1) {
   const pit = pitchOf(w), dir = teamDir(w, team), ogx = -dir * pit.L / 2, hw = pit.goalW / 2;
   if (y0 === undefined) { y0 = -hw; y1 = hw; }
@@ -953,7 +963,9 @@ function anglePoint(w, team, bx, by, depth, y0, y1) {
   // that line passes just inside the near post: further out (beyond the line
   // of the posts) the far post would be out of his reach, and held inside the
   // posts instead (as he used to be) he'd be off the line, the near post open.
-  const yMax = hw - 0.3;
+  // (a ball out wide and far off: no further across than real keepers go,
+  // ~0.6 of the way to the post – a cross or a switch is still on)
+  const yMax = Math.abs(by) > 0.3 * pit.W && front > 0.2 * pit.L ? 0.6 * hw : hw - 0.3;
   if (Math.abs(by + ky * t) > yMax && Math.abs(ky) > 1e-3 && Math.abs(by) > yMax) t = (Math.sign(by) * yMax - by) / ky;
   return [bx + kx * t, by + ky * t];
 }
@@ -1248,7 +1260,7 @@ function gkThink(w, p, c) {
     const share = (0.4 + 0.22 * still) * (1 - closeIn) + 0.62 * closeIn;
     const depth = attackMan ? Math.max(1.0, fx - 0.9)
       : alone || charge || close ? clamp(fx * share, 1.0, Math.max(1.0, Math.min(fx - clamp(0.3 * fx, 1.0, 2.2), 6)))
-        : clamp(0.11 * dGoal + 0.8, 1.0, 3.2);
+        : keeperDepth(pit, dGoal);
     [tx, ty] = anglePoint(w, p.team, ax, ay, depth);
     // how that spot moves across with his run: the keeper moves with it (in
     // and out is left to the pull below – backing off fast he can't do, and
@@ -1290,7 +1302,7 @@ function gkThink(w, p, c) {
     const q = c.path[Math.min(c.path.length - 1, 5)];
     const ours = owner && owner.team === p.team;
     const dist = Math.hypot(q.x - ogx, q.y);
-    const depth = ours ? clamp(0.2 * dist, 1, pit.boxD - 3) : clamp(0.08 * dist + 0.7, 0.8, 3.0);
+    const depth = ours ? clamp(0.2 * dist, 1, pit.boxD - 3) : keeperDepth(pit, dist);
     [tx, ty] = anglePoint(w, p.team, q.x, q.y, depth);
   }
   // a weaker keeper only roughly finds the angle
