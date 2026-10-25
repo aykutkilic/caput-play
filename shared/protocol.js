@@ -31,7 +31,7 @@ const MATCH = [
   ['dir0', 'i8'], ['ko', 'u8'], ['koFirst', 'u8'], ['spType', 'u8'], ['spTeam', 'u8'], ['spTaker', 'i8'],
   ['spX', 'f32'], ['spY', 'f32'], ['matchLen', 'u16'], ['rng', 'u32'], ['lastGoalTeam', 'i8'], ['scorer', 'i8'],
   ['req0', 'i8'], ['req0T', 'u8'], ['req1', 'i8'], ['req1T', 'u8'], ['gkc0', 'u8'], ['gkc1', 'u8'], ['cd', 'u16'],
-  ['goalS', 'u8'], ['ai', 'u8'], ['wr', 'u8'], ['offs', 'u8'], ['spWhy', 'u8'],
+  ['goalS', 'u8'], ['ai', 'u8'], ['wr', 'u8'], ['offs', 'u8'], ['spWhy', 'u8'], ['real', 'u8'],
 ];
 
 const SIZE = { u8: 1, i8: 1, u16: 2, u32: 4, f32: 4 };

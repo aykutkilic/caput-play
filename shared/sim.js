@@ -70,12 +70,18 @@ export function pById(w, id) {
   for (let i = 0; i < ps.length; i++) if (ps[i].id === id) return ps[i];
   return null;
 }
-// (kept on the player – asked for hundreds of times a tick)
+// (kept on the player – asked for hundreds of times a tick; p.rl: the room's
+// realistic movement, set each tick – see realStats)
 export function stOf(p) {
-  const k = p.hgt * 256 + p.bld;
-  if (p._stK !== k) { p._stK = k; p._st = stats(p.hgt, p.bld); }
+  const k = p.hgt * 256 + p.bld + (p.rl ? 65536 : 0);
+  if (p._stK !== k) { p._stK = k; const s = stats(p.hgt, p.bld); p._st = p.rl ? realStats(s) : s; }
   return p._st;
 }
+// Realistic movement (room setting m.real), for everyone: nearer real
+// players' limits – top speed 0.9x (8.6-9.9 m/s), a jog 0.85x, acceleration
+// 0.55x (4.4-7.2 m/s²: real peaks are 4-6), turning 0.6x and falling away
+// faster with pace (wider turns at speed)
+const realStats = (s) => ({ ...s, sprint: s.sprint * 0.9, jog: s.jog * 0.85, accel: s.accel * 0.55, turn: s.turn * 0.6, turnK: 0.25 });
 export function stickOf(p) {
   const mag = p.im / 15;
   if (mag < 0.05) return [0, 0, 0];
@@ -297,7 +303,7 @@ function mixSeed(seed) {
 export function makeMatch(seed) {
   return {
     phase: PHASE.WARMUP, phT: 0, live: 0, wr: 0, s0: 0, s1: 0, clock: 0, half: 1, dir0: 1, ko: 0, koFirst: 0,
-    spType: 0, spTeam: 0, spTaker: -1, spX: 0, spY: 0, spWhy: 0, offs: 0, matchLen: 240, rng: mixSeed(seed), goalS: 0, ai: 1,
+    spType: 0, spTeam: 0, spTaker: -1, spX: 0, spY: 0, spWhy: 0, offs: 0, real: 0, matchLen: 240, rng: mixSeed(seed), goalS: 0, ai: 1,
     lastGoalTeam: -1, scorer: -1, req0: -1, req0T: 0, req1: -1, req1T: 0, gkc0: 0, gkc1: 0, cd: 0,
   };
 }
@@ -2079,7 +2085,7 @@ function movement(w, p, s) {
     // braking before pushing off the other way – curved, flowing runs instead
     // of sliding sideways the instant the stick moves.
     const cur = Math.atan2(p.vy, p.vx), d = angDiff(cur, Math.atan2(tvy, tvx));
-    const omega = s.turn * 1.1 / (1 + 0.1 * v) * (own ? 0.85 : 1) * DT;
+    const omega = s.turn * 1.1 / (1 + (s.turnK ?? 0.1) * v) * (own ? 0.85 : 1) * DT;
     let ang, sp;
     if (Math.abs(d) > 2.3) {
       sp = Math.max(0, v - s.accel * 1.9 * DT);
@@ -3234,8 +3240,8 @@ function rules(w) {
 export function step(w, inputs) {
   w.events.length = 0;
   w.tick++;
-  const b = w.ball;
-  for (const p of w.players) { p.px = p.x; p.py = p.y; p.pz = p.z; }
+  const b = w.ball, rl = w.m.real ? 1 : 0;
+  for (const p of w.players) { p.px = p.x; p.py = p.y; p.pz = p.z; p.rl = rl; }
   b.px = b.x; b.py = b.y; b.pz = b.z;
   if (inputs) {
     for (const p of w.players) {

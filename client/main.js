@@ -397,9 +397,10 @@ function renderPanel() {
   $('aiSel').value = String(r.settings.ai ?? 1);
   $('aiSexSel').value = String(r.settings.aiSex ?? 0);
   $('offsideSel').value = String(r.settings.offside ?? 0);
+  $('moveSel').value = String(r.settings.movement ?? 0);
   const kits = r.settings.kits || KITS_DEFAULT;
   $('kitA').value = String(kits[0]); $('kitB').value = String(kits[1]);
-  $('matchLen').disabled = $('pitchSel').disabled = $('aiSel').disabled = $('aiSexSel').disabled = $('offsideSel').disabled = $('kitA').disabled = $('kitB').disabled = !isHost;
+  $('matchLen').disabled = $('pitchSel').disabled = $('aiSel').disabled = $('aiSexSel').disabled = $('offsideSel').disabled = $('moveSel').disabled = $('kitA').disabled = $('kitB').disabled = !isHost;
   // the goals can't be resized during a match
   $('goalSel').disabled = !isHost || !!(game.world && game.world.m.live);
   $('startBtn').disabled = !isHost;
@@ -422,9 +423,9 @@ $('spectate').onclick = () => send({ t: 'team', team: -1, role: 0 });
 $('matchLen').onchange = () => send({
   t: 'settings', matchLen: Number($('matchLen').value), pitch: $('pitchSel').value,
   goals: Number($('goalSel').value), ai: Number($('aiSel').value), aiSex: Number($('aiSexSel').value),
-  kits: [Number($('kitA').value), Number($('kitB').value)], offside: Number($('offsideSel').value),
+  kits: [Number($('kitA').value), Number($('kitB').value)], offside: Number($('offsideSel').value), movement: Number($('moveSel').value),
 });
-$('pitchSel').onchange = $('goalSel').onchange = $('aiSel').onchange = $('aiSexSel').onchange = $('offsideSel').onchange = $('matchLen').onchange;
+$('pitchSel').onchange = $('goalSel').onchange = $('aiSel').onchange = $('aiSexSel').onchange = $('offsideSel').onchange = $('moveSel').onchange = $('matchLen').onchange;
 // team kits: picking the other team's colour swaps them over
 for (const id of ['kitA', 'kitB']) $(id).innerHTML = KIT_NAMES.map((n, i) => `<option value="${i}">${n}</option>`).join('');
 const kitChange = (mine, other) => () => {
