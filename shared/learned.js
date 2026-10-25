@@ -47,11 +47,3 @@ export const MARK = {
     [0.25,0.31,0.36,0.43,0.59],
   ],
 };
-
-// The man on the ball: how far off him the nearest opponent is (m, the
-// median), by the third he's in (his own, the middle; in the last one he's
-// closed down), what he's doing – going back towards his own goal, standing,
-// going forward – and whether he's in the middle or out by the touchline.
-// Real sides hold off a man coming forward and close in on one turning back
-// or near the line.
-export const PRESS = [[[5.88,4.88],[9.13,6.63],[9.63,6.38]],[[6.13,5.38],[8.13,6.63],[7.63,6.13]]];

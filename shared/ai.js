@@ -8,7 +8,7 @@ import {
   inOwnBox, clamp, encodeStick, ballPath, blockPlan, beginBlock, wantsBlock, loftTime,
   groundSpeedFor, passEndSpeed, MU, CF, byPerson, keeperBig, bigReach,
 } from './sim.js';
-import { SHAPE, MARK, PRESS } from './learned.js';
+import { SHAPE, MARK } from './learned.js';
 
 const AI_CARRY = 1, AI_SUPPORT = 2, AI_PRESS = 3, AI_MARK = 4; // (a marker's man in aiY)
 const PATH_N = 25; // 2.5 s look-ahead in 0.1 s steps
@@ -756,19 +756,9 @@ function defendThink(w, p, c, owner) {
         return;
       }
     }
-    // goal-side of him, on his shooting line – in his own third and the
-    // middle one standing off him as real sides do (learned.js): off a man
-    // coming forward, closer to one turning back or out by the touchline (a
-    // few metres closer than they do: the full distance wins too few balls
-    // for a small-sided game); in ours he's closed down
+    // goal-side of him, on his shooting line
     const [gx, gy] = bisector(w, p.team, owner.x, owner.y);
-    const third = Math.floor((clamp(-owner.x * dir / (pit.L / 2), -1, 0.999) + 1) * 1.5);
-    let off = 0.8;
-    if (third < 2) {
-      const fwd = -owner.vx * dir, wide = Math.abs(owner.y) > pit.W / 2 * (1 - 8 / 34) ? 1 : 0;
-      off = Math.max(0.8, PRESS[third][fwd < -1 ? 0 : fwd > 1 ? 2 : 1][wide] - 3);
-    }
-    const tx = owner.x + owner.vx * 0.2 + gx * off, ty = owner.y + owner.vy * 0.2 + gy * off;
+    const tx = owner.x + owner.vx * 0.2 + gx * 0.8, ty = owner.y + owner.vy * 0.2 + gy * 0.8;
     const d = Math.hypot(owner.x - p.x, owner.y - p.y);
     // closing him down: the last few metres facing him, side-on, goal-side
     if (d < 6) guardTo(p, tx, ty, 2.5, 0.05); else moveTo(p, tx, ty, 2.5, 0.05);
