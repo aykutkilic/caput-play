@@ -76,6 +76,8 @@ export class Input {
     this.lastDevice = 'keyboard';
     addEventListener('keydown', (e) => {
       if (!this.enabled || isTyping(e)) return;
+      // (with Cmd / Ctrl held it's a shortcut – the browser's, or developer mode – not a game key)
+      if ((e.metaKey || e.ctrlKey) && !/^(Shift|Control|Meta|Alt)/.test(e.code)) return;
       if (this.isBound(e.code)) {
         e.preventDefault();
         // game keys must never drive a focused button, select or slider

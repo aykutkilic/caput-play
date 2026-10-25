@@ -8,7 +8,7 @@
 // wider the longer the ball takes to get past him, none where it's above him,
 // shifted where a curled ball swings. What's left open are the holes; how
 // much time is spare in one is its margin (> 0: it gets there first).
-import { stOf, inOwnBox, pitchOf, teamDir, PATH_H, groundSpeedFor, vzToReach, targetHeight, byPerson, stopChance, AIR_K, MU, CF } from './sim.js';
+import { stOf, inOwnBox, pitchOf, teamDir, PATH_H, groundSpeedFor, vzToReach, targetHeight, byPerson, stopChance, AIR_K, MU, CF, loftTime } from './sim.js';
 import { BALL_R, G, ROLE, ST, KH, KICK } from './constants.js';
 
 // The foot's curl (curve kc -1..1, + bending left of its path; see launch):
@@ -195,7 +195,7 @@ export function passHole(w, p, r, kind, kh, lx, ly, kv, curls = [0, -0.5, 0.5]) 
       // the likeliest to get there, straight rather than angled, and with as
       // little curl as does it
       const score = odds - 0.35 * Math.abs(da) - 0.03 * Math.abs(kc);
-      const cand = { score, odds, kc, tx, ty, rx: rec.x, ry: rec.y, t: rec.t };
+      const cand = { score, odds, kc, tx, ty, rx: rec.x, ry: rec.y, t: rec.t, fl, th };
       if (!da && !kc) straight = cand;
       if (!best || score > best.score) best = cand;
     }
@@ -211,7 +211,7 @@ export function passHole(w, p, r, kind, kh, lx, ly, kv, curls = [0, -0.5, 0.5]) 
 // own risk, not weighed) times the chance nobody (keeper, a man in the way)
 // gets to it first, by its margin – and, all else equal, nearer the spot he
 // aimed at (aim).
-export function shotHole(w, p, kind, kh, pw, err, span, curls = [0, -0.5, 0.5], aim = null) {
+export function shotHole(w, p, kind, kh, pw, err, span, curls = [0, -0.5, 0.5], aim = null, out = null) {
   const b = w.ball, pit = pitchOf(w), dir = teamDir(w, p.team), gx = dir * pit.L / 2, hw = pit.goalW / 2, s = stOf(p);
   const tz = targetHeight(w, p, kind, kh) + (pw > 0.9 ? (pw - 0.9) * 3 : 0);
   const dc = Math.hypot(gx - b.x, b.y);
@@ -237,8 +237,36 @@ export function shotHole(w, p, kind, kh, pw, err, span, curls = [0, -0.5, 0.5], 
       const on = err ? 1 / (1 + Math.exp(-((hw - BALL_R - Math.abs(ty)) / sd) * 1.7)) : 1; // on target, with his aim
       const beat = 1 / (1 + Math.exp(-m / 0.1));
       const score = on * beat - 0.01 * Math.abs(kc) - (aim === null ? 0 : 0.06 * Math.abs(ty - aim));
-      if (!best || score > best.score) best = { score, m, on, kc, ty, tx: gx };
+      if (out) out.push({ ty, z: cross.z, kc, m, on, score });
+      if (!best || score > best.score) best = { score, m, on, kc, ty, tx: gx, fl, th, tEnd: cross.t };
     }
   }
   return best;
+}
+
+// ---------------------------------------------------------------- developer view
+
+// The fan of directions from the ball for a kick class – along the grass, or
+// lofted to land chest / head high d metres out, curled kc – over `spread`
+// round th0: along each, the index of the first point one of theirs gets to
+// first (-1: none – open as far as it goes), and the flight to draw (points
+// relative to the ball, to be turned by th).
+export function laneFan(w, team, kh, kc, d, th0, spread = 2.4, n = 41) {
+  const b = w.ball;
+  let vh, vz;
+  if (kh === KH.GROUND) { vh = Math.min(groundSpeedFor(d, 7), 28); vz = 0; } else {
+    const T = loftTime(d, kh, 0.3), zt = kh === KH.HIGH ? 1.75 : 1.0;
+    vh = d / T * 1.04; vz = (zt - b.z + 0.5 * G * T * T * 1.03) / T;
+  }
+  const fl = classFlight(vh * (kc ? curlPace(kc) : 1), vz, kc * CURL_MAX, d, b.z, d + 6), rays = [];
+  for (let i = 0; i < n; i++) {
+    const th = th0 - spread / 2 + spread * i / (n - 1), c = Math.cos(th), sn = Math.sin(th);
+    let shut = -1;
+    for (let k = 0; k < fl.length && shut < 0; k++) {
+      const q = fl[k], x = b.x + q.x * c - q.y * sn, y = b.y + q.x * sn + q.y * c;
+      for (const o of w.players) if (o.team !== team && o.st !== ST.FALLEN && oppTime(w, o, x, y, q.z) < q.t) { shut = k; break; }
+    }
+    rays.push({ th, shut });
+  }
+  return { fl, rays };
 }

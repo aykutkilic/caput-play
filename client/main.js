@@ -8,6 +8,7 @@ import { Sfx, CHANNELS } from './audio.js';
 import { TouchControls, isTouchDevice, lockZoom } from './touch.js';
 import { Replay } from './replay.js';
 import { initPwa } from './pwa.js';
+import { DevView } from './devview.js';
 import { encodeStick, pById, wantsBlock, inOwnBox, pitchOf, keeperHands, shootingPractice, teamDir } from '../shared/sim.js';
 import { PHASE, SP, SP_NAME, ROLE, TEAM_NAMES, TICK_RATE, QUICK_CHAT, KICK_MASK, GOAL_SIZE_DEFAULT, KIT_NAMES, KITS_DEFAULT } from '../shared/constants.js';
 import { ratings, stats } from '../shared/physique.js';
@@ -80,6 +81,8 @@ let net = null; // active transport
 const game = new NetGame(null);
 const input = new Input();
 const renderer = new Renderer($('game'));
+// developer mode: Cmd/Ctrl+Shift+D three times (see devview.js)
+const devView = new DevView((on) => toast(on ? 'Developer mode on – lanes, holes, AI' : 'Developer mode off'));
 const sfx = new Sfx();
 try { renderer.setPreset(localStorage.getItem('caput.cam') || 'iso'); renderer.zoom = Number(localStorage.getItem('caput.zoom')) || 1; } catch { renderer.setPreset('iso'); }
 
@@ -931,7 +934,10 @@ function loop(now) {
       $('replayBadge').hidden = !rp;
       document.body.classList.toggle('replaying', !!rp);
       if (rp) renderer.frame(rp.world, 1, NO_OFFSETS, { myId: state.myId, looks: looksFor(rp.world), names: state.names, celebrateTeam: -1 }, dt * rp.speed);
-      else renderer.frame(w, alpha, game.offsets, { myId: state.myId, looks: looksFor(w), names: state.names, celebrateTeam, bubbles }, dt);
+      else {
+        renderer.frame(w, alpha, game.offsets, { myId: state.myId, looks: looksFor(w), names: state.names, celebrateTeam, bubbles }, dt);
+        devView.draw(renderer, w, state.myId);
+      }
       updateHud(w, auth, now);
       if (frameNo % 6 === 0) showControlMode(rp ? null : w);
       if (frameNo % 2 === 0) renderer.radar($('radar'), w, state.myId);
