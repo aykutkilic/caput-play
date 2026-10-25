@@ -297,7 +297,7 @@ function mixSeed(seed) {
 export function makeMatch(seed) {
   return {
     phase: PHASE.WARMUP, phT: 0, live: 0, wr: 0, s0: 0, s1: 0, clock: 0, half: 1, dir0: 1, ko: 0, koFirst: 0,
-    spType: 0, spTeam: 0, spTaker: -1, spX: 0, spY: 0, matchLen: 240, rng: mixSeed(seed), goalS: 0, ai: 1,
+    spType: 0, spTeam: 0, spTaker: -1, spX: 0, spY: 0, spWhy: 0, offs: 0, matchLen: 240, rng: mixSeed(seed), goalS: 0, ai: 1,
     lastGoalTeam: -1, scorer: -1, req0: -1, req0T: 0, req1: -1, req1T: 0, gkc0: 0, gkc1: 0, cd: 0,
   };
 }
@@ -489,10 +489,11 @@ function warmRestart(w, team, x, y) {
   resumePhase(w);
 }
 
-function startSetPiece(w, type, team, x, y) {
+// (why: 1 – a free kick for offside, for the banner)
+function startSetPiece(w, type, team, x, y, why = 0) {
   const m = w.m;
   setPhase(w, PHASE.SETPIECE);
-  m.spType = type; m.spTeam = team; m.spX = x; m.spY = y; m.spTaker = -1;
+  m.spType = type; m.spTeam = team; m.spX = x; m.spY = y; m.spTaker = -1; m.spWhy = why; w.off = null;
   w.ball.owner = -1; w.ball.held = 0; w.ball.sh = -1;
   w.events.push({ k: 'whistle', n: type === SP.FREEKICK || type === SP.PENALTY ? 2 : 1 });
 }
@@ -1715,6 +1716,7 @@ function launch(w, p, tech) {
   if (fromHands && w.m.spTaker === p.id && w.m.spType === SP.THROWIN) { b.sh = -2; b.atk = p.id; }
   if (b.z < BALL_R) b.z = BALL_R;
   p.kcd = 12; p.hit = 1; p.hold = 0;
+  markOffside(w, p);
   if (w.m.spTaker === p.id) w.m.spTaker = -1;
   w.events.push({ k: kind === KICK.SHOT || kind === KICK.FINESSE ? 'shot' : isHead ? 'head' : 'kick', x: b.x, y: b.y, z: b.z, v: vh, id: p.id, tech });
 }
@@ -3252,6 +3254,46 @@ export function step(w, inputs) {
   collidePlayers(w);
   updateBall(w);
   interact(w);
+  callOffside(w);
   rules(w);
   for (const p of w.players) p.pb = p.ib;
+}
+
+// Offside (room setting m.offs): as a man plays it, which of his side are in
+// an offside position – in the other half, beyond both the ball and the
+// second-last of theirs (not from a throw-in, a corner or a goal kick); if
+// one of them is next to touch it, a free kick to the other side where he
+// stood. (Anyone else touching it first – theirs, or one of ours who was
+// onside – and it's played on.)
+export function offsidePos(w, team, q, bx) {
+  const dir = teamDir(w, team), dq = q.x * dir;
+  if (dq <= 0 || dq <= bx * dir + 0.15) return false;
+  let a = -Infinity, c = -Infinity; // (their deepest two)
+  for (const o of w.players) {
+    if (o.team === team) continue;
+    const d = o.x * dir;
+    if (d > a) { c = a; a = d; } else if (d > c) c = d;
+  }
+  return dq > c + 0.15;
+}
+function markOffside(w, p) {
+  w.off = null;
+  const m = w.m;
+  if (!m.offs || (m.spTaker === p.id && (m.spType === SP.THROWIN || m.spType === SP.CORNER || m.spType === SP.GOALKICK))) return;
+  const ids = [];
+  for (const q of w.players) if (q.team === p.team && q !== p && offsidePos(w, p.team, q, w.ball.x)) ids.push(q.id);
+  if (ids.length) w.off = { k: p.id, ids };
+}
+function callOffside(w) {
+  const o = w.off, b = w.ball;
+  if (!o) return;
+  if (w.m.phase !== PHASE.PLAY) { w.off = null; return; }
+  if (b.last === o.k) return;
+  w.off = null;
+  if (!o.ids.includes(b.last)) return;
+  const q = pById(w, b.last), pit = pitchOf(w);
+  if (!q) return;
+  w.events.push({ k: 'offside', id: q.id, x: q.x, y: q.y });
+  if (b.owner === q.id) { b.owner = -1; b.held = 0; }
+  startSetPiece(w, SP.FREEKICK, 1 - q.team, clamp(q.x, -pit.L / 2 + 1, pit.L / 2 - 1), clamp(q.y, -pit.W / 2 + 1, pit.W / 2 - 1), 1);
 }

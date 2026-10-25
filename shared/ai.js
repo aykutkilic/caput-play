@@ -6,7 +6,7 @@ import { G, BTN, KT, KH, KICK_MASK, packKick, PHASE, ST, ROLE, SP, KICK, GKB, FO
 import {
   rnd, teamDir, pitchOf, pById, stOf, startKick, beginSlide, beginDive, beginBlock1v1, blockKind, slotOf, slotIndex, shootingPractice,
   inOwnBox, clamp, encodeStick, ballPath, blockPlan, beginBlock, wantsBlock, loftTime,
-  groundSpeedFor, passEndSpeed, MU, CF, byPerson, keeperBig, bigReach, exitPoint, keepInReach, beginKeepIn, footFor, footCurl,
+  groundSpeedFor, passEndSpeed, MU, CF, byPerson, keeperBig, bigReach, exitPoint, keepInReach, beginKeepIn, footFor, footCurl, offsidePos,
 } from './sim.js';
 import { SHAPE, MARK } from './learned.js';
 import { shotHole, aiReact } from './lanes.js';
@@ -434,6 +434,7 @@ function bestPass(w, p, forPeople = 0.08) {
   for (const t of w.players) {
     if (t === p || t.team !== p.team || t.st === ST.FALLEN || t.st === ST.SLIDE) continue;
     if (t.role === ROLE.GK && p.role !== ROLE.GK && !cornered) continue;
+    if (w.m.offs && offsidePos(w, p.team, t, w.ball.x)) continue; // (offside: not to a man beyond their line)
     const d = Math.hypot(t.x - p.x, t.y - p.y);
     if (d < 3.5 || d > 42) continue;
     // to feet (where he'll be when it gets there)
@@ -614,7 +615,7 @@ function carrierThink(w, p) {
   const req = p.team === 0 ? m.req0 : m.req1;
   if (req >= 0 && req !== p.id && p.aiX > 4) {
     const r = pById(w, req);
-    if (r && r.team === p.team) {
+    if (r && r.team === p.team && !(w.m.offs && offsidePos(w, p.team, r, b.x))) {
       const d = Math.hypot(r.x - p.x, r.y - p.y);
       const blocked = laneBlocked(w, p.team, b.x, b.y, r.x, r.y, 1.2);
       const kh = blocked && d > 9 ? KH.MID : KH.GROUND;
@@ -704,6 +705,15 @@ function supportThink(w, p, owner) {
     // (keeping his spot is worth a little: as much as keeps him on the move
     // about half the time, as real players without the ball are)
     const cands = [[p.aiX, p.aiY, 0.01], [sx, sy, 0]];
+    // offside on: no use beyond their second-last man (or the ball) – he
+    // waits on the shoulder of it, to run in behind as the ball's played
+    let offX = null;
+    if (w.m.offs) {
+      let a = -Infinity, c2 = -Infinity;
+      for (const o of w.players) { if (o.team === p.team) continue; const dd = o.x * dir; if (dd > a) { c2 = a; a = dd; } else if (dd > c2) c2 = dd; }
+      offX = Math.max(c2, owner.x * dir) * dir;
+      cands.push([offX - dir * 0.6, clamp(p.y, -hy, hy), 0]);
+    }
     const a0 = rnd(w) * TAU;
     for (let k = 0; k < 10; k++) {
       const a = a0 + k / 10 * TAU, r = k % 2 ? 4.5 : 9;
@@ -754,6 +764,7 @@ function supportThink(w, p, owner) {
       adds.push(-(Math.hypot(cx - sx, cy - sy) * (n > 3 ? 0.003 : 0.0015)));
       // waiting behind the last defender is no use until the ball is played
       if ((cx - line) * dir > 4) adds.push(-0.05);
+      if (offX !== null && (cx - offX) * dir > -0.2) adds.push(-0.3);
       // (if even a pass sure to get there can't beat the best spot so far,
       // the odds needn't be worked out)
       if (!(finishScore(control * (0.4 + 0.6 * 1) * spot + bonus, adds) > bestS)) continue;

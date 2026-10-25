@@ -396,9 +396,10 @@ function renderPanel() {
   $('goalSel').value = String(r.settings.goals ?? GOAL_SIZE_DEFAULT);
   $('aiSel').value = String(r.settings.ai ?? 1);
   $('aiSexSel').value = String(r.settings.aiSex ?? 0);
+  $('offsideSel').value = String(r.settings.offside ?? 0);
   const kits = r.settings.kits || KITS_DEFAULT;
   $('kitA').value = String(kits[0]); $('kitB').value = String(kits[1]);
-  $('matchLen').disabled = $('pitchSel').disabled = $('aiSel').disabled = $('aiSexSel').disabled = $('kitA').disabled = $('kitB').disabled = !isHost;
+  $('matchLen').disabled = $('pitchSel').disabled = $('aiSel').disabled = $('aiSexSel').disabled = $('offsideSel').disabled = $('kitA').disabled = $('kitB').disabled = !isHost;
   // the goals can't be resized during a match
   $('goalSel').disabled = !isHost || !!(game.world && game.world.m.live);
   $('startBtn').disabled = !isHost;
@@ -421,9 +422,9 @@ $('spectate').onclick = () => send({ t: 'team', team: -1, role: 0 });
 $('matchLen').onchange = () => send({
   t: 'settings', matchLen: Number($('matchLen').value), pitch: $('pitchSel').value,
   goals: Number($('goalSel').value), ai: Number($('aiSel').value), aiSex: Number($('aiSexSel').value),
-  kits: [Number($('kitA').value), Number($('kitB').value)],
+  kits: [Number($('kitA').value), Number($('kitB').value)], offside: Number($('offsideSel').value),
 });
-$('pitchSel').onchange = $('goalSel').onchange = $('aiSel').onchange = $('aiSexSel').onchange = $('matchLen').onchange;
+$('pitchSel').onchange = $('goalSel').onchange = $('aiSel').onchange = $('aiSexSel').onchange = $('offsideSel').onchange = $('matchLen').onchange;
 // team kits: picking the other team's colour swaps them over
 for (const id of ['kitA', 'kitB']) $(id).innerHTML = KIT_NAMES.map((n, i) => `<option value="${i}">${n}</option>`).join('');
 const kitChange = (mine, other) => () => {
@@ -849,7 +850,8 @@ function onPhaseChange(prev, m) {
       break;
     case PHASE.SETPIECE:
       sfx.whistle(m.spType === SP.FREEKICK || m.spType === SP.PENALTY ? 2 : 1);
-      if (m.spType !== SP.THROWIN) banner(SP_NAME[m.spType].toUpperCase(), TEAM_NAMES[m.spTeam], teamCol(m.spTeam));
+      if (m.spWhy === 1) banner('OFFSIDE', `Free kick · ${TEAM_NAMES[m.spTeam]}`, teamCol(m.spTeam));
+      else if (m.spType !== SP.THROWIN) banner(SP_NAME[m.spType].toUpperCase(), TEAM_NAMES[m.spTeam], teamCol(m.spTeam));
       break;
     case PHASE.HALFTIME:
       sfx.whistle(2);

@@ -81,7 +81,7 @@ export class Room {
     this.members = new Map(); // clientId -> member
     this.ai = new Map();      // playerId -> ai spec
     this.hostId = null;
-    this.settings = { matchLen: 240, pitch: 'auto', goals: GOAL_SIZE_DEFAULT, ai: 1, aiSex: 0, kits: [...KITS_DEFAULT] };
+    this.settings = { matchLen: 240, pitch: 'auto', goals: GOAL_SIZE_DEFAULT, ai: 1, aiSex: 0, kits: [...KITS_DEFAULT], offside: 0 };
     this.world = createWorld(1, (Math.random() * 2 ** 31) | 0);
     this.world.auth = true; // inputs that don't arrive are missing here (see BOT_AFTER)
     this.world.m.matchLen = this.settings.matchLen;
@@ -227,6 +227,7 @@ export class Room {
     if (['auto', '0', '1', '2', 0, 1, 2].includes(s.pitch)) this.settings.pitch = String(s.pitch);
     if ([0, 1, 2].includes(Number(s.goals))) this.settings.goals = Number(s.goals);
     if ([0, 1, 2].includes(Number(s.ai))) this.settings.ai = Number(s.ai);
+    if ([0, 1].includes(Number(s.offside))) this.settings.offside = Number(s.offside);
     if (Array.isArray(s.kits) && s.kits.length === 2) {
       const k = s.kits.map(Number);
       if (k.every((v) => Number.isInteger(v) && v >= 0 && v < KIT_NAMES.length) && k[0] !== k[1]) this.settings.kits = k;
@@ -243,7 +244,7 @@ export class Room {
       this.world.m.matchLen = this.settings.matchLen;
       this.world.m.goalS = this.settings.goals; // the goals don't change size mid-match
     }
-    this.world.m.ai = this.settings.ai;
+    this.world.m.ai = this.settings.ai; this.world.m.offs = this.settings.offside;
     this.refreshPitch();
     this.broadcastRoom();
   }
@@ -253,7 +254,7 @@ export class Room {
     if (this.teamCount(0) === 0 || this.teamCount(1) === 0) return this.whisper(m, 'Both teams need at least one player.');
     this.world.m.live = 0;
     this.refreshPitch();
-    this.world.m.goalS = this.settings.goals; this.world.m.ai = this.settings.ai;
+    this.world.m.goalS = this.settings.goals; this.world.m.ai = this.settings.ai; this.world.m.offs = this.settings.offside;
     startMatch(this.world, this.settings.matchLen);
     this.system('Kick-off! ' + TEAM_NAMES[0] + ' vs ' + TEAM_NAMES[1]);
     this.broadcastRoom();
