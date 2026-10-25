@@ -359,6 +359,15 @@ function bestPass(w, p, forPeople = 0.08) {
     // forwards rather than back: ground gained counts a little
     v += 0.015 * odds * clamp((tx - b.x) * dir / 12, 0, 1.5);
     if (t.role === ROLE.GK) v -= 0.3;
+    // no playing it back and forth: straight back to the man who just passed
+    // it only if it gets well forward of where he played it from; and after a
+    // couple of passes going nowhere, sideways and back count against a pass
+    // and forward for it – a move has to go somewhere
+    if (b.pft === p.team && b.pf === t.id && (tx - b.pfx) * dir < 6) v -= 0.12;
+    if (b.pft === p.team && b.stale >= 2) {
+      const fwd = (tx - b.x) * dir, k = Math.min(b.stale, 5);
+      v += fwd < 3 ? -0.025 * k : 0.01 * k * clamp(fwd / 10, 0, 1);
+    }
     // the keeper doesn't give it to a man who has an opponent on him: he'd be
     // closed down as it gets to him, in front of goal
     if (p.role === ROLE.GK) {

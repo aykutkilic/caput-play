@@ -24,6 +24,7 @@ const BALL = [
   ['x', 'f32'], ['y', 'f32'], ['z', 'f32'], ['vx', 'f32'], ['vy', 'f32'], ['vz', 'f32'], ['spin', 'f32'],
   ['owner', 'i8'], ['held', 'u8'], ['last', 'i8'], ['lastTeam', 'i8'], ['kt', 'u8'], ['tgt', 'i8'], ['sh', 'i8'], ['dl', 'u8'], ['nut', 'i8'],
   ['atk', 'i8'], ['atT', 'u8'], ['atA', 'u8'], ['atM', 'u8'], ['atOn', 'u8'],
+  ['pf', 'i8'], ['pft', 'i8'], ['pfx', 'f32'], ['fwdX', 'f32'], ['stale', 'u8'],
 ];
 const MATCH = [
   ['phase', 'u8'], ['phT', 'u16'], ['live', 'u8'], ['s0', 'u8'], ['s1', 'u8'], ['clock', 'u32'], ['half', 'u8'],

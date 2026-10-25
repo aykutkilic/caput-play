@@ -280,6 +280,10 @@ export function makeBall() {
   return {
     x: 0, y: 0, z: BALL_R, vx: 0, vy: 0, vz: 0, spin: 0, owner: -1, held: 0, last: -1, lastTeam: -1, kt: 255, tgt: -1, sh: -1, dl: 0, nut: -1,
     atk: -1, atT: 0, atA: 0, atM: 0, atOn: 0, px: 0, py: 0, pz: BALL_R,
+    // the passing so far (for the AI: no playing it back and forth): who
+    // played the last pass, for which side and from where (x), the furthest
+    // forward the side has had it, and how many passes since it got further
+    pf: -1, pft: -1, pfx: 0, fwdX: 0, stale: 0,
   };
 }
 // murmur3 finalizer: neighbouring seeds give unrelated random streams
@@ -1622,6 +1626,16 @@ function launch(w, p, tech) {
   b.vy = uy * vh + (aerial ? p.vy * 0.15 : 0);
   b.vz = vz;
   b.spin = spin;
+  // the passing record (see makeBall): a new move when the other side last
+  // passed it; a pass that gets it 3 m further than they've had it starts the
+  // count of passes going nowhere again
+  {
+    const fwd = b.x * teamDir(w, p.team);
+    if (b.pft !== p.team) { b.fwdX = fwd; b.stale = 0; }
+    else if (fwd > b.fwdX + 3) { b.fwdX = fwd; b.stale = 0; }
+    else if (b.stale < 255) b.stale++;
+    b.pf = p.id; b.pft = p.team; b.pfx = b.x;
+  }
   b.owner = -1; b.held = 0; b.last = p.id; b.lastTeam = p.team; b.kt = 0; b.tgt = p.kt; b.nut = -1;
   b.dl = isHead ? 0 : 1;
   b.sh = kind === KICK.SHOT || kind === KICK.FINESSE ? p.id : -1; // keeps the credit through saves / blocks
