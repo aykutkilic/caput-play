@@ -712,9 +712,20 @@ export const footCurl = (w, p, ty, pw, bend) => {
   return footFor(p, kc) === FOOT.OUTSIDE ? kc * OUTSIDE_CURL : kc;
 };
 
+// (a person's strike: how far off it can go – launch's spread for a shot
+// from d out at power pw, with his truer foot – and so how far inside the
+// post he aims: 0.7 m close in, more from further out or flat out, so most
+// stay on target – never more than 30% of the way in)
+export const PERSON_SHOT_ERR = 0.7;
+function personPostIn(w, p, kind, pw, d, hw) {
+  const err = (0.035 + 0.0016 * d + 0.00011 * d * d + 0.06 * pw * pw) * (kind === KICK.FINESSE ? 0.6 : 0.85) * PERSON_SHOT_ERR;
+  return clamp(0.8 * err * d, POST_IN, 0.3 * hw);
+}
+
 export function shotAim(w, p, kind, kh, pw, sx, sy, sm) {
   const pit = pitchOf(w), dir = teamDir(w, p.team), b = w.ball, gx = dir * pit.L / 2;
-  const hw = pit.goalW / 2, half = hw - POST_IN, wide = hw + 1.0;
+  const hw = pit.goalW / 2, wide = hw + 1.0;
+  const postIn = byPerson(p) ? personPostIn(w, p, kind, pw, Math.hypot(gx - b.x, b.y), hw) : POST_IN, half = hw - postIn;
   let aimY = (Math.abs(b.y) < 0.8 ? (p.id % 2 ? 1 : -1) : -Math.sign(b.y)) * pit.goalW * 0.2;
   let span = null;
   if (sm > 0.3) {
@@ -725,7 +736,7 @@ export function shotAim(w, p, kind, kh, pw, sx, sy, sm) {
   }
   if (Math.abs(aimY) <= hw && byPerson(p)) {
     const bend = kind === KICK.FINESSE ? 1 : 0.8;
-    const hole = shotHole(w, p, kind, kh, pw, 0, span, (ty) => footCurl(w, p, ty, pw, bend), aimY);
+    const hole = shotHole(w, p, kind, kh, pw, 0, span, (ty) => footCurl(w, p, ty, pw, bend), aimY, null, postIn);
     if (hole) return { tx: gx, ty: hole.ty, kc: hole.kc, kf: footFor(p, hole.kc), hole };
   }
   return { tx: gx, ty: aimY, kc: 0, kf: FOOT.LACES, hole: null };
@@ -1689,6 +1700,7 @@ function launch(w, p, tech) {
     ux = nux; uy = nuy;
   }
   if (!p.human) err *= AI_ERR[w.m.ai] || 1;
+  else if (kind === KICK.SHOT || kind === KICK.FINESSE) err *= PERSON_SHOT_ERR; // (your own strikes: truer)
   if (err > 0) {
     const a = gauss(w) * err;
     const ca = Math.cos(a), sa = Math.sin(a);

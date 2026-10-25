@@ -240,10 +240,10 @@ export function passHole(w, p, r, kind, kh, lx, ly, kv, curls = [0, -0.5, 0.5]) 
 // own risk, not weighed) times the chance nobody (keeper, a man in the way)
 // gets to it first, by its margin – and, all else equal, nearer the spot he
 // aimed at (aim).
-export function shotHole(w, p, kind, kh, pw, err, span, curls = [0, -0.5, 0.5], aim = null, out = null) {
+export function shotHole(w, p, kind, kh, pw, err, span, curls = [0, -0.5, 0.5], aim = null, out = null, postIn = POST_IN) {
   const b = w.ball, pit = pitchOf(w), dir = teamDir(w, p.team), gx = dir * pit.L / 2, hw = pit.goalW / 2, s = stOf(p);
   const tz = targetHeight(w, p, kind, kh) + (pw > 0.9 ? (pw - 0.9) * 3 : 0);
-  const dc = Math.hypot(gx - b.x, b.y), maxY = hw - POST_IN;
+  const dc = Math.hypot(gx - b.x, b.y), maxY = hw - postIn;
   // the targets, grouped by the bend each is struck with
   const byCurl = new Map();
   for (let i = 0; i <= 10; i++) {
