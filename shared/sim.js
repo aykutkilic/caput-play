@@ -2457,11 +2457,13 @@ function updateBall(w) {
       const sp = Math.hypot(o.vx, o.vy);
       const sprint = sp > s.jog * 1.1, prec = o.ib & BTN.R2; // big touches at pace
       // touches: the ball eases out ahead and back with no sudden turnarounds –
-      // bigger but rarer touches at a sprint (one every ~3.6 m), small ones under R2
+      // bigger but rarer touches at a sprint (one every ~3.6 m: pushed on
+      // ahead of him, out to ~1.3 m – where a man close by can nick it, as
+      // real dribblers at full pace keep it furthest off), small ones under R2
       o.dph += sp * DT / (prec ? 1.2 : sprint ? 3.6 : 2.2);
       if (o.dph > 1000) o.dph -= 1000;
       const ease = (1 - Math.cos(2 * Math.PI * (o.dph - Math.floor(o.dph)))) / 2;
-      const amp = (prec ? 0.1 : sprint ? 0.6 : 0.35) * Math.min(1, sp / 4) / s.control;
+      const amp = (prec ? 0.1 : sprint ? 0.85 : 0.35) * Math.min(1, sp / 4) / s.control;
       const ahead = o.st === ST.KICK && o.kq === KQ.HEEL ? 0.12 : o.st === ST.KICK || o.st === ST.SKILL ? 0.42 : 0.42 + amp * ease;
       const fx = Math.cos(o.face), fy = Math.sin(o.face);
       const tx = o.x + fx * ahead, ty = o.y + fy * ahead;
