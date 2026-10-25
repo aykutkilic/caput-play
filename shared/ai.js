@@ -6,10 +6,10 @@ import { G, BTN, KT, KH, KICK_MASK, packKick, PHASE, ST, ROLE, SP, KICK, GKB, FO
 import {
   rnd, teamDir, pitchOf, pById, stOf, startKick, beginSlide, beginDive, beginBlock1v1, blockKind, slotOf, slotIndex, shootingPractice,
   inOwnBox, clamp, encodeStick, ballPath, blockPlan, beginBlock, wantsBlock, loftTime,
-  groundSpeedFor, passEndSpeed, MU, CF, byPerson, keeperBig, bigReach, exitPoint, keepInReach, beginKeepIn, strikeSurface, OUTSIDE_CURL,
+  groundSpeedFor, passEndSpeed, MU, CF, byPerson, keeperBig, bigReach, exitPoint, keepInReach, beginKeepIn, footFor, footCurl,
 } from './sim.js';
 import { SHAPE, MARK } from './learned.js';
-import { shotHole, sideCurl, aiReact } from './lanes.js';
+import { shotHole, aiReact } from './lanes.js';
 
 const AI_CARRY = 1, AI_SUPPORT = 2, AI_PRESS = 3, AI_MARK = 4, AI_COVER = 5; // (a marker's man in aiY)
 const PATH_N = 25; // 2.5 s look-ahead in 0.1 s steps
@@ -28,7 +28,7 @@ const TAU = Math.PI * 2;
 // that comes off; misjudge: noise
 // in the AI's shoot / pass / keep decisions; claim: how far off his line (m)
 // he comes for a cross; bend: how much he bends a shot into a side of the
-// goal (lanes.sideCurl – Casual not at all); aimErr:
+// goal (lanes.sideCurl, as his foot allows – Casual not at all); aimErr:
 // how wayward his strikes are (as launch scales them).
 const LEVELS = [
   { react: 18, spin: 0, misread: 0.8, think: 9, block: 0.04, sweep: 0.4, hold: 70, shuffle: false, angle: 0.9, smother: 1.1, read: false, spread: 99, spreadP: 0, misjudge: 0.12, claim: 6, bend: 0, aimErr: 1.6 },
@@ -40,6 +40,11 @@ let stand = null;
 const lvlOf = (w) => stand || LEVELS[w.m.ai] || LEVELS[1];
 function angDiffAI(a, b) { let d = (b - a) % TAU; if (d > Math.PI) d -= TAU; if (d < -Math.PI) d += TAU; return d; }
 
+// A playing style for each AI player, the same every time for the same id:
+// all-round; a dribbler (keeps it longer, carries it more); a passer (moves
+// it on sooner, likes the pass); a shooter (a quicker trigger)
+const STY = { ALL: 0, DRIBBLER: 1, PASSER: 2, SHOOTER: 3 };
+export const styleOf = (p) => (byPerson(p) ? STY.ALL : ((p.id * 2654435761) >>> 0) % 4);
 const CALM = 1.3, SHARP = 0.45; // s: an easy move into position (see moveTo); a sharp one
 
 function setMove(p, dx, dy, mag) {
@@ -516,7 +521,7 @@ function slotTarget(w, p, attacking) {
   return [clamp(x, -hx + 1.5, hx - 1.5), clamp(y, -hy + 1.2, hy - 1.2)];
 }
 
-function aiKick(w, p, kind, power, tx, ty, tid = -1, kh, kc = 0, kf = FOOT.LACES) {
+function aiKick(w, p, kind, power, tx, ty, tid = -1, kh, kc = 0) {
   const b = w.ball, m = w.m;
   if (b.held && b.owner === p.id) {
     if (m.spTaker === p.id) {
@@ -530,7 +535,7 @@ function aiKick(w, p, kind, power, tx, ty, tid = -1, kh, kc = 0, kf = FOOT.LACES
   }
   startKick(w, p, kind, power, false, tx, ty, tid, kh);
   if (!b.held) {
-    p.kc = kc; p.kf = kc ? kf : FOOT.LACES; // (bent with the foot – see lanes)
+    p.kc = kc; p.kf = footFor(p, kc); // (bent with his foot – see footFor)
     if (p.kf === FOOT.OUTSIDE && p.st === ST.KICK) { const d = Math.min(2, p.stA - 1); p.stA -= d; p.stDur -= d; } // (the outside: away sooner, as startKick)
   }
 }
@@ -556,13 +561,12 @@ function aimShot(w, p) {
   // in the way gets to it first, weighed by how sure he is to hit the target
   // there – and the bend that finds it (as much as his level has)
   const lv = lvlOf(w), err = (0.035 + 0.0016 * dGoal + 0.00011 * dGoal * dGoal + 0.06 * pw * pw) * lv.aimErr;
-  const kf = strikeSurface(w, p, pw), bend = lv.bend * (kf === FOOT.OUTSIDE ? OUTSIDE_CURL : 1);
   let best = null;
   for (const kh of [KH.GROUND, KH.MID, KH.HIGH]) {
-    const h = shotHole(w, p, KICK.SHOT, kh, pw, err, null, (ty) => sideCurl(w, p, ty, pw, bend));
+    const h = shotHole(w, p, KICK.SHOT, kh, pw, err, null, (ty) => footCurl(w, p, ty, pw, lv.bend));
     if (h && (!best || h.score > best.score)) best = { ...h, kh };
   }
-  if (best) return { kind: KICK.SHOT, kh: best.kh, pw, aimY: best.ty, kc: best.kc, kf: best.kc ? kf : FOOT.LACES };
+  if (best) return { kind: KICK.SHOT, kh: best.kh, pw, aimY: best.ty, kc: best.kc, kf: footFor(p, best.kc) };
   const r = rnd(w);
   return { kind: KICK.SHOT, kh: r < 0.5 ? KH.GROUND : r < 0.82 ? KH.MID : KH.HIGH, pw, aimY };
 }
@@ -639,23 +643,24 @@ function carrierThink(w, p) {
     let tPress = 9;
     for (const o of w.players) if (o.team !== p.team) tPress = Math.min(tPress, reachTime(o, p.x, p.y, tPress));
     const safe = 1 / (1 + Math.exp(-(tPress - 0.5) / 0.12));
-    const keep = safe * spotValue(w, p.team, p.x + dir * 3 * safe, p.y * 0.9) - (1 - safe) * lossCost(w, p.team, p.x);
+    const sty = styleOf(p);
+    const keep = safe * spotValue(w, p.team, p.x + dir * 3 * safe, p.y * 0.9) * (sty === STY.DRIBBLER ? 1.15 : 1) - (1 - safe) * lossCost(w, p.team, p.x);
     const xg = dGoal < 30 ? shotChance(w, p) : 0;
     const bp = bestPass(w, p);
-    const passV = bp ? bp.v + (p.aiX > 150 ? 0.1 : 0) : -1;
+    const passV = bp ? bp.v + (p.aiX > 150 ? 0.1 : 0) + (sty === STY.PASSER ? 0.006 : 0) : -1;
     // a weaker AI misjudges a little
     const noise = (rnd(w) - 0.5) * lv.misjudge;
     // players like to shoot: a small bias, growing the longer the move goes on
-    const urge = 0.025 + Math.min(0.04, p.aiX / 4000);
+    const urge = 0.025 + Math.min(0.04, p.aiX / 4000) + (sty === STY.SHOOTER ? 0.015 : 0);
     if (xg > 0.04 && xg + urge + noise >= Math.max(passV, keep)) {
       const sh = aimShot(w, p);
-      aiKick(w, p, sh.kind, sh.pw, gx, sh.aimY, -1, sh.kh, sh.kc || 0, sh.kf);
+      aiKick(w, p, sh.kind, sh.pw, gx, sh.aimY, -1, sh.kh, sh.kc || 0);
       return;
     }
     // with room he takes a touch or two before he lets it go – real players
     // keep it ~1-2 s when they have space (SkillCorner): no pass till he's
     // had it ~1 s, unless he's pressed or it's a far better ball
-    const settle = safe > 0.7 && p.aiX < 30 + 35 * safe && passV < keep + 0.06;
+    const settle = safe > 0.7 && p.aiX < 30 + 35 * safe + (sty === STY.DRIBBLER ? 10 : sty === STY.PASSER ? -15 : 0) && passV < keep + 0.06;
     if (bp && !settle && passV + noise > keep + 0.01) {
       aiKick(w, p, bp.kind, bp.pw, bp.tx, bp.ty, bp.t.id, bp.kh);
       return;

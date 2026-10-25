@@ -261,9 +261,10 @@ function keptIn(w, x, y, vx, vy) {
 
 // ---------------------------------------------------------------- creation
 
-export function makePlayer(id, team, role, human, hgt = 180, bld = 50) {
+// ft: his stronger foot (0 right, 1 left)
+export function makePlayer(id, team, role, human, hgt = 180, bld = 50, ft = 0) {
   return {
-    id, team, role, human: human ? 1 : 0, hgt, bld,
+    id, team, role, human: human ? 1 : 0, hgt, bld, ft: ft ? 1 : 0,
     x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, face: 0,
     st: 0, stT: 0, stDur: 0, stA: 0, stB: 0, hit: 0,
     kk: 0, kp: 0, kx: 0, ky: 0, kt: -1, kv: 0, kh: 0, kq: 0, kc: 0, kf: 0,
@@ -335,7 +336,7 @@ export function slotIndex(w, p) {
 // ---------------------------------------------------------------- roster ops
 
 export function addPlayer(w, spec) {
-  const p = makePlayer(spec.id, spec.team, spec.role, spec.human, spec.hgt, spec.bld);
+  const p = makePlayer(spec.id, spec.team, spec.role, spec.human, spec.hgt, spec.bld, spec.ft);
   w.players.push(p);
   w.players.sort((a, b) => a.id - b.id);
   spawnPlayer(w, p);
@@ -353,7 +354,7 @@ export function updatePlayerSpec(w, spec) {
   const p = pById(w, spec.id);
   if (!p) return addPlayer(w, spec);
   const moved = p.team !== spec.team || p.role !== spec.role;
-  p.team = spec.team; p.role = spec.role; p.human = spec.human ? 1 : 0; p.hgt = spec.hgt; p.bld = spec.bld;
+  p.team = spec.team; p.role = spec.role; p.human = spec.human ? 1 : 0; p.hgt = spec.hgt; p.bld = spec.bld; p.ft = spec.ft ? 1 : 0;
   if (moved) {
     if (w.ball.owner === p.id) { w.ball.owner = -1; w.ball.held = 0; }
     spawnPlayer(w, p);
@@ -663,15 +664,22 @@ function runAhead(q, t) {
 // inside of the left foot bends it right, back in; into the right, the other
 // way; the longer it's held the more (R2: wrapped round more). (Developer
 // mode and the aim line show them with it.)
-// How a bent kick is struck: a quick one – barely held, or with a man right
-// on him – with the outside of the other foot (it bends the same way, less,
-// a little less true, but it's away sooner); otherwise the inside
-export function strikeSurface(w, p, pw) {
-  let near = 99;
-  for (const q of w.players) if (q.team !== p.team) near = Math.min(near, Math.hypot(q.x - p.x, q.y - p.y));
-  return pw < 0.3 || near < 1.5 ? FOOT.OUTSIDE : FOOT.INSIDE;
+// How a kick bending kc (+ right on screen, - left) is struck: with his
+// stronger foot (p.ft) – the inside when that's the way it bends it (a
+// right-footer's inside bends it left), otherwise the outside of it (a
+// right-footer bending it right: the trivela – less bend, a little less
+// true, but away sooner); not bent, the laces
+export function footFor(p, kc) {
+  if (!kc) return FOOT.LACES;
+  return (kc < 0) === !p.ft ? FOOT.INSIDE : FOOT.OUTSIDE;
 }
 export const OUTSIDE_CURL = 0.7, OUTSIDE_ERR = 1.15;
+// the bend for a shot into ty, struck as his foot allows (sideCurl, less
+// with the outside)
+export const footCurl = (w, p, ty, pw, bend) => {
+  const kc = sideCurl(w, p, ty, pw, bend);
+  return footFor(p, kc) === FOOT.OUTSIDE ? kc * OUTSIDE_CURL : kc;
+};
 
 export function shotAim(w, p, kind, kh, pw, sx, sy, sm) {
   const pit = pitchOf(w), dir = teamDir(w, p.team), b = w.ball, gx = dir * pit.L / 2;
@@ -685,9 +693,9 @@ export function shotAim(w, p, kind, kh, pw, sx, sy, sm) {
     } else if (Math.abs(sy) > 0.2) { aimY = Math.sign(sy) * half; span = sy > 0 ? [0, hw] : [-hw, 0]; }
   }
   if (Math.abs(aimY) <= hw && byPerson(p)) {
-    const kf = strikeSurface(w, p, pw), bend = (kind === KICK.FINESSE ? 1 : 0.8) * (kf === FOOT.OUTSIDE ? OUTSIDE_CURL : 1);
-    const hole = shotHole(w, p, kind, kh, pw, 0, span, (ty) => sideCurl(w, p, ty, pw, bend), aimY);
-    if (hole) return { tx: gx, ty: hole.ty, kc: hole.kc, kf: hole.kc ? kf : FOOT.LACES, hole };
+    const bend = kind === KICK.FINESSE ? 1 : 0.8;
+    const hole = shotHole(w, p, kind, kh, pw, 0, span, (ty) => footCurl(w, p, ty, pw, bend), aimY);
+    if (hole) return { tx: gx, ty: hole.ty, kc: hole.kc, kf: footFor(p, hole.kc), hole };
   }
   return { tx: gx, ty: aimY, kc: 0, kf: FOOT.LACES, hole: null };
 }
@@ -764,7 +772,7 @@ export function planKick(w, p, kind, power, tx, ty, tid = -1, kh) {
       // inside of the foot (more curl costs pace) – as long as he can still
       // get to it. With no clear hole, the one that gives it the best chance.
       const hole = passHole(w, p, best, kind, kh, lx, ly, lofted ? vEnd : Math.max(1.5, vEnd), [0, -0.5, 0.5, -1, 1]);
-      if (hole) { lx = hole.tx; ly = hole.ty; p.kc = hole.kc; p.kf = hole.kc ? FOOT.INSIDE : FOOT.LACES; }
+      if (hole) { lx = hole.tx; ly = hole.ty; p.kc = hole.kc; p.kf = footFor(p, hole.kc); }
     }
     p.kv = lofted ? vEnd : Math.max(1.5, vEnd); // lofted: flight time; ground: arrival pace
     p.kx = clamp(lx, -pit.L / 2 - 1, pit.L / 2 + 1); p.ky = clamp(ly, -pit.W / 2 + 0.5, pit.W / 2 - 0.5); p.kt = best.id;

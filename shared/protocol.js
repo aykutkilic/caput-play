@@ -10,7 +10,7 @@ export const MSG = { INPUT: 1, SNAP: 2, PING: 3, PONG: 4, SNAPD: 5 };
 export const INPUT_REDUNDANCY = 8; // every input packet repeats the last N ticks
 
 const PLAYER = [
-  ['id', 'u8'], ['team', 'u8'], ['role', 'u8'], ['human', 'u8'], ['hgt', 'u8'], ['bld', 'u8'],
+  ['id', 'u8'], ['team', 'u8'], ['role', 'u8'], ['human', 'u8'], ['hgt', 'u8'], ['bld', 'u8'], ['ft', 'u8'],
   ['x', 'f32'], ['y', 'f32'], ['z', 'f32'], ['vx', 'f32'], ['vy', 'f32'], ['vz', 'f32'], ['face', 'f32'],
   ['st', 'u8'], ['stT', 'u16'], ['stDur', 'u16'], ['stA', 'f32'], ['stB', 'f32'], ['hit', 'u8'],
   ['kk', 'u8'], ['kp', 'f32'], ['kx', 'f32'], ['ky', 'f32'], ['kt', 'i8'], ['kv', 'f32'], ['kh', 'u8'], ['kq', 'u8'], ['kc', 'f32'], ['kf', 'u8'],

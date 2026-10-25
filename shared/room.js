@@ -46,7 +46,7 @@ export function sanitizeProfile(p) {
       sex, skin: hex(a.skin, '#e0ac69'), hair: clampInt(a.hair, 0, 11, 1), hairColor: hex(a.hairColor, '#2b1b10'),
       beard: sex ? 0 : clampInt(a.beard, 0, 4, 0),
       boots: hex(a.boots, '#111111'), number: clampInt(a.number, 1, 99, 10),
-      phys: { h: clampInt(a.phys && a.phys.h, 160, 200, 180), b: clampInt(a.phys && a.phys.b, 0, 100, 50) },
+      phys: { h: clampInt(a.phys && a.phys.h, 160, 200, 180), b: clampInt(a.phys && a.phys.b, 0, 100, 50), f: a.phys && a.phys.f === 1 ? 1 : 0 },
     },
   };
 }
@@ -66,9 +66,10 @@ function aiAvatar(id, role, aiSex) {
     hair: sex ? AI_HAIR_W[r(2) % AI_HAIR_W.length] : r(2) % 10, hairColor: AI_HAIR[r(3) % (sex ? 5 : AI_HAIR.length)],
     beard: !sex && r(7) % 3 === 0 ? 1 + (r(8) % 4) : 0,
     boots: '#222222', number: gk ? 1 : 2 + (r(4) % 20),
+    // (about one in four left-footed)
     phys: sex
-      ? { h: gk ? 176 + (r(5) % 12) : 160 + (r(5) % 18), b: 20 + (r(6) % 45) }
-      : { h: gk ? 186 + (r(5) % 10) : 168 + (r(5) % 22), b: 30 + (r(6) % 45) },
+      ? { h: gk ? 176 + (r(5) % 12) : 160 + (r(5) % 18), b: 20 + (r(6) % 45), f: r(10) % 4 === 0 ? 1 : 0 }
+      : { h: gk ? 186 + (r(5) % 10) : 168 + (r(5) % 22), b: 30 + (r(6) % 45), f: r(10) % 4 === 0 ? 1 : 0 },
   };
 }
 
@@ -158,9 +159,9 @@ export class Room {
       if (m.playerId < 0) {
         if (this.world.players.length >= MAX_PLAYERS) return this.whisper(m, 'Room is full.');
         m.playerId = this.freeId();
-        addPlayer(this.world, { id: m.playerId, team, role, human: 1, hgt: phys.h, bld: phys.b });
+        addPlayer(this.world, { id: m.playerId, team, role, human: 1, hgt: phys.h, bld: phys.b, ft: phys.f });
       } else {
-        updatePlayerSpec(this.world, { id: m.playerId, team, role, human: 1, hgt: phys.h, bld: phys.b });
+        updatePlayerSpec(this.world, { id: m.playerId, team, role, human: 1, hgt: phys.h, bld: phys.b, ft: phys.f });
       }
       m.team = team; m.role = role;
       this.inputs.set(m.playerId, new Map());
@@ -186,7 +187,7 @@ export class Room {
       avatar: aiAvatar(id, role, this.settings.aiSex),
     };
     this.ai.set(id, spec);
-    addPlayer(this.world, { id, team, role, human: 0, hgt: spec.avatar.phys.h, bld: spec.avatar.phys.b });
+    addPlayer(this.world, { id, team, role, human: 0, hgt: spec.avatar.phys.h, bld: spec.avatar.phys.b, ft: spec.avatar.phys.f });
     this.refreshPitch();
     this.broadcastRoom();
   }
@@ -202,7 +203,7 @@ export class Room {
   updateProfile(m, profile) {
     m.name = profile.name; m.avatar = profile.avatar;
     if (m.playerId >= 0) {
-      updatePlayerSpec(this.world, { id: m.playerId, team: m.team, role: m.role, human: 1, hgt: profile.avatar.phys.h, bld: profile.avatar.phys.b });
+      updatePlayerSpec(this.world, { id: m.playerId, team: m.team, role: m.role, human: 1, hgt: profile.avatar.phys.h, bld: profile.avatar.phys.b, ft: profile.avatar.phys.f });
     }
     this.broadcastRoom();
   }
@@ -235,7 +236,7 @@ export class Room {
       this.settings.aiSex = Number(s.aiSex);
       for (const a of this.ai.values()) {
         a.avatar = aiAvatar(a.playerId, a.role, this.settings.aiSex);
-        updatePlayerSpec(this.world, { id: a.playerId, team: a.team, role: a.role, human: 0, hgt: a.avatar.phys.h, bld: a.avatar.phys.b });
+        updatePlayerSpec(this.world, { id: a.playerId, team: a.team, role: a.role, human: 0, hgt: a.avatar.phys.h, bld: a.avatar.phys.b, ft: a.avatar.phys.f });
       }
     }
     if (!this.world.m.live) {

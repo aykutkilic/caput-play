@@ -658,6 +658,13 @@ function openEditor() {
   };
   syncSex();
   $('edH').value = a.phys.h; $('edB').value = a.phys.b;
+  // the stronger foot: straight kicks with it; a bend its inside gives (a
+  // right foot: bending left) with the inside, the other way with its outside
+  const footEl = $('edFoot');
+  footEl.innerHTML = ['Right', 'Left'].map((n, i) => `<button data-i="${i}">${n}</button>`).join('');
+  const syncFoot = () => footEl.querySelectorAll('button').forEach((b) => b.classList.toggle('on', Number(b.dataset.i) === (a.phys.f || 0)));
+  footEl.onclick = (e) => { if (e.target.dataset.i) { a.phys.f = Number(e.target.dataset.i); syncFoot(); } };
+  syncFoot();
   updatePhys();
   $('editor').hidden = false;
 }

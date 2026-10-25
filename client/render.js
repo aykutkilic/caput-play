@@ -423,11 +423,12 @@ export function poseFor(p, ctx) {
         // bent (p.kc: + bends it right on screen, - left): with the inside of
         // the foot – the left one to bend it right, the right one left – the
         // toe turned out, the foot opening onto the ball, more for more curl;
-        // a quick one with the outside of the other foot (p.kf): toe turned in
+        // or the outside of the other (p.kf – his stronger foot bending it the
+        // other way): toe turned in
         const out = p.kf === FOOT.OUTSIDE;
         P.rfy = out ? -0.75 : Math.min(1, Math.abs(p.kc) * 1.6) * 0.95;
         if ((p.kc > 0) !== out) mirrorLegs(P);
-      }
+      } else if (p.ft && !ctx.fromHands) mirrorLegs(P); // (struck straight: with his stronger foot)
       if (p.kq === KQ.TURN && k < cT) {
         // turning with the ball first: little steps round on the spot, the
         // leg drawing back only as he comes round to face the goal
