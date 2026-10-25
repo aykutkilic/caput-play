@@ -724,15 +724,22 @@ function personPostIn(w, p, kind, pw, d, hw) {
 
 export function shotAim(w, p, kind, kh, pw, sx, sy, sm) {
   const pit = pitchOf(w), dir = teamDir(w, p.team), b = w.ball, gx = dir * pit.L / 2;
-  const hw = pit.goalW / 2, wide = hw + 1.0;
+  const hw = pit.goalW / 2;
   const postIn = byPerson(p) ? personPostIn(w, p, kind, pw, Math.hypot(gx - b.x, b.y), hw) : POST_IN, half = hw - postIn;
   let aimY = (Math.abs(b.y) < 0.8 ? (p.id % 2 ? 1 : -1) : -Math.sign(b.y)) * pit.goalW * 0.2;
   let span = null;
   if (sm > 0.3) {
-    if (sx * dir > 0.15) {
-      aimY = clamp(b.y + sy / sx * (gx - b.x), -wide, wide);
-      span = [clamp(aimY, -hw, hw) - hw * 0.45, clamp(aimY, -hw, hw) + hw * 0.45];
-    } else if (Math.abs(sy) > 0.2) { aimY = Math.sign(sy) * half; span = sy > 0 ? [0, hw] : [-hw, 0]; }
+    // The stick's side, as he faces the goal (the same in every camera –
+    // screen-relative it can point across the pitch at a slant): across to
+    // his left, the left part of the goal; to his right, the right part –
+    // the further across, the further out (to a little inside the post);
+    // mostly forward (or back), the middle. (His right is 90° anticlockwise
+    // of the way he attacks: world +y attacking +x.)
+    const lat = sy * dir; // + to his right
+    if (Math.abs(lat) > 0.25) {
+      aimY = dir * Math.sign(lat) * half * Math.min(1, Math.abs(lat) / 0.7);
+      span = aimY > 0 ? [0, hw] : [-hw, 0];
+    } else { aimY = 0; span = [-hw * 0.45, hw * 0.45]; }
   }
   if (Math.abs(aimY) <= hw && byPerson(p)) {
     const bend = kind === KICK.FINESSE ? 1 : 0.8;
