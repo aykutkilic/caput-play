@@ -11,7 +11,7 @@ import {
 import { SHAPE, MARK } from './learned.js';
 import { shotHole, sideCurl, aiReact } from './lanes.js';
 
-const AI_CARRY = 1, AI_SUPPORT = 2, AI_PRESS = 3, AI_MARK = 4; // (a marker's man in aiY)
+const AI_CARRY = 1, AI_SUPPORT = 2, AI_PRESS = 3, AI_MARK = 4, AI_COVER = 5; // (a marker's man in aiY)
 const PATH_N = 25; // 2.5 s look-ahead in 0.1 s steps
 const TAU = Math.PI * 2;
 
@@ -158,10 +158,12 @@ function intercept(p, path, top = 2.2, vmax = 0) {
 function analyse(w) {
   let c = w._aic;
   if (c && c.tick === w.tick && c.w === w) return c;
-  c = { w, tick: w.tick, path: predictPath(w), ic: new Map(), chaser: [-1, -1], presser: [-1, -1], mark: new Map() };
+  c = { w, tick: w.tick, path: predictPath(w), ic: new Map(), chaser: [-1, -1], presser: [-1, -1], mark: new Map(), cover: [-1, -1], coverAt: [null, null] };
   w._aic = c;
   const b = w.ball, pit = pitchOf(w);
   const owner = b.owner >= 0 ? pById(w, b.owner) : null;
+  // when the ball last changed sides (the moment after winning it: lossCost)
+  if (owner && owner.team !== w._possTeam) { w._possTeam = owner.team; w._possTick = w.tick; }
   for (const p of w.players) c.ic.set(p.id, intercept(p, c.path));
   for (const team of [0, 1]) {
     const dir = teamDir(w, team), ogx = -dir * pit.L / 2;
@@ -198,6 +200,25 @@ function analyse(w) {
         }
         if (!bm) break;
         used.add(bm.id); c.mark.set(bm.id, o.id);
+      }
+      // Cover: with one of us on him (within 5 m) away from our goal, the next
+      // of us sits goal-side of the presser on the carrier's way to our goal,
+      // as far off as real sides' second man (7 m in midfield, 8.6 in their
+      // third – SkillCorner) – one with no man to mark, or whose man is out of
+      // the play (further from our goal than the ball); near our goal the man
+      // hiding the shot does it
+      const dG = Math.hypot(owner.x - ogx, owner.y);
+      if (Math.min(bd, hd) < 5 && dG >= 26) {
+        const [kx, ky] = bisector(w, team, owner.x, owner.y);
+        const r = Math.min(owner.x * dir > pit.L / 6 ? 8.6 : 7, 0.4 * dG), cx = owner.x + kx * r, cy = owner.y + ky * r;
+        let cv = null, cd = 18;
+        for (const p of markers) {
+          const mo = c.mark.has(p.id) ? pById(w, c.mark.get(p.id)) : null;
+          if (p.st === ST.FALLEN || (mo && Math.hypot(mo.x - ogx, mo.y) < dG + 2)) continue;
+          const d = Math.hypot(p.x - cx, p.y - cy) - (p.ai === AI_COVER ? 2 : 0);
+          if (d < cd) { cd = d; cv = p; }
+        }
+        if (cv) { c.cover[team] = cv.id; c.coverAt[team] = [cx, cy]; c.mark.delete(cv.id); }
       }
     }
   }
@@ -319,9 +340,12 @@ function spotValue(w, team, x, y) {
   return 0.02 + 0.13 * prog * prog * prog + 0.9 * ang * Math.exp(-Math.hypot(gx - x, y) / 10);
 }
 // ...and what losing it there costs
+// (just won it – the last 1.5 s – the other side is all around: anything
+// risky costs more, wherever it's lost – real sides secure it first; under a
+// third of their first passes go forward)
 function lossCost(w, team, x) {
-  const pit = pitchOf(w), dir = teamDir(w, team);
-  return 0.04 + 0.16 * clamp(1 - (x * dir + pit.L / 2) / pit.L, 0, 1);
+  const pit = pitchOf(w), dir = teamDir(w, team), fresh = w._possTeam === team && w.tick - w._possTick < 90 ? 0.06 : 0;
+  return 0.04 + 0.16 * clamp(1 - (x * dir + pit.L / 2) / pit.L, 0, 1) + fresh;
 }
 
 // Rough chance a shot from p scores: the goal mouth he can see, the distance,
@@ -810,7 +834,8 @@ function defendThink(w, p, c, owner) {
   const ogx = -dir * pit.L / 2;
   const dGoalB = Math.hypot(owner.x - ogx, owner.y);
   const mk = c.mark.get(p.id);
-  p.ai = c.presser[p.team] === p.id ? AI_PRESS : mk !== undefined ? AI_MARK : 0;
+  p.ai = c.presser[p.team] === p.id ? AI_PRESS : c.cover[p.team] === p.id ? AI_COVER : mk !== undefined ? AI_MARK : 0;
+  if (p.ai === AI_COVER) { const [tx, ty] = c.coverAt[p.team]; guardTo(p, tx, ty, 6, 0.3, SHARP); return; }
   if (mk !== undefined) p.aiY = mk;
   if (c.presser[p.team] === p.id) {
     // near our goal and not goal-side of him (beaten, or off his shooting

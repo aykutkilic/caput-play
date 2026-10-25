@@ -16,7 +16,7 @@ import { pitchOf, teamDir, ballPath, pById, passEndSpeed, loftTime, shotAim, byP
 import { laneFan, passHole, shotHole } from '../shared/lanes.js';
 import { KH, KICK, ROLE, KICK_MASK, FOOT } from '../shared/constants.js';
 
-const ROLE_TAG = ['', 'carry', 'support', 'press', 'mark'];
+const ROLE_TAG = ['', 'carry', 'support', 'press', 'mark', 'cover'];
 const OPEN = 'rgba(90,235,130,0.5)', SHUT = 'rgba(255,85,70,0.8)';
 const marginCol = (m) => (m > 0.1 ? 'rgba(90,235,130,0.95)' : m > -0.1 ? 'rgba(255,214,90,0.95)' : 'rgba(255,85,70,0.9)');
 const oddsCol = (o) => (o > 0.7 ? 'rgba(90,235,130,0.9)' : o > 0.4 ? 'rgba(255,214,90,0.9)' : 'rgba(255,85,70,0.85)');
