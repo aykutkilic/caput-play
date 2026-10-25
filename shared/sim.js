@@ -591,10 +591,15 @@ function kickKind(p, target) {
 // Flight time of a lofted ball over distance d, from a sensible pace that
 // grows with distance: high balls float, mid-height ones are driven; power
 // adds pace (a flatter, quicker ball).
-export function loftTime(d, kh, power) {
+export function loftTime(d, kh, power, capped = true) {
   // (a little brisker than before, but still a pace a man can take down)
   const vh = kh === KH.HIGH ? clamp(7.7 + 0.22 * d, 7.7, 14.8) + 2.5 * power : clamp(9.9 + 0.33 * d, 9.9, 16.5) + 2 * power;
-  return Math.max(0.35, d / vh);
+  // A pass is lofted over the men in between, no higher: a long one is
+  // driven flatter (quicker) rather than floated up into the sky – about 6 m
+  // at the top for a high ball, 3.5 m for a chest-high one. (Punts and
+  // clearances go up as high as they go: capped false.)
+  const T = Math.max(0.35, d / vh);
+  return capped ? Math.min(T, kh === KH.HIGH ? 2.2 : 1.6) : T;
 }
 
 // Height the ball reaches after travelling d metres along the ground, launched
@@ -706,7 +711,7 @@ export function planKick(w, p, kind, power, tx, ty, tid = -1, kh) {
       }
       const d = Math.hypot(lx - b.x, ly - b.y);
       if (lofted) {
-        vEnd = loftTime(d, kh || KH.HIGH, power);
+        vEnd = loftTime(d, kh || KH.HIGH, power, kind !== KICK.PUNT && kind !== KICK.CLEAR && kind !== KICK.THROW);
         if (vEnd <= t) { fb = null; break; }
       } else {
         const v0 = (d + K * t) * CF / (1 - Math.exp(-CF * t)) - K;
@@ -1525,14 +1530,15 @@ function launch(w, p, tech) {
         // lofted: arrive at the chosen height (feet / chest / head) after the planned flight
         const lofted = kh !== KH.GROUND ? kh : KH.MID; // a header/volley "to feet" is still in the air
         const zt = targetHeight(w, p, kind, kh);
-        // (a drop kick is driven: flatter and quicker than a lofted pass)
+        const thrown = fromHands && kind !== KICK.PUNT && kind !== KICK.DROP;
+        // (a drop kick is driven: flatter and quicker than a lofted pass;
+        // punts, clearances and throws keep their natural arc)
         const T = p.kv > 0 && p.kt >= 0 && kh !== KH.GROUND
           ? p.kv
           : kind === KICK.DROP ? Math.max(0.35, d / (clamp(14 + 0.25 * d, 14, 24) + 2 * pw))
-            : loftTime(d, kind === KICK.PUNT || kind === KICK.CLEAR ? KH.HIGH : lofted, pw);
+            : loftTime(d, kind === KICK.PUNT || kind === KICK.CLEAR ? KH.HIGH : lofted, pw, kind !== KICK.PUNT && kind !== KICK.CLEAR && !thrown);
         vh = d / T * (kind === KICK.DROP ? 1.1 : 1.04);
         vz = (zt - b.z + 0.5 * G * T * T * 1.03) / T;
-        const thrown = fromHands && kind !== KICK.PUNT && kind !== KICK.DROP;
         const cap = (thrown ? (b.z < 1.6 ? 17 : 21) : isHead ? 16 : 32) * s.shot;
         const v = Math.hypot(vh, vz);
         if (v > cap) { vh *= cap / v; vz *= cap / v; }
