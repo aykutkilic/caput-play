@@ -4,9 +4,9 @@
 
 import { G, BTN, KT, KH, KICK_MASK, packKick, PHASE, ST, ROLE, SP, KICK, GKB, FOOT, JOG_TILT } from './constants.js';
 import {
-  rnd, teamDir, pitchOf, pById, stOf, startKick, beginSlide, beginDive, beginBlock1v1, blockKind, slotOf, slotIndex, shootingPractice,
-  inOwnBox, clamp, encodeStick, ballPath, blockPlan, beginBlock, wantsBlock, loftTime,
-  groundSpeedFor, passEndSpeed, MU, CF, byPerson, keeperBig, bigReach, exitPoint, keepInReach, beginKeepIn, footFor, footCurl, offsidePos,
+  rnd, teamDir, pitchOf, pById, stOf, startKick, beginDive, beginBlock1v1, blockKind, slotOf, slotIndex, shootingPractice,
+  inOwnBox, clamp, encodeStick, ballPath, blockPlan, wantsBlock, loftTime,
+  groundSpeedFor, passEndSpeed, MU, CF, byPerson, keeperBig, bigReach, exitPoint, keepInReach, footFor, footCurl, offsidePos,
   tiltFor, CHG_MAX,
 } from './sim.js';
 import { SHAPE, MARK } from './learned.js';
@@ -55,6 +55,11 @@ function setMove(p, dx, dy, mag) {
   p.ia = a; p.im = m;
 }
 const sprintTilt = (p, floor = 0.05) => (p.stam > floor ? 1 : JOG_TILT);
+// A key tapped this tick (a slide, a block, a keep-in – the game acts on the
+// press as it does for a person); it replaces any kick key held
+function tapKey(p, target, kh = KH.GROUND) {
+  p.ib = (p.ib & ~KICK_MASK & ~(3 << 3)) | packKick(target, kh);
+}
 
 // tau: no hurry – he goes at the pace that gets him there in about tau
 // seconds (a walk when it's near, a jog when it's moved on a way), and only
@@ -856,7 +861,7 @@ function defendThink(w, p, c, owner) {
   // a hard opposing shot / pass coming past: throw a leg or the body at it
   if (!owner && wantsBlock(w, p) && rnd(w) < lvlOf(w).block) {
     const plan = blockPlan(w, p);
-    if (plan && plan.t < 0.45 && beginBlock(w, p, plan)) return;
+    if (plan && plan.t < 0.45) { tapKey(p, KT.RUN); return; } // (a kick key as it comes: the block – see the sim's buttons)
   }
   if (!owner) {
     const ic = c.ic.get(p.id);
@@ -874,7 +879,7 @@ function defendThink(w, p, c, owner) {
       // ours to lose (we touched it last) and on its way out: keep it in – a
       // slide to hook it back when it's just going, flat out to it before
       const out = b.lastTeam === p.team && p.role === ROLE.OUT ? exitPoint(w) : null;
-      if (out && keepInReach(w, p) && Math.hypot(b.x - p.x, b.y - p.y) > 1.2) { beginKeepIn(w, p, Math.atan2(out.y - p.y, out.x - p.x)); return; }
+      if (out && keepInReach(w, p) && Math.hypot(b.x - p.x, b.y - p.y) > 1.2) { tapKey(p, KT.GOAL); return; } // (the slide key at a ball going out: kept in)
       if (out && (go.t >= out.t - 0.05 || go.t >= 9)) {
         if (out.t < 2.5) {
           setMove(p, out.x - p.x, out.y - p.y, sprintTilt(p));
@@ -967,7 +972,7 @@ function defendThink(w, p, c, owner) {
     if (d > 1.3 && d < 3.0 && p.tcd === 0 && !owner.held && w.m.spTaker !== owner.id) {
       const bx = b.x - p.x, by = b.y - p.y, bd = Math.hypot(bx, by) || 1;
       const facing = (Math.cos(p.face) * bx + Math.sin(p.face) * by) / bd;
-      if (facing > 0.9 && rnd(w) < (inOwnBox(w, p.team, p.x, p.y, 2) ? 0.004 : 0.018)) beginSlide(w, p);
+      if (facing > 0.9 && rnd(w) < (inOwnBox(w, p.team, p.x, p.y, 2) ? 0.004 : 0.018)) tapKey(p, KT.GOAL); // (the slide key)
     }
     return;
   }
