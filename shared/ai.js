@@ -652,7 +652,11 @@ function carrierThink(w, p) {
       aiKick(w, p, sh.kind, sh.pw, gx, sh.aimY, -1, sh.kh, sh.kc || 0, sh.kf);
       return;
     }
-    if (bp && passV + noise > keep + 0.01) {
+    // with room he takes a touch or two before he lets it go – real players
+    // keep it ~1-2 s when they have space (SkillCorner): no pass till he's
+    // had it ~1 s, unless he's pressed or it's a far better ball
+    const settle = safe > 0.7 && p.aiX < 30 + 35 * safe && passV < keep + 0.06;
+    if (bp && !settle && passV + noise > keep + 0.01) {
       aiKick(w, p, bp.kind, bp.pw, bp.tx, bp.ty, bp.t.id, bp.kh);
       return;
     }
@@ -684,7 +688,7 @@ function finishScore(sc, adds) {
 function supportThink(w, p, owner) {
   const pit = pitchOf(w), dir = teamDir(w, p.team);
   const hx = pit.L / 2 - 1.5, hy = pit.W / 2 - 1.2;
-  if (p.ai !== AI_SUPPORT) { p.ai = AI_SUPPORT; p.aiT = 0; p.aiX = p.x; p.aiY = p.y; }
+  if (p.ai !== AI_SUPPORT) { p.ai = AI_SUPPORT; p.aiT = 0; p.aiX = p.x; p.aiY = p.y; p.aiS = null; }
   if (p.aiT === 0) {
     p.aiT = 14 + Math.floor(rnd(w) * 16);
     const [sx, sy] = slotTarget(w, p, true);
@@ -710,11 +714,16 @@ function supportThink(w, p, owner) {
     let nearest = true;
     const dMe = Math.hypot(p.x - owner.x, p.y - owner.y);
     for (const q of w.players) if (q !== p && q !== owner && q.team === p.team && q.role !== ROLE.GK && Math.hypot(q.x - owner.x, q.y - owner.y) < dMe) nearest = false;
+    // In their third the nearest supports him – somewhere 6-13 m off him,
+    // never miles away in the box (real sides keep a man ~9-11 m off the
+    // ball there; SkillCorner): a ring of spots round him
+    const support = nearest && owner.x * dir > pit.L / 6;
+    if (support) for (let k = 0; k < 8; k++) { const a = a0 + k / 8 * TAU; cands.push([owner.x + Math.cos(a) * 9, owner.y + Math.sin(a) * 9, 0]); }
     let best = null, bestS = -1e9;
     for (const [cx0, cy0, bonus] of cands) {
       const cx = clamp(cx0, -hx, hx), cy = clamp(cy0, -hy, hy);
       const d = Math.hypot(cx - owner.x, cy - owner.y);
-      if (d < 4) continue;
+      if (d < 4 || (support && (d < 6 || d > 13))) continue;
       // who controls that spot when he gets there
       const tMe = reachTime(p, cx, cy);
       let tOpp = 9;
@@ -748,7 +757,10 @@ function supportThink(w, p, owner) {
       if (sc > bestS) { bestS = sc; best = [cx, cy]; }
     }
     if (best) { p.aiX = best[0]; p.aiY = best[1]; }
+    // (supporting him, the spot goes where he goes: kept as an offset)
+    p.aiS = support ? [p.aiX - owner.x, p.aiY - owner.y] : null;
   }
+  if (p.aiS) { p.aiX = clamp(owner.x + p.aiS[0], -hx, hx); p.aiY = clamp(owner.y + p.aiS[1], -hy, hy); }
   // a run in behind (or onto their line) while the man on the ball has the
   // time to play it: flat out; anything else – coming short, moving across
   // into space, a run he can't be found on yet – at a jog
@@ -760,6 +772,7 @@ function supportThink(w, p, owner) {
     press = Math.min(press, Math.hypot(o.x - owner.x, o.y - owner.y));
   }
   if (run && (p.aiX - line) * dir > -2 && press > 2.5) moveTo(p, p.aiX, p.aiY, 3, 0.6);
+  else if (p.aiS) moveTo(p, p.aiX, p.aiY, 6, 0.6, SHARP); // (supporting the man on the ball in their third)
   else moveTo(p, p.aiX, p.aiY, run ? 10 : 12, 0.6, run ? 0.9 : CALM);
 }
 
