@@ -2582,6 +2582,7 @@ function canControl(p) { return isFree(p) && p.kcd === 0 && p.z < 0.3; }
 // back into play) and a high ball in a crowd punched clear (rather than risk
 // the catch). A human keeper chooses for himself.
 const GK_TIP = [0.5, 0.78, 0.92], GK_PUNCH = [0.35, 0.65, 0.85];
+const GK_MID = [1.4, 1, 0.65]; // (how often a parry drops back into the middle, relative)
 
 // Where the ball would cross a team's goal line: on target or not (between
 // the posts, under the bar – a ball that bounces first counts).
@@ -2839,14 +2840,18 @@ function gkSave(w, p) {
     const arm = !leg && (!p.spr || (p.spr === GKB.STAR && segs[part][5] > p.z + 0.85 * sH));
     if (tgt.on && !legs && arm && rnd(w) < (byPerson(p) ? 0.85 : GK_TIP[m.ai] ?? 0.78) && tipAway(w, p, s, tgt, at)) return true;
     // parried: pushed out wide (to the side it was on) rather than back into
-    // the middle, and up – off his legs or a block's body it stays lower
+    // the middle, and up – off his legs or a block's body it stays lower. A
+    // hard one, or one he only gets a hand to at full stretch, sometimes
+    // drops back into the middle instead – the rebound strikers follow in for
+    // (more often for a weaker keeper)
     const dir = teamDir(w, p.team);
     const sp = Math.hypot(b.vx, b.vy);
     const low = legs || (p.spr && !arm);
     const side = Math.abs(b.y - p.y) > 0.15 ? Math.sign(b.y - p.y) : (rnd(w) < 0.5 ? -1 : 1);
-    if (body) {
-      // off his body: back out in front of him, not far
-      b.vx = dir * (2 + sp * 0.15) + (rnd(w) - 0.5) * 2; b.vy = b.vy * 0.15 + (rnd(w) - 0.5) * 3; b.vz = 1 + rnd(w) * 1.5;
+    const pMid = clamp(0.08 + 0.015 * Math.max(0, sp - 15) + (p.st === ST.DIVE ? 0.08 : 0), 0, 0.4) * (byPerson(p) ? 1 : GK_MID[m.ai] ?? 1);
+    if (body || (!twoHands && rnd(w) < pMid)) {
+      // off his body (or that parry): back out in front of him, not far
+      b.vx = dir * (2 + sp * 0.15) + (rnd(w) - 0.5) * 2; b.vy = b.vy * 0.15 + (rnd(w) - 0.5) * 3; b.vz = (low ? 0.4 : 1) + rnd(w) * 1.5;
     } else {
       b.vx = dir * (1.2 + sp * 0.1) + (rnd(w) - 0.5) * 2;
       b.vy = b.vy * 0.3 + side * (3.5 + rnd(w) * 4.5);

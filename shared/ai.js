@@ -836,6 +836,17 @@ function defendThink(w, p, c, owner) {
       }
       return;
     }
+    // a shot of ours on its way or just saved: the men up front follow it in,
+    // flat out, to where a rebound drops (six or seven metres out, across
+    // the goal as they come) – as real strikers do
+    const sh = b.sh >= 0 ? pById(w, b.sh) : null;
+    if (sh && sh.team === p.team && sh !== p) {
+      const gx = dir * pit.L / 2, hw = pit.goalW / 2;
+      if (Math.hypot(gx - p.x, p.y) < 22 && (gx - p.x) * dir > 4) {
+        moveTo(p, gx - dir * 6.5, clamp(p.y * 0.45, -hw, hw), 0, 0.5);
+        return;
+      }
+    }
     const [tx, ty] = slotTarget(w, p, b.lastTeam === p.team);
     // one of the last two of us, the ball in our half and nearer our goal
     // than him, his spot well back: a recovery run, flat out; otherwise back
