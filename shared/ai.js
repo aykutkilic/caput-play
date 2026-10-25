@@ -720,8 +720,14 @@ function anglePoint(w, team, bx, by, depth, y0, y1) {
   const front = (bx - ogx) * dir; // ball's distance out from the goal line
   if (front < 0.6 || Math.abs(kx) < 0.2) return [ogx + dir * 0.5, clamp(by, -hw + 0.45, hw - 0.45)];
   const dep = Math.min(depth, Math.max(0.3, front - 0.6)); // (no further out than up to the ball)
-  const t = (ogx + dir * dep - bx) / kx;
-  return [bx + kx * t, clamp(by + ky * t, -hw + 0.3, hw - 0.3)];
+  let t = (ogx + dir * dep - bx) / kx;
+  // On the line, whatever – but against a wide man no further out than where
+  // that line passes just inside the near post: further out (beyond the line
+  // of the posts) the far post would be out of his reach, and held inside the
+  // posts instead (as he used to be) he'd be off the line, the near post open.
+  const yMax = hw - 0.3;
+  if (Math.abs(by + ky * t) > yMax && Math.abs(ky) > 1e-3 && Math.abs(by) > yMax) t = (Math.sign(by) * yMax - by) / ky;
+  return [bx + kx * t, by + ky * t];
 }
 
 // How much of our goal the man on the ball at (bx, by) still sees past the
@@ -857,7 +863,9 @@ function gkThink(w, p, c) {
     // time to dive; a shot at him at chest height he takes standing
     const off = Math.abs(b.y + b.vy * tk - p.y), zk = b.z + b.vz * tk - 0.5 * G * tk * tk;
     const nearHim = off > 0.55 && off < 1.15 && zk > 1.0 && zk < 2.3;
-    if ((kind === GKB.SPREAD && dB < 4.5 && zk < 0.7) || (kind === GKB.STAR && nearHim && tk < 0.25) || (kind === GKB.KNEE && dB < 6.5 && zk < 1.1)) {
+    // (only at a shot that comes within the block's reach: one going across
+    // him to the far post is a dive)
+    if ((kind === GKB.SPREAD && dB < 4.5 && zk < 0.7 && off < 1.8) || (kind === GKB.STAR && nearHim && tk < 0.25) || (kind === GKB.KNEE && dB < 6.5 && zk < 1.1 && off < 1.3)) {
       p.tcd = 50;
       beginBlock1v1(w, p, Math.atan2(-b.vy, -b.vx), kind);
       return;
@@ -1000,7 +1008,7 @@ function gkThink(w, p, c) {
     // (it's point-blank: the nearer he is, the less of the goal is left),
     // to within 1-2 m of him. Aimed at where the ball will be a moment from
     // now (by the man's run: the ball jumps about with his touches).
-    const ax = b.x + owner.vx * 0.18, ay = b.y + owner.vy * 0.18, fx = Math.max(0.5, (ax - ogx) * dir);
+    const ax = b.x + owner.vx * 0.06, ay = b.y + owner.vy * 0.06, fx = Math.max(0.5, (ax - ogx) * dir);
     // (what he has to keep up with is the man going across: running straight
     // in at goal, he's met further out like a man standing)
     const gl = Math.hypot(ogx - owner.x, owner.y) || 1, across = Math.abs(owner.vx * -owner.y - owner.vy * (ogx - owner.x)) / gl;
@@ -1057,17 +1065,24 @@ function gkThink(w, p, c) {
   if (lv.angle < 1) { const cx = ogx + dir * Math.abs(tx - ogx); tx = tx * lv.angle + cx * (1 - lv.angle); ty *= lv.angle; }
   if ((tx - ogx) * dir < 0.3) tx = ogx + dir * 0.3;
   const d = Math.hypot(tx - p.x, ty - p.y);
-  if (set && !(rush && d > 1)) {
-    // set: no rushing in or out, but quick side-steps to stay on the angle
-    // (closing a man down close in, he gets out there first, then sets)
-    if (d < 0.2) p.im = 0; else setMove(p, tx - p.x, ty - p.y, Math.min(0.65, d));
-  } else if (owner && owner.team !== p.team) {
+  if (owner && owner.team !== p.team) {
     // keeping to the line as he moves: along with the spot (it moves across
     // with the man's run), plus a pull onto it no quicker than he can pull up
-    // there (a keeper who overruns it is off the line again)
-    const pull = Math.sqrt(2 * s.accel * 1.2 * d) * 0.85;
-    const vx = (d > 1e-3 ? (tx - p.x) / d * pull : 0) + spotVx, vy = (d > 1e-3 ? (ty - p.y) / d * pull : 0) + spotVy;
-    const vm = Math.hypot(vx, vy), fast = vm > s.jog * 0.9;
+    // there (a keeper who overruns it is off the line again). Set for the
+    // shot he still keeps to the line – quick side-steps across, at most a
+    // jog – but no rushing in or out (closing a man down close in, he gets
+    // out there first, then sets).
+    let ex = tx - p.x, ey = ty - p.y;
+    const setNow = set && !(rush && d > 1);
+    if (setNow) {
+      const lx = tx - b.x, ly = ty - b.y, ll = Math.hypot(lx, ly) || 1, al = (ex * lx + ey * ly) / ll;
+      ex -= al * lx / ll; ey -= al * ly / ll;
+    }
+    const e = Math.hypot(ex, ey), pull = Math.sqrt(2 * s.accel * 1.2 * e) * 0.85;
+    let vx = (e > 1e-3 ? ex / e * pull : 0) + spotVx, vy = (e > 1e-3 ? ey / e * pull : 0) + spotVy;
+    let vm = Math.hypot(vx, vy);
+    if (setNow && vm > s.jog) { vx *= s.jog / vm; vy *= s.jog / vm; vm = s.jog; }
+    const fast = !setNow && vm > s.jog * 0.9;
     if (vm < 0.3) p.im = 0;
     else {
       setMove(p, vx, vy, Math.min(1, vm / (fast ? s.sprint : s.jog)));
