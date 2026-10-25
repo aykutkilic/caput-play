@@ -8,7 +8,7 @@
 
 import {
   DT, G, BALL_R, PLAYER_R, BTN, KT, KH, KICK_MASK, packKick, PHASE, ST, ROLE, SP, KICK, PITCHES, GOAL_DEPTH, POST_R, SKILL,
-  GOAL_SIZES, PART, MEET, GKB, KQ,
+  GOAL_SIZES, PART, MEET, GKB, KQ, FOOT,
 } from './constants.js';
 import { stats } from './physique.js';
 import { aiThink } from './ai.js';
@@ -266,7 +266,7 @@ export function makePlayer(id, team, role, human, hgt = 180, bld = 50) {
     id, team, role, human: human ? 1 : 0, hgt, bld,
     x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, face: 0,
     st: 0, stT: 0, stDur: 0, stA: 0, stB: 0, hit: 0,
-    kk: 0, kp: 0, kx: 0, ky: 0, kt: -1, kv: 0, kh: 0, kq: 0, kc: 0,
+    kk: 0, kp: 0, kx: 0, ky: 0, kt: -1, kv: 0, kh: 0, kq: 0, kc: 0, kf: 0,
     chg: 0, chgBtn: 0, stam: 1, pb: 0, kcd: 0, tcd: 0, tap: 0, tapT: 255, tapK: 0, tapH: 0, spr: 0,
     bot: 0, miss: 0, tm: 0, qk: 0,
     qa: 0, qt: 0, qp: 0, dph: 0, hold: 0,
@@ -663,6 +663,16 @@ function runAhead(q, t) {
 // inside of the left foot bends it right, back in; into the right, the other
 // way; the longer it's held the more (R2: wrapped round more). (Developer
 // mode and the aim line show them with it.)
+// How a bent kick is struck: a quick one – barely held, or with a man right
+// on him – with the outside of the other foot (it bends the same way, less,
+// a little less true, but it's away sooner); otherwise the inside
+export function strikeSurface(w, p, pw) {
+  let near = 99;
+  for (const q of w.players) if (q.team !== p.team) near = Math.min(near, Math.hypot(q.x - p.x, q.y - p.y));
+  return pw < 0.3 || near < 1.5 ? FOOT.OUTSIDE : FOOT.INSIDE;
+}
+export const OUTSIDE_CURL = 0.7, OUTSIDE_ERR = 1.15;
+
 export function shotAim(w, p, kind, kh, pw, sx, sy, sm) {
   const pit = pitchOf(w), dir = teamDir(w, p.team), b = w.ball, gx = dir * pit.L / 2;
   const hw = pit.goalW / 2, half = hw - POST_IN, wide = hw + 1.0;
@@ -675,11 +685,11 @@ export function shotAim(w, p, kind, kh, pw, sx, sy, sm) {
     } else if (Math.abs(sy) > 0.2) { aimY = Math.sign(sy) * half; span = sy > 0 ? [0, hw] : [-hw, 0]; }
   }
   if (Math.abs(aimY) <= hw && byPerson(p)) {
-    const bend = kind === KICK.FINESSE ? 1 : 0.8;
+    const kf = strikeSurface(w, p, pw), bend = (kind === KICK.FINESSE ? 1 : 0.8) * (kf === FOOT.OUTSIDE ? OUTSIDE_CURL : 1);
     const hole = shotHole(w, p, kind, kh, pw, 0, span, (ty) => sideCurl(w, p, ty, pw, bend), aimY);
-    if (hole) return { tx: gx, ty: hole.ty, kc: hole.kc, hole };
+    if (hole) return { tx: gx, ty: hole.ty, kc: hole.kc, kf: hole.kc ? kf : FOOT.LACES, hole };
   }
-  return { tx: gx, ty: aimY, kc: 0, hole: null };
+  return { tx: gx, ty: aimY, kc: 0, kf: FOOT.LACES, hole: null };
 }
 
 // Picks a target for a kick. Humans aim with the stick (PES-style assisted
@@ -687,13 +697,13 @@ export function shotAim(w, p, kind, kh, pw, sx, sy, sm) {
 export function planKick(w, p, kind, power, tx, ty, tid = -1, kh) {
   const pit = pitchOf(w), dir = teamDir(w, p.team), b = w.ball;
   if (kh === undefined) kh = kind === KICK.LONG || kind === KICK.PUNT || kind === KICK.CLEAR ? KH.HIGH : kind === KICK.SHOT ? KH.MID : KH.GROUND;
-  p.kk = kind; p.kp = clamp(power, 0, 1); p.kt = -1; p.kv = 0; p.kh = kh; p.kc = 0;
+  p.kk = kind; p.kp = clamp(power, 0, 1); p.kt = -1; p.kv = 0; p.kh = kh; p.kc = 0; p.kf = FOOT.LACES;
   if (tx !== undefined) { p.kx = tx; p.ky = ty; p.kt = tid; return; }
   const [sx, sy, sm] = stickOf(p);
   const ax = sm > 0.3 ? sx : Math.cos(p.face), ay = sm > 0.3 ? sy : Math.sin(p.face);
   if (kind === KICK.SHOT || kind === KICK.FINESSE) {
     const a = shotAim(w, p, kind, kh, p.kp, sx, sy, sm);
-    p.kx = a.tx; p.ky = a.ty; p.kc = a.kc;
+    p.kx = a.tx; p.ky = a.ty; p.kc = a.kc; p.kf = a.kf;
     return;
   }
   if (kind === KICK.SELF) {
@@ -754,7 +764,7 @@ export function planKick(w, p, kind, power, tx, ty, tid = -1, kh) {
       // inside of the foot (more curl costs pace) – as long as he can still
       // get to it. With no clear hole, the one that gives it the best chance.
       const hole = passHole(w, p, best, kind, kh, lx, ly, lofted ? vEnd : Math.max(1.5, vEnd), [0, -0.5, 0.5, -1, 1]);
-      if (hole) { lx = hole.tx; ly = hole.ty; p.kc = hole.kc; }
+      if (hole) { lx = hole.tx; ly = hole.ty; p.kc = hole.kc; p.kf = hole.kc ? FOOT.INSIDE : FOOT.LACES; }
     }
     p.kv = lofted ? vEnd : Math.max(1.5, vEnd); // lofted: flight time; ground: arrival pace
     p.kx = clamp(lx, -pit.L / 2 - 1, pit.L / 2 + 1); p.ky = clamp(ly, -pit.W / 2 + 0.5, pit.W / 2 - 0.5); p.kt = best.id;
@@ -804,6 +814,7 @@ export function startKick(w, p, kind, power, quick = false, tx, ty, tid = -1, kh
   else if (kind === KICK.LONG || kind === KICK.CLEAR) contact = quick ? 3 : 6;
   else contact = quick ? 2 : 4;
   if (!fromHands && wound > 0) contact = Math.max(1, contact - wound);
+  if (p.kf === FOOT.OUTSIDE) contact = Math.max(1, contact - 2); // (a flick of the outside of the foot: away sooner)
   p.st = fromHands && kind !== KICK.PUNT && kind !== KICK.DROP ? ST.THROW : ST.KICK;
   p.kq = p.st === ST.KICK && b.owner === p.id && !fromHands ? shotWay(p, p.face, b.x, b.y) : KQ.PLAIN;
   if (p.kq === KQ.HEEL) contact = Math.min(contact, 4); // a flick
@@ -1608,7 +1619,7 @@ function launch(w, p, tech) {
       // the further out, the wider the spread (and a full-power strike is wilder)
       err = 0.035 + 0.0016 * d + 0.00011 * d * d + 0.06 * pw * pw + techErr + mis + pressure + sprint;
       if (kind === KICK.FINESSE) err *= 0.6; // placed
-      else if (curled) err *= 0.8; // the inside of the foot
+      else if (curled) err *= p.kf === FOOT.OUTSIDE ? 0.8 * OUTSIDE_ERR : 0.8; // the inside of the foot (the outside: a little less true)
       zErr = (0.2 + 0.35 * pw) * (0.8 + d / 25);
       // no strike is perfectly clean: it swerves a little one way or the other
       spin += gauss(w) * (curled || kind === KICK.FINESSE ? 0.03 : 0.05 + 0.1 * pw);

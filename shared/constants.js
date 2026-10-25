@@ -65,6 +65,9 @@ export const KICK = { PASS: 1, LONG: 2, SHOT: 3, THROUGH: 4, CHIP: 5, CLEAR: 6, 
 // How a shot off the ground is struck (p.kq): facing the goal, plainly; with
 // the back to it, a back-heel or a turn with the ball first
 export const KQ = { PLAIN: 0, HEEL: 1, TURN: 2 };
+// Which part of the foot a bent kick is struck with (p.kf): the inside – the
+// strong, medium curl – or, for a quick one, the outside of the other foot
+export const FOOT = { LACES: 0, INSIDE: 1, OUTSIDE: 2 };
 
 // Pitch presets (metres). Small-sided games play on smaller pitches.
 export const PITCHES = [

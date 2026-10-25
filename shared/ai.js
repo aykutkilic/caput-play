@@ -2,11 +2,11 @@
 // world's seeded RNG) so that clients predicting AI players get the same
 // decisions as the server.
 
-import { G, BTN, KT, KH, KICK_MASK, packKick, PHASE, ST, ROLE, SP, KICK, GKB } from './constants.js';
+import { G, BTN, KT, KH, KICK_MASK, packKick, PHASE, ST, ROLE, SP, KICK, GKB, FOOT } from './constants.js';
 import {
   rnd, teamDir, pitchOf, pById, stOf, startKick, beginSlide, beginDive, beginBlock1v1, blockKind, slotOf, slotIndex, shootingPractice,
   inOwnBox, clamp, encodeStick, ballPath, blockPlan, beginBlock, wantsBlock, loftTime,
-  groundSpeedFor, passEndSpeed, MU, CF, byPerson, keeperBig, bigReach, exitPoint, keepInReach, beginKeepIn,
+  groundSpeedFor, passEndSpeed, MU, CF, byPerson, keeperBig, bigReach, exitPoint, keepInReach, beginKeepIn, strikeSurface, OUTSIDE_CURL,
 } from './sim.js';
 import { SHAPE, MARK } from './learned.js';
 import { shotHole, sideCurl } from './lanes.js';
@@ -486,7 +486,7 @@ function slotTarget(w, p, attacking) {
   return [clamp(x, -hx + 1.5, hx - 1.5), clamp(y, -hy + 1.2, hy - 1.2)];
 }
 
-function aiKick(w, p, kind, power, tx, ty, tid = -1, kh, kc = 0) {
+function aiKick(w, p, kind, power, tx, ty, tid = -1, kh, kc = 0, kf = FOOT.LACES) {
   const b = w.ball, m = w.m;
   if (b.held && b.owner === p.id) {
     if (m.spTaker === p.id) {
@@ -499,7 +499,10 @@ function aiKick(w, p, kind, power, tx, ty, tid = -1, kh, kc = 0) {
     } else kind = KICK.PUNT;
   }
   startKick(w, p, kind, power, false, tx, ty, tid, kh);
-  if (!b.held) p.kc = kc; // (bent with the foot – see lanes)
+  if (!b.held) {
+    p.kc = kc; p.kf = kc ? kf : FOOT.LACES; // (bent with the foot – see lanes)
+    if (p.kf === FOOT.OUTSIDE && p.st === ST.KICK) { const d = Math.min(2, p.stA - 1); p.stA -= d; p.stDur -= d; } // (the outside: away sooner, as startKick)
+  }
 }
 
 // Where and how to shoot: away from the keeper, low / mid / high, and a chip
@@ -523,12 +526,13 @@ function aimShot(w, p) {
   // in the way gets to it first, weighed by how sure he is to hit the target
   // there – and the bend that finds it (as much as his level has)
   const lv = lvlOf(w), err = (0.035 + 0.0016 * dGoal + 0.00011 * dGoal * dGoal + 0.06 * pw * pw) * lv.aimErr;
+  const kf = strikeSurface(w, p, pw), bend = lv.bend * (kf === FOOT.OUTSIDE ? OUTSIDE_CURL : 1);
   let best = null;
   for (const kh of [KH.GROUND, KH.MID, KH.HIGH]) {
-    const h = shotHole(w, p, KICK.SHOT, kh, pw, err, null, (ty) => sideCurl(w, p, ty, pw, lv.bend));
+    const h = shotHole(w, p, KICK.SHOT, kh, pw, err, null, (ty) => sideCurl(w, p, ty, pw, bend));
     if (h && (!best || h.score > best.score)) best = { ...h, kh };
   }
-  if (best) return { kind: KICK.SHOT, kh: best.kh, pw, aimY: best.ty, kc: best.kc };
+  if (best) return { kind: KICK.SHOT, kh: best.kh, pw, aimY: best.ty, kc: best.kc, kf: best.kc ? kf : FOOT.LACES };
   const r = rnd(w);
   return { kind: KICK.SHOT, kh: r < 0.5 ? KH.GROUND : r < 0.82 ? KH.MID : KH.HIGH, pw, aimY };
 }
@@ -615,7 +619,7 @@ function carrierThink(w, p) {
     const urge = 0.025 + Math.min(0.04, p.aiX / 4000);
     if (xg > 0.04 && xg + urge + noise >= Math.max(passV, keep)) {
       const sh = aimShot(w, p);
-      aiKick(w, p, sh.kind, sh.pw, gx, sh.aimY, -1, sh.kh, sh.kc || 0);
+      aiKick(w, p, sh.kind, sh.pw, gx, sh.aimY, -1, sh.kh, sh.kc || 0, sh.kf);
       return;
     }
     if (bp && passV + noise > keep + 0.01) {

@@ -14,7 +14,7 @@
 //   · the ball's predicted path, the AI's roles and where it's heading
 import { pitchOf, teamDir, ballPath, pById, passEndSpeed, loftTime, shotAim, byPerson } from '../shared/sim.js';
 import { laneFan, passHole, shotHole } from '../shared/lanes.js';
-import { KH, KICK, ROLE, KICK_MASK } from '../shared/constants.js';
+import { KH, KICK, ROLE, KICK_MASK, FOOT } from '../shared/constants.js';
 
 const ROLE_TAG = ['', 'carry', 'support', 'press', 'mark'];
 const OPEN = 'rgba(90,235,130,0.5)', SHUT = 'rgba(255,85,70,0.8)';
@@ -70,7 +70,7 @@ export class DevView {
         // what each key picks: no stick, and the stick out to either side of the goal
         for (const sy of [0, 1, -1]) {
           const a = shotAim(w, p, KICK.SHOT, h, pw, 0, sy, sy ? 1 : 0);
-          if (a.hole) out.best.push({ ...a.hole, kh: h, stick: sy, pick: target === 3 && h === kh && !sy });
+          if (a.hole) out.best.push({ ...a.hole, kf: a.kf, kh: h, stick: sy, pick: target === 3 && h === kh && !sy });
         }
       }
     }
@@ -190,7 +190,7 @@ export class DevView {
     if (d && d.p) {
       const top = d.best.reduce((a, h) => (!a || h.score > a.score ? h : a), null);
       lines.push(`#${d.p.id}${d.p.human ? '' : ' (AI)'}${d.fan ? ` · fan ${['ground', 'chest', 'head'][d.fan.kh]}: ${d.fan.rays.filter((x) => x.shut < 0).length}/${d.fan.rays.length} open` : ''}`);
-      if (top) lines.push(`best hole ${['low', 'mid', 'top'][top.kh]} y ${top.ty.toFixed(1)}${top.kc ? (top.kc > 0 ? ' bent ↻' : ' bent ↺') : ''} · margin ${top.m.toFixed(2)} s`);
+      if (top) lines.push(`best hole ${['low', 'mid', 'top'][top.kh]} y ${top.ty.toFixed(1)}${top.kc ? (top.kc > 0 ? ' bent ↻' : ' bent ↺') + (top.kf === FOOT.OUTSIDE ? ' (outside of the foot)' : '') : ''} · margin ${top.m.toFixed(2)} s`);
       if (d.passes.length) lines.push('passes ' + d.passes.map((h) => `${Math.round(h.odds * 100)}%`).join(' '));
     }
     if (d && d.p && byPerson(d.p) && d.holes.length) lines.push(`shot keys: ${this.keyLabel('goalG')} low · ${this.keyLabel('goalM')} mid · ${this.keyLabel('goalH')} top · stick to a side: that half (↻ bent right, ↺ bent left)`);
