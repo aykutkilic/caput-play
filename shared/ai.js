@@ -40,24 +40,30 @@ let stand = null;
 const lvlOf = (w) => stand || LEVELS[w.m.ai] || LEVELS[1];
 function angDiffAI(a, b) { let d = (b - a) % TAU; if (d > Math.PI) d -= TAU; if (d < -Math.PI) d += TAU; return d; }
 
+const CALM = 1.3, SHARP = 0.45; // s: an easy move into position (see moveTo); a sharp one
+
 function setMove(p, dx, dy, mag) {
   const [a, m] = encodeStick(dx, dy, mag);
   p.ia = a; p.im = m;
 }
 
-function moveTo(p, tx, ty, sprintDist = 6, arrive = 0.35) {
+// tau: no hurry – he goes at the pace that gets him there in about tau
+// seconds (a walk when it's near, a jog when it's moved on a way), and only
+// sprints when it's further than sprintDist and he has the legs for it (real
+// players walk or stand half the time and sprint one per cent of it)
+function moveTo(p, tx, ty, sprintDist = 6, arrive = 0.35, tau = 0) {
   const dx = tx - p.x, dy = ty - p.y, d = Math.hypot(dx, dy);
   if (d < arrive) { p.im = 0; return d; }
   // ease into position (no fixed walking pace that stops dead on arrival)
-  setMove(p, dx, dy, Math.min(1, Math.max(0.12, d / 2.2)));
-  if (d > sprintDist && p.stam > 0.2) p.ib |= BTN.SPRINT;
+  setMove(p, dx, dy, tau ? Math.min(1, d / tau / stOf(p).jog) : Math.min(1, Math.max(0.12, d / 2.2)));
+  if (d > sprintDist && p.stam > (tau ? 0.6 : 0.2)) p.ib |= BTN.SPRINT;
   return d;
 }
 
 // Into position facing the ball when he's nearly there (side-steps, backing
 // off – see the guard in the sim's movement); further off, a recovery run.
-function guardTo(p, tx, ty, sprintDist, arrive) {
-  const d = moveTo(p, tx, ty, sprintDist, arrive);
+function guardTo(p, tx, ty, sprintDist, arrive, tau = 0) {
+  const d = moveTo(p, tx, ty, sprintDist, arrive, tau);
   if (d < 5) p.ib |= BTN.R2;
   return d;
 }
@@ -138,11 +144,11 @@ function predictPath(w) {
   return path;
 }
 
-function intercept(p, path, top = 2.2) {
-  const s = stOf(p), v0 = Math.hypot(p.vx, p.vy);
+function intercept(p, path, top = 2.2, vmax = 0) {
+  const s = stOf(p), v0 = Math.hypot(p.vx, p.vy), vm = vmax || s.sprint;
   for (let k = 0; k < path.length; k++) {
     const t = k * 0.1, q = path[k];
-    const reach = (t < 0.2 ? v0 * t : v0 * 0.2 + s.sprint * (t - 0.2) * 0.92) + 0.45, dx = q.x - p.x, dy = q.y - p.y;
+    const reach = (t < 0.2 ? v0 * t : v0 * 0.2 + vm * (t - 0.2) * 0.92) + 0.45, dx = q.x - p.x, dy = q.y - p.y;
     if (dx * dx + dy * dy <= reach * reach && q.z < top) return { t, x: q.x, y: q.y, z: q.z };
   }
   const q = path[path.length - 1];
@@ -719,8 +725,18 @@ function supportThink(w, p, owner) {
     }
     if (best) { p.aiX = best[0]; p.aiY = best[1]; }
   }
+  // a run in behind (or onto their line) while the man on the ball has the
+  // time to play it: flat out; anything else – coming short, moving across
+  // into space, a run he can't be found on yet – at a jog
   const run = (p.aiX - p.x) * dir > 4;
-  moveTo(p, p.aiX, p.aiY, run ? 3 : 8, 0.6);
+  let line = -dir * 1e9, press = 99;
+  for (const o of w.players) {
+    if (o.team === p.team) continue;
+    if (o.role === ROLE.OUT && (o.x - line) * dir > 0) line = o.x;
+    press = Math.min(press, Math.hypot(o.x - owner.x, o.y - owner.y));
+  }
+  if (run && (p.aiX - line) * dir > -2 && press > 2.5) moveTo(p, p.aiX, p.aiY, 3, 0.6);
+  else moveTo(p, p.aiX, p.aiY, run ? 10 : 12, 0.6, run ? 0.9 : CALM);
 }
 
 function defendThink(w, p, c, owner) {
@@ -757,7 +773,14 @@ function defendThink(w, p, c, owner) {
       if (go.t < 9 && tOpp < go.t + 0.6) {
         setMove(p, go.x - p.x, go.y - p.y, 1);
         if (p.stam > 0.05) p.ib |= BTN.SPRINT;
-      } else moveTo(p, go.x, go.y, go.t > 0.5 ? 2 : 99, 0.05);
+      } else {
+        // no one else near it: no race – he jogs to where he'll meet it, in time
+        let tAny = 9;
+        for (const o of w.players) if (o.team !== p.team && o.st !== ST.FALLEN) tAny = Math.min(tAny, c.ic.get(o.id).t);
+        const gj = go.t < 9 && tAny > go.t + 1 ? intercept(p, c.path, b.tgt === p.id && b.lastTeam === p.team ? 1.4 : 2.2, stOf(p).jog) : null;
+        if (gj && gj.t < 9 && gj.t + 0.5 < tAny) moveTo(p, gj.x, gj.y, 99, 0.05, Math.max(0.3, gj.t));
+        else moveTo(p, go.x, go.y, go.t > 0.5 ? 2 : 99, 0.05);
+      }
       const d = Math.hypot(b.x - p.x, b.y - p.y);
       if (!p.qa && d < 7) {
         const gx = dir * pit.L / 2, dGoal = Math.hypot(gx - p.x, p.y);
@@ -772,7 +795,16 @@ function defendThink(w, p, c, owner) {
       return;
     }
     const [tx, ty] = slotTarget(w, p, b.lastTeam === p.team);
-    moveTo(p, tx, ty, 8, 0.6);
+    // one of the last two of us, the ball in our half and nearer our goal
+    // than him, his spot well back: a recovery run, flat out; otherwise back
+    // into shape – sharply with the ball in our half, at an easy pace further
+    // off (real sides barely drop in the seconds after losing it)
+    let deeper = 0;
+    for (const q of w.players) if (q !== p && q.team === p.team && q.role === ROLE.OUT && (q.x - p.x) * dir < 0) deeper++;
+    const beaten = deeper < 2 && b.lastTeam !== p.team && b.x * dir < 0 && (p.x - b.x) * dir > 0 && (p.x - tx) * dir > 8;
+    if (beaten) moveTo(p, tx, ty, 8, 0.6);
+    else if (b.x * dir < 0) moveTo(p, tx, ty, 8, 0.6, SHARP);
+    else moveTo(p, tx, ty, 14, 0.6, CALM);
     return;
   }
   const ogx = -dir * pit.L / 2;
@@ -851,7 +883,13 @@ function defendThink(w, p, c, owner) {
       if (last && (tx - line) * dir > 0) tx = line;
     }
   }
-  guardTo(p, tx, ty, 5, 0.5); // (ball and man in view)
+  // (ball and man in view; keeping with a man who's sprinting, sprinting too;
+  // the ball in our half, sharp; otherwise – a man jogging or standing, or no
+  // one to mark, far from our goal – an easy pace)
+  const o = mk !== undefined ? pById(w, mk) : null, hurry = o && Math.hypot(o.vx, o.vy) > stOf(o).jog * 1.05;
+  if (hurry) guardTo(p, tx, ty, 3, 0.5);
+  else if (owner.x * dir < 0) guardTo(p, tx, ty, 5, 0.5, SHARP);
+  else guardTo(p, tx, ty, 9, 0.5, 0.9);
 }
 
 // Where a keeper stands against a ball at (bx, by): on the bisector of the
@@ -1254,10 +1292,11 @@ export function aiThink(w, p) {
   if (m.phase === PHASE.GOAL || m.phase === PHASE.FULLTIME || m.phase === PHASE.SETPIECE) {
     if (p.role === ROLE.GK) {
       const pit = pitchOf(w), dir = teamDir(w, p.team);
-      moveTo(p, -dir * (pit.L / 2 - 1), 0, 99, 0.5);
+      moveTo(p, -dir * (pit.L / 2 - 1), 0, 99, 0.5, m.phase === PHASE.SETPIECE ? 0 : 2.5);
     } else {
+      // (after a goal, at the end: walking back; for a set piece, no rush unless it's far)
       const [tx, ty] = slotTarget(w, p, m.phase === PHASE.SETPIECE && m.spTeam === p.team);
-      moveTo(p, tx, ty, m.phase === PHASE.SETPIECE ? 6 : 99, 0.6);
+      moveTo(p, tx, ty, m.phase === PHASE.SETPIECE ? 10 : 99, 0.6, m.phase === PHASE.SETPIECE ? CALM : 2.5);
     }
     return;
   }

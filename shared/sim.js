@@ -1932,7 +1932,7 @@ function movement(w, p, s) {
   const sprint = person ? sm > 0.2 : (p.ib & BTN.SPRINT) && sm > 0.2;
   const prec = (p.ib & BTN.R2) && own;
   let dx = sx, dy = sy;
-  let speed = sprint ? s.sprint : s.jog;
+  let speed = sprint ? s.sprint * tiredPace(p) : s.jog;
   if (own) speed *= sprint ? 0.93 : 0.96;
   if (prec) speed = s.jog * 0.55;
   if (p.st === ST.STUMBLE) speed *= 0.45;
@@ -2098,8 +2098,19 @@ function movement(w, p, s) {
     const fd = (Math.cos(p.face) * (b.x - p.x) + Math.sin(p.face) * (b.y - p.y)) / (bd || 1);
     if (bd < 1.3 && fd > 0.5) beginTackle(w, p);
   }
-  // (no stamina: p.stam stays full)
+  // Stamina (p.stam, 0..1): sprinting spends it – a fit man has 5-6 s flat
+  // out in him – easing off brings it back, quickest at a walk; tired, he
+  // can't reach his top speed (tiredPace). The AI manages it – it chooses
+  // when to sprint, and saves it when there's no hurry; a person has nothing
+  // to manage: his stays full.
+  if (!person) {
+    const v = Math.hypot(p.vx, p.vy);
+    if (v > s.jog * 1.1) p.stam = Math.max(0, p.stam - DT / (STAM_SPRINT * (0.55 + 0.45 * s.stamina)));
+    else p.stam = Math.min(1, p.stam + DT / (v < 2.2 ? STAM_WALK : STAM_JOG));
+  }
 }
+const STAM_SPRINT = 6, STAM_WALK = 12, STAM_JOG = 30; // s: flat out from full to empty; back to full walking / jogging
+export const tiredPace = (p) => 0.88 + 0.12 * Math.min(1, p.stam / 0.35);
 
 function stateUpdate(w, p, s) {
   const b = w.ball;
