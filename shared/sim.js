@@ -51,7 +51,6 @@ const scaledPitches = new Map();
 export function pitchOf(w) {
   const base = PITCHES[w.pitchId] || PITCHES[1];
   const gs = (w.m && w.m.goalS) || 0;
-  if (!gs) return base;
   const key = (w.pitchId << 2) | gs;
   let pit = scaledPitches.get(key);
   if (!pit) {
