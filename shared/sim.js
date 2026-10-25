@@ -1461,7 +1461,6 @@ export function tryControl(w, p) {
   if (b.last === p.id && b.kt < 20 && b.tgt !== p.id) return false;
   if (p.role === ROLE.GK && keeperHands(w, p) && inOwnBox(w, p.team, p.x, p.y, 0.6)) return false; // hands
   const meant = b.tgt === p.id && b.lastTeam === p.team;
-  if (!byPerson(p) && !meant) return false;
   const s = stOf(p), fx = Math.cos(p.face), fy = Math.sin(p.face);
   // [part, how far up he'd go for it]: letting it come, a little jump to take
   // it on the chest comes before the head, a big one only after
@@ -2026,7 +2025,6 @@ function movement(w, p, s) {
   // same controls): a partial tilt walks or jogs – a jog at JOG_TILT (the jog
   // key on a keyboard) – full tilt sprints (tired, a little slower: stamina).
   // R1 is "get the ball": run to it and take it, or close down whoever has it.
-  const person = byPerson(p);
   const chase = (p.ib & BTN.SPRINT) && !own && !(owner && owner.team === p.team);
   const sprint = sm > JOG_TILT + 0.1;
   const prec = (p.ib & BTN.R2) && own;
@@ -2040,14 +2038,14 @@ function movement(w, p, s) {
   // jockeying (contain): stay goal-side of the dribbler at arm's length, facing
   // him, matching his moves – no lunge, so he has to beat you
   const jockey = oppHas && !pressing && (p.ib & KICK_MASK) === KT.SELF && !owner.held && p.chgBtn === 0;
-  const charging = p.role === ROLE.GK && !own && (p.team === 0 ? m.gkc0 : m.gkc1) > 0 && byPerson(p);
+  const charging = p.role === ROLE.GK && !own && (p.team === 0 ? m.gkc0 : m.gkc1) > 0;
   // guarding (R2 held without the ball, the other side on it): he keeps
   // facing the ball and side-steps or backs off into position – between it
-  // and the goal – instead of turning his back on it to run there. A person
+  // and the goal – instead of turning his back on it to run there. Anyone
   // does it anyway close to the man on the ball while he's goal-side of him
   // (back-pedalling, half pace); once he's beaten he turns and runs.
   let close = false;
-  if (person && oppHas && !own && p.role !== ROLE.GK && Math.hypot(owner.x - p.x, owner.y - p.y) < 9) {
+  if (oppHas && !own && p.role !== ROLE.GK && Math.hypot(owner.x - p.x, owner.y - p.y) < 9) {
     const ogx = -teamDir(w, p.team) * pitchOf(w).L / 2;
     close = Math.hypot(p.x - ogx, p.y) < Math.hypot(owner.x - ogx, owner.y) + 0.5;
   }
@@ -2081,12 +2079,15 @@ function movement(w, p, s) {
   if (taker) {
     // A dead ball: he turns on the spot. A free kick or a corner can be taken
     // quickly, though – hold a direction and he plays it on and runs with it.
-    const quick = byPerson(p) && (m.spType === SP.FREEKICK || m.spType === SP.CORNER) && !b.held && sm0 > 0.5;
+    const quick = (m.spType === SP.FREEKICK || m.spType === SP.CORNER) && !b.held && sm0 > 0.5;
     p.qk = quick ? Math.min(255, p.qk + 1) : 0;
     if (p.qk > 20) { m.spTaker = -1; p.qk = 0; w.events.push({ k: 'kick', x: b.x, y: b.y, z: b.z, v: 2, id: p.id }); }
     else sm = 0;
   } else p.qk = 0;
 
+  // (the receive assist reads a person's rough stick and steers him onto the
+  // ball – an aid for reading his input, not a rule: the AI steers itself to
+  // where it meets the ball with the same stick, and the two would fight)
   if (byPerson(p)) updateMeet(w, p, sx, sy, sm0);
   const assist = byPerson(p) && !own && !pressing && !jockey && !charging && !fetching ? receiveAssist(w, p, sx, sy, sm0) : null;
   p._as = assist; // for the renderer's landing marker (not part of the state)
@@ -2107,7 +2108,7 @@ function movement(w, p, s) {
   // player a pass is played to.
   let strafe = false;
   const bv = Math.hypot(b.vx, b.vy);
-  if (!own && b.owner < 0 && bv > 3 && sm > 0.1 && p.st === ST.IDLE && p.tm !== MEET.WITH && (assist || (!person && b.tgt === p.id && b.lastTeam === p.team))) {
+  if (!own && b.owner < 0 && bv > 3 && sm > 0.1 && p.st === ST.IDLE && p.tm !== MEET.WITH && (assist || (b.tgt === p.id && b.lastTeam === p.team))) {
     const tx = p.x - b.x, ty = p.y - b.y, tl = Math.hypot(tx, ty) || 1;
     const incoming = (tx * b.vx + ty * b.vy) / (tl * bv) > 0.75;
     const across = Math.abs(dx * b.vx + dy * b.vy) / bv < 0.6;
@@ -2263,7 +2264,7 @@ function stateUpdate(w, p, s) {
         // after the touch: running with it, or the stick held, he keeps going
         // (towards where the stick points) – otherwise he settles
         const [sx, sy, sm] = stickOf(p);
-        if (sm > 0.3 && byPerson(p)) {
+        if (sm > 0.3) {
           const want = Math.max(Math.hypot(p.vx, p.vy), s.jog * sm), f = 1 - Math.exp(-DT * 6);
           p.vx += (sx * want - p.vx) * f; p.vy += (sy * want - p.vy) * f;
         } else {
@@ -2438,7 +2439,7 @@ function updatePlayer(w, p) {
   if (b.owner === p.id && b.held && m.spTaker !== p.id) {
     if (++p.hold > 360 && isFree(p)) startKick(w, p, KICK.PUNT, 0.75);
   } else if (b.owner !== p.id) p.hold = 0;
-  if (m.spTaker === p.id && byPerson(p) && m.cd > 480 && isFree(p)) beginOwnKick(w, p, packKick(KT.MATE, KH.GROUND), 0.5, false);
+  if (m.spTaker === p.id && m.cd > 480 && isFree(p)) beginOwnKick(w, p, packKick(KT.MATE, KH.GROUND), 0.5, false);
 
   p.x += p.vx * DT; p.y += p.vy * DT;
   if (p.z > 0 || p.vz !== 0) {
@@ -2745,7 +2746,7 @@ function punchClear(w, p, at, contest) {
   const two = -(inx * fx + iny * fy) > 0.6; // coming at him rather than across
   const [sx, sy, sm] = stickOf(p);
   let ux = two ? -inx : inx, uy = two ? -iny : iny;
-  if (byPerson(p) && sm > 0.3) { ux = sx; uy = sy; }
+  if (sm > 0.3) { ux = sx; uy = sy; }
   if (ux * dir < 0.35) ux = 0.35 * dir; // never back towards his own goal
   const a = Math.atan2(uy, ux) + gauss(w) * 0.2;
   let pw = two ? 13 + rnd(w) * 5 : 9 + rnd(w) * 4 + 0.25 * v;
