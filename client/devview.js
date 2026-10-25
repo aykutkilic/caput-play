@@ -9,7 +9,7 @@
 //     by its margin (green: nobody there in time); for you, the hole each shot
 //     key picks (its row: low / mid / top) with no stick – ringed, its flight
 //     drawn – and with the stick out to either side (the arrow as it points
-//     on screen); for an AI player, his best at each height
+//     on screen; ↺ ↻ bent left / right); for an AI player, his best at each height
 //   · the best pass lane to each team-mate, coloured by its odds
 //   · the ball's predicted path, the AI's roles and where it's heading
 import { pitchOf, teamDir, ballPath, pById, passEndSpeed, loftTime, shotAim, byPerson } from '../shared/sim.js';
@@ -138,7 +138,7 @@ export class DevView {
           const [X, Y] = P(h.rx, h.ry, 0);
           g.fillStyle = oddsCol(h.odds); g.beginPath(); g.arc(X, Y, 3.5 * dpr, 0, 7); g.fill();
           g.font = `600 ${Math.round(9 * dpr)}px system-ui, sans-serif`; g.textAlign = 'center';
-          g.fillText(`${d.p && byPerson(d.p) ? this.keyLabel(PASS_KEY[d.fan ? d.fan.kh : 0]) + ' ' : ''}${Math.round(h.odds * 100)}%${h.kc ? (h.kc > 0 ? ' ↶' : ' ↷') : ''}`, X, Y - 6 * dpr);
+          g.fillText(`${d.p && byPerson(d.p) ? this.keyLabel(PASS_KEY[d.fan ? d.fan.kh : 0]) + ' ' : ''}${Math.round(h.odds * 100)}%${h.kc ? (h.kc > 0 ? ' ↺' : ' ↻') : ''}`, X, Y - 6 * dpr);
         }
       }
       // the holes in the goal mouth, and the best at each height with its flight
@@ -172,7 +172,7 @@ export class DevView {
         if (!d.p || !byPerson(d.p)) continue;
         // which key (and stick) picks it
         const key = this.keyLabel(SHOT_KEY[h.kh]);
-        const label = hs.map((x) => (x.stick ? arrow(x.stick) : '') + key).join(' ') + (h.kc ? (h.kc > 0 ? ' ↶' : ' ↷') : '');
+        const label = hs.map((x) => (x.stick ? arrow(x.stick) : '') + key).join(' ') + (h.kc ? (h.kc > 0 ? ' ↺' : ' ↻') : '');
         g.lineWidth = 3 * dpr; g.strokeStyle = 'rgba(0,0,0,0.7)';
         g.strokeText(label, X, Y - 9 * dpr); g.fillStyle = free ? '#fff' : 'rgba(255,255,255,0.8)'; g.fillText(label, X, Y - 9 * dpr);
       }
@@ -190,10 +190,10 @@ export class DevView {
     if (d && d.p) {
       const top = d.best.reduce((a, h) => (!a || h.score > a.score ? h : a), null);
       lines.push(`#${d.p.id}${d.p.human ? '' : ' (AI)'}${d.fan ? ` · fan ${['ground', 'chest', 'head'][d.fan.kh]}: ${d.fan.rays.filter((x) => x.shut < 0).length}/${d.fan.rays.length} open` : ''}`);
-      if (top) lines.push(`best hole ${['low', 'mid', 'top'][top.kh]} y ${top.ty.toFixed(1)}${top.kc ? (top.kc > 0 ? ' curl ↶' : ' curl ↷') : ''} · margin ${top.m.toFixed(2)} s`);
+      if (top) lines.push(`best hole ${['low', 'mid', 'top'][top.kh]} y ${top.ty.toFixed(1)}${top.kc ? (top.kc > 0 ? ' bent ↺' : ' bent ↻') : ''} · margin ${top.m.toFixed(2)} s`);
       if (d.passes.length) lines.push('passes ' + d.passes.map((h) => `${Math.round(h.odds * 100)}%`).join(' '));
     }
-    if (d && d.p && byPerson(d.p) && d.holes.length) lines.push(`shot keys: ${this.keyLabel('goalG')} low · ${this.keyLabel('goalM')} mid · ${this.keyLabel('goalH')} top · stick to a side: that half (↶↷: bent)`);
+    if (d && d.p && byPerson(d.p) && d.holes.length) lines.push(`shot keys: ${this.keyLabel('goalG')} low · ${this.keyLabel('goalM')} mid · ${this.keyLabel('goalH')} top · stick to a side: that half (↺ bent left, ↻ bent right)`);
     lines.push('⌘/Ctrl+Shift+D ×3: leave');
     g.font = `600 ${Math.round(11 * dpr)}px ui-monospace, Menlo, monospace`; g.textAlign = 'left';
     const lh = 14 * dpr, x0 = 10 * dpr, y0 = cam.h - (lines.length * lh) - 120 * dpr;

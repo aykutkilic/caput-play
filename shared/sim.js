@@ -581,7 +581,7 @@ export function requestPass(w, p) {
 // ---------------------------------------------------------------- actions
 
 // target of a kick key -> kind of kick (the height travels separately)
-function kickKind(p, target) {
+export function kickKind(p, target) {
   switch (target) {
     case KT.MATE: return KICK.PASS;
     case KT.RUN: return KICK.THROUGH;

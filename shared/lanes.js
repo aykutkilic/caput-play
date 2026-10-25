@@ -8,7 +8,7 @@
 // wider the longer the ball takes to get past him, none where it's above him,
 // shifted where a curled ball swings. What's left open are the holes; how
 // much time is spare in one is its margin (> 0: it gets there first).
-import { stOf, inOwnBox, pitchOf, teamDir, PATH_H, groundSpeedFor, vzToReach, targetHeight, byPerson, stopChance, AIR_K, MU, CF, loftTime } from './sim.js';
+import { stOf, inOwnBox, pitchOf, teamDir, PATH_H, groundSpeedFor, vzToReach, targetHeight, byPerson, stopChance, AIR_K, MU, CF, loftTime, passEndSpeed } from './sim.js';
 import { BALL_R, G, ROLE, ST, KH, KICK } from './constants.js';
 
 // The foot's curl (curve kc -1..1, + bending left of its path; see launch):
@@ -269,4 +269,30 @@ export function laneFan(w, team, kh, kc, d, th0, spread = 2.4, n = 41) {
     rays.push({ th, shut });
   }
   return { fl, rays };
+}
+
+// The flight of the kick p has planned (kk, kp, kx, ky, kh, kv, kc – see
+// planKick) off his foot from where the ball is: the pace, height and bend
+// launch gives it, without the strike's error – for the aim line drawn while
+// a kick is charged. World points.
+export function kickFlight(w, p) {
+  const b = w.ball, s = stOf(p), kind = p.kk, pw = p.kp, kh = p.kh;
+  const d = Math.hypot(p.kx - b.x, p.ky - b.y) || 0.1, th = Math.atan2(p.ky - b.y, p.kx - b.x);
+  let vh, vz;
+  if (kind === KICK.SHOT || kind === KICK.FINESSE) {
+    vh = (12 + 13 * pw) * s.shot * (kh === KH.GROUND ? 1.35 : 1 + 0.1 * Math.min(1, Math.max(0, (pw - 0.2) / 0.3)));
+    if (kind === KICK.FINESSE) vh *= 0.85;
+    if (p.kc) vh *= curlPace(p.kc);
+    const tz = targetHeight(w, p, kind, kh) + (pw > 0.9 ? (pw - 0.9) * 3 : 0);
+    vz = kh === KH.GROUND ? 0.4 + 2.5 * Math.max(0, pw - 0.75) : Math.min(14, vzToReach(vh, b.z, d, tz));
+  } else if (kh === KH.GROUND) {
+    vh = Math.min(groundSpeedFor(d, p.kv > 0 ? p.kv : passEndSpeed(kind, d, pw)), 28) * (0.97 + 0.06 * s.shot);
+    if (p.kc) vh = Math.min(vh, 28 * curlPace(p.kc));
+    vz = 0;
+  } else {
+    const T = p.kv > 0 && p.kt >= 0 ? p.kv : loftTime(d, kh, pw), zt = targetHeight(w, p, kind, kh);
+    vh = d / T * 1.04; vz = (zt - b.z + 0.5 * G * T * T * 1.03) / T;
+  }
+  const spin = (p.kc || 0) * CURL_MAX;
+  return flight(vh, vz, spin, b.z, th + (spin ? curlAim(vh, vz, spin, d, b.z) : 0), d + 1.5).map((q) => ({ x: b.x + q.x, y: b.y + q.y, z: q.z }));
 }
