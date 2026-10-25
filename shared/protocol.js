@@ -18,6 +18,7 @@ const PLAYER = [
   ['tap', 'u8'], ['tapT', 'u8'], ['tapK', 'u8'], ['tapH', 'u8'], ['spr', 'u8'], ['bot', 'u8'], ['miss', 'u8'], ['tm', 'u8'], ['qk', 'u8'],
   ['qa', 'u8'], ['qt', 'u8'], ['qp', 'f32'], ['dph', 'f32'], ['hold', 'u16'],
   ['ai', 'u8'], ['aiT', 'u16'], ['aiX', 'f32'], ['aiY', 'f32'],
+  ['akK', 'u8'], ['akN', 'u8'], ['akA', 'u8'], ['akM', 'u8'], ['akR', 'u8'],
   ['ia', 'u8'], ['im', 'u8'], ['ib', 'u8'],
 ];
 const BALL = [

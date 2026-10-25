@@ -274,6 +274,7 @@ export function makePlayer(id, team, role, human, hgt = 180, bld = 50, ft = 0) {
     x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, face: 0,
     st: 0, stT: 0, stDur: 0, stA: 0, stB: 0, hit: 0,
     kk: 0, kp: 0, kx: 0, ky: 0, kt: -1, kv: 0, kh: 0, kq: 0, kc: 0, kf: 0,
+    akK: 0, akN: 0, akA: 0, akM: 0, akR: 0, // (an AI player's keys for a kick under way – ai.js driveKey)
     chg: 0, chgBtn: 0, stam: 1, pb: 0, kcd: 0, tcd: 0, tap: 0, tapT: 255, tapK: 0, tapH: 0, spr: 0,
     bot: 0, miss: 0, tm: 0, qk: 0,
     qa: 0, qt: 0, qp: 0, dph: 0, hold: 0,
@@ -716,32 +717,33 @@ export const footCurl = (w, p, ty, pw, bend) => {
 // from d out at power pw, with his truer foot – and so how far inside the
 // post he aims: 0.7 m close in, more from further out or flat out, so most
 // stay on target – never more than 30% of the way in)
-export const PERSON_SHOT_ERR = 0.7;
+export const SHOT_ERR = 0.7;
 function personPostIn(w, p, kind, pw, d, hw) {
-  const err = (0.035 + 0.0016 * d + 0.00011 * d * d + 0.06 * pw * pw) * (kind === KICK.FINESSE ? 0.6 : 0.85) * PERSON_SHOT_ERR;
+  const err = (0.035 + 0.0016 * d + 0.00011 * d * d + 0.06 * pw * pw) * (kind === KICK.FINESSE ? 0.6 : 0.85) * SHOT_ERR;
   return clamp(0.8 * err * d, POST_IN, 0.3 * hw);
 }
 
 export function shotAim(w, p, kind, kh, pw, sx, sy, sm) {
   const pit = pitchOf(w), dir = teamDir(w, p.team), b = w.ball, gx = dir * pit.L / 2;
   const hw = pit.goalW / 2;
-  const postIn = byPerson(p) ? personPostIn(w, p, kind, pw, Math.hypot(gx - b.x, b.y), hw) : POST_IN, half = hw - postIn;
+  const postIn = personPostIn(w, p, kind, pw, Math.hypot(gx - b.x, b.y), hw), half = hw - postIn;
   let aimY = (Math.abs(b.y) < 0.8 ? (p.id % 2 ? 1 : -1) : -Math.sign(b.y)) * pit.goalW * 0.2;
   let span = null;
   if (sm > 0.3) {
-    // The stick's side, as he faces the goal (the same in every camera –
-    // screen-relative it can point across the pitch at a slant): across to
-    // his left, the left part of the goal; to his right, the right part –
-    // the further across, the further out (to a little inside the post);
-    // mostly forward (or back), the middle. (His right is 90° anticlockwise
-    // of the way he attacks: world +y attacking +x.)
-    const lat = sy * dir; // + to his right
+    // The stick's side, as he faces the goal from where the ball is (the
+    // same in every camera – screen-relative it can point across the pitch
+    // at a slant): across to his left, the left part of the goal; to his
+    // right, the right part – the further across, the further out (to a
+    // little inside the post); at the goal (or back), the middle. (His right
+    // is 90° anticlockwise of the way he faces: world +y attacking +x.)
+    const fl = Math.hypot(gx - b.x, b.y) || 1, fx = (gx - b.x) / fl, fy = -b.y / fl;
+    const lat = -fy * sx + fx * sy; // + to his right
     if (Math.abs(lat) > 0.25) {
       aimY = dir * Math.sign(lat) * half * Math.min(1, Math.abs(lat) / 0.7);
       span = aimY > 0 ? [0, hw] : [-hw, 0];
     } else { aimY = 0; span = [-hw * 0.45, hw * 0.45]; }
   }
-  if (Math.abs(aimY) <= hw && byPerson(p)) {
+  if (Math.abs(aimY) <= hw) {
     const bend = kind === KICK.FINESSE ? 1 : 0.8;
     const hole = shotHole(w, p, kind, kh, pw, 0, span, (ty) => footCurl(w, p, ty, pw, bend), aimY, null, postIn);
     if (hole) return { tx: gx, ty: hole.ty, kc: hole.kc, kf: footFor(p, hole.kc), hole };
@@ -815,7 +817,7 @@ export function planKick(w, p, kind, power, tx, ty, tid = -1, kh) {
       }
     }
     if (fb) [lx, ly, vEnd] = fb;
-    if ((kind === KICK.PASS || kind === KICK.THROUGH) && byPerson(p)) {
+    if (kind === KICK.PASS || kind === KICK.THROUGH) {
       // The hole: at the height of the key pressed, the way round (or over)
       // the men in between that gets to him first – angled, or bent with the
       // inside of the foot (more curl costs pace) – as long as he can still
@@ -853,7 +855,7 @@ const shotMis = (p, face, bx, by) => Math.abs(angDiff(face, Math.atan2(p.ky - by
 function shotWay(p, face, bx, by) {
   if (p.kk !== KICK.SHOT && p.kk !== KICK.FINESSE) return KQ.PLAIN;
   const mis = shotMis(p, face, bx, by);
-  if (mis > HEEL_MIS && byPerson(p) && p.kp < HEEL_PW && Math.hypot(p.kx - bx, p.ky - by) <= HEEL_MAX) return KQ.HEEL;
+  if (mis > HEEL_MIS && p.kp < HEEL_PW && Math.hypot(p.kx - bx, p.ky - by) <= HEEL_MAX) return KQ.HEEL;
   return mis > TURN_OK ? KQ.TURN : KQ.PLAIN;
 }
 
@@ -1072,7 +1074,6 @@ export function diveReach(p, s, ball) {
 }
 
 // AI kick accuracy and keeper handling by the room's AI level (Casual / Normal / Pro)
-const AI_ERR = [1.6, 1, 0.75];
 const GK_HANDS = [0.85, 1, 1.08];
 
 // ---------------------------------------------------------------- blocking
@@ -1706,8 +1707,7 @@ function launch(w, p, tech) {
     const ca = Math.cos(a), sa = Math.sin(a), nux = ux * ca - uy * sa, nuy = ux * sa + uy * ca;
     ux = nux; uy = nuy;
   }
-  if (!p.human) err *= AI_ERR[w.m.ai] || 1;
-  else if (kind === KICK.SHOT || kind === KICK.FINESSE) err *= PERSON_SHOT_ERR; // (your own strikes: truer)
+  if (kind === KICK.SHOT || kind === KICK.FINESSE) err *= SHOT_ERR; // (the same for everyone: the AI's skill is how it presses the keys)
   if (err > 0) {
     const a = gauss(w) * err;
     const ca = Math.cos(a), sa = Math.sin(a);
@@ -1735,7 +1735,7 @@ function launch(w, p, tech) {
   b.sh = kind === KICK.SHOT || kind === KICK.FINESSE ? p.id : -1; // keeps the credit through saves / blocks
   invalidatePath(w);
   // arm aftertouch for human kickers, remembering the stick they aimed with
-  const at = byPerson(p) && kind !== KICK.THROW;
+  const at = kind !== KICK.THROW; // (anyone's – the AI keeps the stick light after a kick)
   b.atk = at ? p.id : -1; b.atT = at ? AT_TICKS : 0; b.atA = p.ia; b.atM = p.im; b.atOn = 0;
   // a throw-in: no goal straight from it (sh -2, with the thrower in atk)
   if (fromHands && w.m.spTaker === p.id && w.m.spType === SP.THROWIN) { b.sh = -2; b.atk = p.id; }
@@ -2379,7 +2379,7 @@ function updatePlayer(w, p) {
 
   if (m.phase === PHASE.KICKOFF) { p.vx = p.vy = 0; p.chgBtn = 0; p.qa = 0; return; }
 
-  if (byPerson(p)) handleButtons(w, p);
+  handleButtons(w, p); // (the AI presses the same keys – see ai.js driveKey)
 
   if (p.st !== ST.IDLE && p.st !== ST.STUMBLE) {
     stateUpdate(w, p, s);
@@ -3123,7 +3123,7 @@ function possession(w) {
   p.dph = 0;
   if (p.st === ST.CONTROL) { p.st = ST.IDLE; p.stT = 0; p.hit = 0; }
   w.events.push({ k: 'trap', x: b.x, y: b.y, id: p.id });
-  if (byPerson(p) && p.qa && !p.chgBtn) {
+  if (p.qa && !p.chgBtn) {
     if ((p.qa & KICK_MASK) === KT.SELF) beginLift(w, p, p.qp, (p.qa >> 3) & 3);
     else beginOwnKick(w, p, p.qa, p.qp, true);
   }

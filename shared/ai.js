@@ -7,10 +7,10 @@ import {
   rnd, teamDir, pitchOf, pById, stOf, startKick, beginSlide, beginDive, beginBlock1v1, blockKind, slotOf, slotIndex, shootingPractice,
   inOwnBox, clamp, encodeStick, ballPath, blockPlan, beginBlock, wantsBlock, loftTime,
   groundSpeedFor, passEndSpeed, MU, CF, byPerson, keeperBig, bigReach, exitPoint, keepInReach, beginKeepIn, footFor, footCurl, offsidePos,
-  tiltFor,
+  tiltFor, CHG_MAX,
 } from './sim.js';
 import { SHAPE, MARK } from './learned.js';
-import { shotHole, aiReact } from './lanes.js';
+import { shotHole, aiReact, POST_IN } from './lanes.js';
 
 const AI_CARRY = 1, AI_SUPPORT = 2, AI_PRESS = 3, AI_MARK = 4, AI_COVER = 5; // (a marker's man in aiY)
 const PATH_N = 25; // 2.5 s look-ahead in 0.1 s steps
@@ -32,9 +32,9 @@ const TAU = Math.PI * 2;
 // goal (lanes.sideCurl, as his foot allows – Casual not at all); aimErr:
 // how wayward his strikes are (as launch scales them).
 const LEVELS = [
-  { react: 18, spin: 0, misread: 0.8, think: 9, block: 0.04, sweep: 0.4, hold: 70, shuffle: false, angle: 0.9, smother: 1.1, read: false, spread: 99, spreadP: 0, misjudge: 0.12, claim: 6, bend: 0, aimErr: 1.6 },
-  { react: 10, spin: 0.25, misread: 0.35, think: 5, block: 0.12, sweep: 0.2, hold: 45, shuffle: false, angle: 1, smother: 0.85, read: true, spread: 4, spreadP: 0.75, misjudge: 0.05, claim: 8, bend: 0.6, aimErr: 1 },
-  { react: 6, spin: 0.45, misread: 0.12, think: 3, block: 0.3, sweep: 0.05, hold: 28, shuffle: true, angle: 1, smother: 0.7, read: true, spread: 2, spreadP: 0.9, misjudge: 0.015, claim: 10, bend: 0.85, aimErr: 0.75 },
+  { react: 18, spin: 0, misread: 0.8, think: 9, block: 0.04, sweep: 0.4, hold: 70, shuffle: false, angle: 0.9, smother: 1.1, read: false, spread: 99, spreadP: 0, misjudge: 0.12, claim: 6, bend: 0, aimErr: 1.6, aimNoise: 0.07, holdNoise: 4 },
+  { react: 10, spin: 0.25, misread: 0.35, think: 5, block: 0.12, sweep: 0.2, hold: 45, shuffle: false, angle: 1, smother: 0.85, read: true, spread: 4, spreadP: 0.75, misjudge: 0.05, claim: 8, bend: 0.6, aimErr: 1, aimNoise: 0.035, holdNoise: 2 },
+  { react: 6, spin: 0.45, misread: 0.12, think: 3, block: 0.3, sweep: 0.05, hold: 28, shuffle: true, angle: 1, smother: 0.7, read: true, spread: 2, spreadP: 0.9, misjudge: 0.015, claim: 10, bend: 0.85, aimErr: 0.75, aimNoise: 0.015, holdNoise: 1 },
 ];
 // a lagging human's stand-in plays at the middle level, whatever the room's AI
 let stand = null;
@@ -527,25 +527,79 @@ function slotTarget(w, p, attacking) {
   return [clamp(x, -hx + 1.5, hx - 1.5), clamp(y, -hy + 1.2, hy - 1.2)];
 }
 
-function aiKick(w, p, kind, power, tx, ty, tid = -1, kh, kc = 0) {
-  const b = w.ball, m = w.m;
-  if (b.held && b.owner === p.id) {
-    if (m.spTaker === p.id) {
-      kind = kind === KICK.LONG || (kh !== undefined && kh !== KH.GROUND) ? KICK.LONG : KICK.THROW;
-      if (kind === KICK.THROW) kh = KH.GROUND;
-    } else if ((kind === KICK.PASS || kind === KICK.THROUGH) && (kh === undefined || kh === KH.GROUND)) {
-      kind = KICK.THROW; kh = KH.GROUND; // rolled out
-    } else if (kind !== KICK.PUNT && Math.hypot(tx - b.x, ty - b.y) <= 50) {
-      kind = KICK.THROW; kh = KH.MID; // thrown – a drop kick beyond throwing range (see startKick)
-    } else kind = KICK.PUNT;
+// A kick, as a player plays it (the AI presses the same keys a person does):
+// the stick pointed at where it's to go – the team-mate (the game's own
+// targeting picks him and leads him), or the spot in the goal (its holes) –
+// the key for it (team-mate / run / goal, the row for the height; R2 for a
+// finesse) held for as long as the power needs, then let go. From the
+// keeper's hands: the goal key punts it, the team-mate key rolls it (ground)
+// or throws it. How true the stick is and how well the hold is timed is his
+// level's skill (aimNoise, holdNoise). See driveKey for the pressing.
+function aiKick(w, p, kind, power, tx, ty, tid = -1, kh) {
+  const b = w.ball, m = w.m, lv = lvlOf(w);
+  const held = b.held && b.owner === p.id;
+  let target, r2 = false;
+  if (held) {
+    if (m.spTaker === p.id) { target = KT.MATE; if (kind !== KICK.LONG && (kh === undefined || kh === KH.GROUND)) kh = KH.GROUND; else if (kh === KH.GROUND || kh === undefined) kh = KH.MID; }
+    else if (kind === KICK.PUNT || ((kind === KICK.LONG || kind === KICK.CLEAR) && Math.hypot(tx - b.x, ty - b.y) > 50)) { target = KT.GOAL; kh = KH.HIGH; }
+    else { target = KT.MATE; if (kh === undefined) kh = KH.GROUND; }
+  } else if (kind === KICK.SHOT || kind === KICK.FINESSE) { target = KT.GOAL; r2 = kind === KICK.FINESSE; }
+  else if (kind === KICK.THROUGH) target = KT.RUN;
+  else if (kind === KICK.LONG || kind === KICK.CLEAR || kind === KICK.PUNT) { target = KT.GOAL; kh = KH.HIGH; power = Math.max(power, 0.85); } // (a hoof upfield: the shot key)
+  else if (kind === KICK.SELF) target = KT.SELF;
+  else target = KT.MATE;
+  if (kh === undefined) kh = target === KT.GOAL ? KH.MID : KH.GROUND;
+  // where the stick points: at the man (where he is – the pass is led for
+  // his run), at the spot – or for a shot, across to the side of the goal
+  // it's to go in (as a player aims one: the further across, the further out)
+  const r = tid >= 0 && tid !== p.id ? pById(w, tid) : null;
+  let ax = (r ? r.x : tx) - b.x, ay = (r ? r.y : ty) - b.y;
+  if (target === KT.GOAL && !held) {
+    const pit = pitchOf(w), dir = teamDir(w, p.team), half = pit.goalW / 2 - POST_IN, gx = dir * pit.L / 2;
+    const lat = Math.abs(ty) < 0.35 * half ? 0 : Math.sign(ty * dir) * clamp(0.7 * Math.abs(ty) / half, 0.3, 1);
+    // (across the way he faces the goal from the ball: his right is 90° anticlockwise of it)
+    const fl = Math.hypot(gx - b.x, b.y) || 1, fx = (gx - b.x) / fl, fy = -b.y / fl, f = Math.sqrt(1 - lat * lat);
+    ax = fx * f - fy * lat; ay = fy * f + fx * lat;
   }
-  startKick(w, p, kind, power, false, tx, ty, tid, kh);
-  if (!b.held) {
-    p.kc = kc; p.kf = footFor(p, kc); // (bent with his foot – see footFor)
-    if (p.kf === FOOT.OUTSIDE && p.st === ST.KICK) { const d = Math.min(2, p.stA - 1); p.stA -= d; p.stDur -= d; } // (the outside: away sooner, as startKick)
-  }
+  const ang = Math.atan2(ay, ax) + skillNoise(w) * lv.aimNoise;
+  const [a] = encodeStick(Math.cos(ang), Math.sin(ang), 1);
+  // the hold: the gauge fills 1 a tick (a shot half as fast again) – with
+  // the ball at his feet only as long as he has before a man's on him
+  const fill = target === KT.GOAL ? 1.5 : 1;
+  let room = Math.ceil(CHG_MAX / fill);
+  if (b.owner === p.id && !held) { let t = 9; for (const o of w.players) if (o.team !== p.team) t = Math.min(t, reachTime(o, b.x, b.y, t)); room = Math.min(room, Math.max(4, Math.floor(t * 60 * 0.75))); }
+  const hold = clamp(Math.round(power * CHG_MAX / fill + skillNoise(w) * lv.holdNoise), 1, room);
+  p.akK = packKick(target, kh); p.akN = hold; p.akA = a; p.akR = r2 ? 1 : 0;
+  // (the stick held on it as he charges: he runs that way at the pace he's
+  // going – a man running in on goal keeps running, bending his run to the
+  // aim, as a player does; turned back the other way, a walk)
+  const v = Math.hypot(p.vx, p.vy), al = v > 1.5 ? (p.vx * Math.cos(ang) + p.vy * Math.sin(ang)) / v : 0;
+  p.akM = al > -0.2 ? Math.max(6, Math.round(tiltFor(p, v) * 15)) : 6;
+  driveKey(w, p);
 }
+// (a deterministic, roughly normal number, mean 0, sd ~1)
+function skillNoise(w) { return (rnd(w) + rnd(w) + rnd(w) - 1.5) * 2; }
 
+// Pressing the keys of a kick under way (p.akK: the key; akN: ticks still to
+// hold it; akA, akM: the stick; akR: R2), then let go – the game fires the
+// kick from the gauge. (After it the stick stays barely tilted while the
+// aftertouch a player has could bend it – see aiThink.) Lost the ball (or
+// the one he was waiting for went elsewhere): he lets go. Returns whether
+// the keys are taken this tick.
+function driveKey(w, p) {
+  const b = w.ball, m = w.m;
+  if (p.akK) {
+    const owner = b.owner >= 0 ? pById(w, b.owner) : null;
+    const playing = m.phase === PHASE.PLAY || m.phase === PHASE.WARMUP || (m.phase === PHASE.SETPIECE && m.spTaker === p.id);
+    if ((owner && owner !== p) || !playing) { p.akK = 0; p.akN = 0; return false; }
+    p.ia = p.akA; p.im = p.akM;
+    if (p.akN > 0) { p.ib = p.akK | (p.akR ? BTN.R2 : 0); p.akN--; return true; }
+    // let go (a tick with the key up – R2 still on for a finesse): the gauge fires it
+    p.ib = p.akR ? BTN.R2 : 0; p.akK = 0;
+    return true;
+  }
+  return false;
+}
 // Where and how to shoot: away from the keeper, low / mid / high, and a chip
 // when he has come off his line.
 function aimShot(w, p) {
@@ -840,15 +894,24 @@ function defendThink(w, p, c, owner) {
         else moveTo(p, go.x, go.y, go.t > 0.5 ? 2 : 99, 0.05);
       }
       const d = Math.hypot(b.x - p.x, b.y - p.y);
-      if (!p.qa && d < 7) {
+      if (!p.qa && !p.akK && d < 7) {
+        // first time, as a player does it: the key pressed as it comes (held
+        // for the power, let go – it's struck as it arrives)
         const gx = dir * pit.L / 2, dGoal = Math.hypot(gx - p.x, p.y);
         const airborne = b.z > 0.5 || b.vz > 1;
         // a pass meant for him is controlled; a first-time finish only off a
-        // ball along the ground, or anything right in front of goal
+        // ball along the ground, or anything right in front of goal – into
+        // the side the keeper isn't on
         const meant = b.tgt === p.id && b.lastTeam === p.team;
-        if (dGoal < 16 && (gx - p.x) * dir > 1 && (!meant || !airborne || dGoal < 9)) { p.qa = packKick(KT.GOAL, rnd(w) < 0.5 ? KH.GROUND : KH.MID); p.qp = 0.5 + rnd(w) * 0.3; p.qt = 30; }
-        else if (!meant && airborne && inOwnBox(w, p.team, p.x, p.y, 6)) { p.qa = packKick(KT.GOAL, KH.HIGH); p.qp = 0.85; p.qt = 30; } // clear it
-        else if (!meant && airborne && b.z > 1.4 && rnd(w) < 0.05) { p.qa = packKick(KT.MATE, KH.MID); p.qp = 0.5; p.qt = 30; }
+        if (dGoal < 16 && (gx - p.x) * dir > 1 && (!meant || !airborne || dGoal < 9)) {
+          const gk = w.players.find((q) => q.team !== p.team && q.role === ROLE.GK);
+          aiKick(w, p, KICK.SHOT, 0.5 + rnd(w) * 0.3, gx, (gk && gk.y > 0 ? -1 : 1) * pit.goalW * 0.3, -1, rnd(w) < 0.5 ? KH.GROUND : KH.MID);
+        } else if (!meant && airborne && inOwnBox(w, p.team, p.x, p.y, 6)) aiKick(w, p, KICK.SHOT, 0.85, gx, 0, -1, KH.HIGH); // clear it (upfield)
+        else if (!meant && airborne && b.z > 1.4 && rnd(w) < 0.05) {
+          let to = null;
+          for (const q of w.players) if (q.team === p.team && q !== p && q.role !== ROLE.GK && Math.hypot(q.x - p.x, q.y - p.y) < 25 && (!to || q.x * dir > to.x * dir)) to = q;
+          if (to) aiKick(w, p, KICK.PASS, 0.5, to.x, to.y, to.id, KH.MID);
+        }
       }
       return;
     }
@@ -1043,8 +1106,11 @@ function gkThink(w, p, c) {
     const d = Math.hypot(q.x - b.x, q.y - b.y), up = d > 30 || rnd(w) < 0.3;
     const kh = up ? (d > 30 ? KH.HIGH : KH.MID) : KH.GROUND;
     const [tx, ty] = leadTo(w, p, q, kh, up ? 0.6 : 0.5);
-    if (up) aiKick(w, p, KICK.LONG, 0.6, tx, ty, q.id, kh);
-    else aiKick(w, p, KICK.PASS, 0.5, tx, ty, q.id, KH.GROUND);
+    // (the practice service, not a football move – no key passes to the
+    // other side – so the one kick the game plays for him: rolled out, thrown,
+    // or a drop kick beyond throwing range – see startKick)
+    if (up) startKick(w, p, b.held && Math.hypot(tx - b.x, ty - b.y) > 50 ? KICK.PUNT : b.held ? KICK.THROW : KICK.LONG, 0.6, false, tx, ty, q.id, b.held ? KH.MID : kh);
+    else startKick(w, p, b.held ? KICK.THROW : KICK.PASS, 0.5, false, tx, ty, q.id, KH.GROUND);
     return;
   }
   if (b.owner === p.id) {
@@ -1374,6 +1440,16 @@ function reacting(w, p) {
 
 export function aiThink(w, p) {
   stand = p.human ? LEVELS[1] : null;
+  // a kick under way: its keys (see driveKey)
+  if ((p.st === ST.IDLE || p.st === ST.STUMBLE) && driveKey(w, p)) return;
+  think(w, p);
+  // just kicked it: the stick barely tilted while aftertouch could take it
+  // (as a player must, or he bends his own kick)
+  const b = w.ball;
+  if (b.atk === p.id && b.atT > 0 && p.im > 4) p.im = 4;
+}
+
+function think(w, p) {
   if ((p.st === ST.IDLE || p.st === ST.STUMBLE) && reacting(w, p)) { p.ib &= BTN.R2; return; }
   p.ib = 0; p.im = 0;
   const m = w.m;
