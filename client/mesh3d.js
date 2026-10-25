@@ -233,7 +233,7 @@ export class Scene3D {
   // The advertising boards round the pitch; nearOpacity: how see-through the
   // ones between the camera and the pitch are (fn: side index -> near?)
   boards(pit, isNear, colors) {
-    const key = `${pit.L}|${pit.W}`;
+    const key = `${pit.L}|${pit.W}|${colors.join()}`;
     if (key !== this.boardKey) {
       this.boardKey = key;
       for (const m of this.boardMeshes) this.scene.remove(m.grp);

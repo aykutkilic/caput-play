@@ -3,13 +3,13 @@ import { HostSession, PeerNet } from './p2p.js';
 import { CLOUD_URL } from './cloud.js';
 import { NetGame } from './netgame.js';
 import { Input, DEFAULT_KEYS, ACTION_LABELS, keyName, isTyping } from './input.js';
-import { Renderer, CAMERAS, lookFor, drawAvatarPreview, TEAM_COLORS } from './render.js';
+import { Renderer, CAMERAS, lookFor, drawAvatarPreview, TEAM_COLORS, setKits } from './render.js';
 import { Sfx, CHANNELS } from './audio.js';
 import { TouchControls, isTouchDevice, lockZoom } from './touch.js';
 import { Replay } from './replay.js';
 import { initPwa } from './pwa.js';
 import { encodeStick, pById, wantsBlock, inOwnBox, pitchOf, keeperHands, shootingPractice, teamDir } from '../shared/sim.js';
-import { PHASE, SP, SP_NAME, ROLE, TEAM_NAMES, TICK_RATE, QUICK_CHAT, KICK_MASK, GOAL_SIZE_DEFAULT } from '../shared/constants.js';
+import { PHASE, SP, SP_NAME, ROLE, TEAM_NAMES, TICK_RATE, QUICK_CHAT, KICK_MASK, GOAL_SIZE_DEFAULT, KIT_NAMES, KITS_DEFAULT } from '../shared/constants.js';
 import { ratings, stats } from '../shared/physique.js';
 
 const $ = (id) => document.getElementById(id);
@@ -308,6 +308,7 @@ function onRoom(msg) {
   state.names.clear(); state.avatars.clear();
   for (const m of msg.members) if (m.playerId >= 0) { state.names.set(m.playerId, m.name); state.avatars.set(m.playerId, m.avatar); }
   for (const a of msg.ai) { state.names.set(a.playerId, a.name); state.avatars.set(a.playerId, a.avatar); }
+  setKits(msg.settings && msg.settings.kits || KITS_DEFAULT);
   state.lookCache.clear();
   renderPanel();
 }
@@ -390,7 +391,9 @@ function renderPanel() {
   $('goalSel').value = String(r.settings.goals ?? GOAL_SIZE_DEFAULT);
   $('aiSel').value = String(r.settings.ai ?? 1);
   $('aiSexSel').value = String(r.settings.aiSex ?? 0);
-  $('matchLen').disabled = $('pitchSel').disabled = $('aiSel').disabled = $('aiSexSel').disabled = !isHost;
+  const kits = r.settings.kits || KITS_DEFAULT;
+  $('kitA').value = String(kits[0]); $('kitB').value = String(kits[1]);
+  $('matchLen').disabled = $('pitchSel').disabled = $('aiSel').disabled = $('aiSexSel').disabled = $('kitA').disabled = $('kitB').disabled = !isHost;
   // the goals can't be resized during a match
   $('goalSel').disabled = !isHost || !!(game.world && game.world.m.live);
   $('startBtn').disabled = !isHost;
@@ -413,8 +416,18 @@ $('spectate').onclick = () => send({ t: 'team', team: -1, role: 0 });
 $('matchLen').onchange = () => send({
   t: 'settings', matchLen: Number($('matchLen').value), pitch: $('pitchSel').value,
   goals: Number($('goalSel').value), ai: Number($('aiSel').value), aiSex: Number($('aiSexSel').value),
+  kits: [Number($('kitA').value), Number($('kitB').value)],
 });
 $('pitchSel').onchange = $('goalSel').onchange = $('aiSel').onchange = $('aiSexSel').onchange = $('matchLen').onchange;
+// team kits: picking the other team's colour swaps them over
+for (const id of ['kitA', 'kitB']) $(id).innerHTML = KIT_NAMES.map((n, i) => `<option value="${i}">${n}</option>`).join('');
+const kitChange = (mine, other) => () => {
+  const was = state.room && state.room.settings.kits ? state.room.settings.kits : KITS_DEFAULT;
+  if ($(mine).value === $(other).value) $(other).value = String(was[mine === 'kitA' ? 0 : 1]);
+  $('matchLen').onchange();
+};
+$('kitA').onchange = kitChange('kitA', 'kitB');
+$('kitB').onchange = kitChange('kitB', 'kitA');
 $('startBtn').onclick = () => { send({ t: state.room && state.room.live ? 'stop' : 'start' }); $('startBtn').blur(); };
 $('leaveBtn').onclick = () => {
   if (state.host) state.host.goOffline();

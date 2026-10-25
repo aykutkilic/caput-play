@@ -20,10 +20,47 @@ const KICK_LABEL = ['', 'PASS', 'RUN', 'SHOT', 'SELF'];
 const HEIGHT_LABEL = ['feet', 'chest', 'head'];
 const SHOT_HEIGHT = ['low', 'mid', 'top'];
 
-export const TEAM_COLORS = [
-  { shirt: '#e5483b', shorts: '#f4f1ea', socks: '#e5483b', trim: '#ffffff', gk: '#f2c230', gkShorts: '#2b2b2b', gkTrim: '#1e1e1e', ui: '#ff6a5c' },
-  { shirt: '#2f6be0', shorts: '#14264f', socks: '#2f6be0', trim: '#d6e4ff', gk: '#3fd08f', gkShorts: '#1c2c24', gkTrim: '#0f2a1d', ui: '#5b91ff' },
+// The kits (KIT_NAMES order); ui: the team's colour in the HUD, light enough
+// to read on the dark panels
+const KITS = [
+  { shirt: '#e5483b', shorts: '#f4f1ea', socks: '#e5483b', trim: '#ffffff', ui: '#ff6a5c' },
+  { shirt: '#2f6be0', shorts: '#14264f', socks: '#2f6be0', trim: '#d6e4ff', ui: '#5b91ff' },
+  { shirt: '#1c2d66', shorts: '#f4f1ea', socks: '#1c2d66', trim: '#f2c230', ui: '#7d9cf0' },
+  { shirt: '#f4c824', shorts: '#1c2d66', socks: '#f4c824', trim: '#1e1e1e', ui: '#ffd84a' },
+  { shirt: '#f3f3ef', shorts: '#f3f3ef', socks: '#f3f3ef', trim: '#22262e', ui: '#ffffff' },
+  { shirt: '#1f2024', shorts: '#1f2024', socks: '#1f2024', trim: '#e6e6e6', ui: '#c9cdd4' },
 ];
+// keepers: the first of these that clashes with neither side (nor the other keeper)
+const GK_KITS = [
+  { gk: '#f2c230', gkShorts: '#2b2b2b', gkTrim: '#1e1e1e' },
+  { gk: '#3fd08f', gkShorts: '#1c2c24', gkTrim: '#0f2a1d' },
+  { gk: '#ff8a1f', gkShorts: '#2b2b2b', gkTrim: '#1e1e1e' },
+  { gk: '#b05cff', gkShorts: '#22182e', gkTrim: '#140d1d' },
+  { gk: '#ff5fa2', gkShorts: '#2b2b2b', gkTrim: '#1e1e1e' },
+];
+const rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const clash = (a, b) => Math.hypot(...rgb(a).map((v, i) => v - rgb(b)[i])) < 100;
+export const TEAM_COLORS = [{}, {}];
+let kitsNow = '';
+// Dress the two teams (room setting, KIT_NAMES indices): everything reads
+// TEAM_COLORS, so it's changed in place.
+export function setKits(kits = [0, 1]) {
+  const k = kits.map((v) => KITS[v] ? v : 0), key = k.join();
+  if (key === kitsNow) return;
+  kitsNow = key;
+  const used = [KITS[k[0]].shirt, KITS[k[1]].shirt];
+  for (const team of [0, 1]) {
+    const order = team ? [1, 0, 2, 3, 4] : [0, 1, 2, 3, 4];
+    const gk = GK_KITS[order.find((i) => !used.some((c) => clash(c, GK_KITS[i].gk))) ?? order[0]];
+    used.push(gk.gk);
+    Object.assign(TEAM_COLORS[team], KITS[k[team]], gk);
+  }
+  if (typeof document !== 'undefined') {
+    document.documentElement.style.setProperty('--a', TEAM_COLORS[0].ui);
+    document.documentElement.style.setProperty('--b', TEAM_COLORS[1].ui);
+  }
+}
+setKits();
 
 export const CAMERAS = {
   iso: { name: 'Isometric', yaw: 45, elev: 33 },

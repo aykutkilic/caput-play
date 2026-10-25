@@ -25,7 +25,7 @@
 import {
   createWorld, addPlayer, removePlayer, updatePlayerSpec, step, startMatch, stopMatch, startKickoff, pById, GOAL_TICKS_LIVE,
 } from './sim.js';
-import { SNAP_EVERY, ROLE, PHASE, autoPitch, MAX_PLAYERS, TEAM_NAMES, QUICK_CHAT, GOAL_SIZE_DEFAULT } from './constants.js';
+import { SNAP_EVERY, ROLE, PHASE, autoPitch, MAX_PLAYERS, TEAM_NAMES, QUICK_CHAT, GOAL_SIZE_DEFAULT, KIT_NAMES, KITS_DEFAULT } from './constants.js';
 import {
   worldBytes, encodeFuture, fullSnapshot, deltaSnapshot, patchSnapshotHeader, readWorld, decodeInputs,
 } from './protocol.js';
@@ -80,7 +80,7 @@ export class Room {
     this.members = new Map(); // clientId -> member
     this.ai = new Map();      // playerId -> ai spec
     this.hostId = null;
-    this.settings = { matchLen: 240, pitch: 'auto', goals: GOAL_SIZE_DEFAULT, ai: 1, aiSex: 0 };
+    this.settings = { matchLen: 240, pitch: 'auto', goals: GOAL_SIZE_DEFAULT, ai: 1, aiSex: 0, kits: [...KITS_DEFAULT] };
     this.world = createWorld(1, (Math.random() * 2 ** 31) | 0);
     this.world.auth = true; // inputs that don't arrive are missing here (see BOT_AFTER)
     this.world.m.matchLen = this.settings.matchLen;
@@ -226,6 +226,10 @@ export class Room {
     if (['auto', '0', '1', '2', 0, 1, 2].includes(s.pitch)) this.settings.pitch = String(s.pitch);
     if ([0, 1, 2].includes(Number(s.goals))) this.settings.goals = Number(s.goals);
     if ([0, 1, 2].includes(Number(s.ai))) this.settings.ai = Number(s.ai);
+    if (Array.isArray(s.kits) && s.kits.length === 2) {
+      const k = s.kits.map(Number);
+      if (k.every((v) => Number.isInteger(v) && v >= 0 && v < KIT_NAMES.length) && k[0] !== k[1]) this.settings.kits = k;
+    }
     if ([0, 1, 2].includes(Number(s.aiSex)) && Number(s.aiSex) !== this.settings.aiSex) {
       // the AI players on the pitch change to match (their bodies too)
       this.settings.aiSex = Number(s.aiSex);
