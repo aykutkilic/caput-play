@@ -9,7 +9,7 @@ import {
   groundSpeedFor, passEndSpeed, MU, CF, byPerson, keeperBig, bigReach, exitPoint, keepInReach, beginKeepIn,
 } from './sim.js';
 import { SHAPE, MARK } from './learned.js';
-import { shotHole } from './lanes.js';
+import { shotHole, sideCurl } from './lanes.js';
 
 const AI_CARRY = 1, AI_SUPPORT = 2, AI_PRESS = 3, AI_MARK = 4; // (a marker's man in aiY)
 const PATH_N = 25; // 2.5 s look-ahead in 0.1 s steps
@@ -27,12 +27,13 @@ const TAU = Math.PI * 2;
 // spreads himself across it (a reflex, not a read reaction), spreadP: how often
 // that comes off; misjudge: noise
 // in the AI's shoot / pass / keep decisions; claim: how far off his line (m)
-// he comes for a cross; curl: how much bend his shots use (lanes); aimErr:
+// he comes for a cross; bend: how much he bends a shot into a side of the
+// goal (lanes.sideCurl – Casual not at all); aimErr:
 // how wayward his strikes are (as launch scales them).
 const LEVELS = [
-  { react: 18, spin: 0, misread: 0.8, think: 9, block: 0.04, sweep: 0.4, hold: 70, shuffle: false, angle: 0.9, smother: 1.1, read: false, spread: 99, spreadP: 0, misjudge: 0.12, claim: 6, curl: [0], aimErr: 1.6 },
-  { react: 10, spin: 0.25, misread: 0.35, think: 5, block: 0.12, sweep: 0.2, hold: 45, shuffle: false, angle: 1, smother: 0.85, read: true, spread: 4, spreadP: 0.75, misjudge: 0.05, claim: 8, curl: [0, -0.5, 0.5], aimErr: 1 },
-  { react: 6, spin: 0.45, misread: 0.12, think: 3, block: 0.3, sweep: 0.05, hold: 28, shuffle: true, angle: 1, smother: 0.7, read: true, spread: 2, spreadP: 0.9, misjudge: 0.015, claim: 10, curl: [0, -0.5, 0.5, -1, 1], aimErr: 0.75 },
+  { react: 18, spin: 0, misread: 0.8, think: 9, block: 0.04, sweep: 0.4, hold: 70, shuffle: false, angle: 0.9, smother: 1.1, read: false, spread: 99, spreadP: 0, misjudge: 0.12, claim: 6, bend: 0, aimErr: 1.6 },
+  { react: 10, spin: 0.25, misread: 0.35, think: 5, block: 0.12, sweep: 0.2, hold: 45, shuffle: false, angle: 1, smother: 0.85, read: true, spread: 4, spreadP: 0.75, misjudge: 0.05, claim: 8, bend: 0.6, aimErr: 1 },
+  { react: 6, spin: 0.45, misread: 0.12, think: 3, block: 0.3, sweep: 0.05, hold: 28, shuffle: true, angle: 1, smother: 0.7, read: true, spread: 2, spreadP: 0.9, misjudge: 0.015, claim: 10, bend: 0.85, aimErr: 0.75 },
 ];
 // a lagging human's stand-in plays at the middle level, whatever the room's AI
 let stand = null;
@@ -524,7 +525,7 @@ function aimShot(w, p) {
   const lv = lvlOf(w), err = (0.035 + 0.0016 * dGoal + 0.00011 * dGoal * dGoal + 0.06 * pw * pw) * lv.aimErr;
   let best = null;
   for (const kh of [KH.GROUND, KH.MID, KH.HIGH]) {
-    const h = shotHole(w, p, KICK.SHOT, kh, pw, err, null, lv.curl);
+    const h = shotHole(w, p, KICK.SHOT, kh, pw, err, null, (ty) => sideCurl(w, p, ty, pw, lv.bend));
     if (h && (!best || h.score > best.score)) best = { ...h, kh };
   }
   if (best) return { kind: KICK.SHOT, kh: best.kh, pw, aimY: best.ty, kc: best.kc };

@@ -12,7 +12,7 @@ import {
 } from './constants.js';
 import { stats } from './physique.js';
 import { aiThink } from './ai.js';
-import { CURL_MAX, curlPace, curlAim, passHole, shotHole } from './lanes.js';
+import { CURL_MAX, curlPace, curlAim, passHole, shotHole, sideCurl, POST_IN } from './lanes.js';
 
 export const CHG_MAX = 40;          // ticks to fill the power gauge
 // Pressing the same kick key again right after letting go, while the ball is
@@ -28,7 +28,7 @@ export const GOAL_TICKS_LIVE = 520;  // goal pause in a match: celebration + rep
 // nothing, so PES-style aiming and aftertouch don't fight each other.
 export const AT_TICKS = 33;          // 0.55 s window
 const AT_CURVE = 1.7;                // spin gained per second at full lateral stick
-const AT_SPIN_MAX = 0.65;            // rad/s turn rate of the ball's path
+const AT_SPIN_MAX = 0.9;             // rad/s turn rate of the ball's path (as much as a struck curl: see lanes.CURL_MAX)
 const AT_LIFT = 19;                  // m/s^2 upward while pulling back
 const AT_DIP = 10;                   // m/s^2 downward while pushing forward
 export const MU = 1.0, CF = 0.22;   // rolling resistance: dv/dt = -(MU + CF v)
@@ -633,7 +633,7 @@ export function vzToReach(vh, z0, d, zt) {
 // Height the ball should have when it reaches its target.
 export function targetHeight(w, p, kind, kh) {
   if (kind === KICK.SHOT || kind === KICK.FINESSE) {
-    return kh === KH.HIGH ? pitchOf(w).goalH - 0.15 : kh === KH.MID ? 1.15 : 0.22; // high: just under the bar
+    return kh === KH.HIGH ? pitchOf(w).goalH - 0.4 : kh === KH.MID ? 1.15 : 0.22; // high: a little under the bar
   }
   const r = p.kt >= 0 ? pById(w, p.kt) : null;
   const head = r ? stOf(r).H * 0.93 : 1.75;
@@ -655,14 +655,17 @@ function runAhead(q, t) {
 // Where a person's shot goes for a stick (world direction sx, sy, magnitude
 // sm), the key's height kh and power pw: aimed where the stick points – the
 // spot on the goal line along it, up to a metre wide of a post (to bend it
-// back in with aftertouch: it goes there); pointing away from goal, the corner
-// on that side. Then the holes: grouped by where the stick points – towards
-// the goal, the part of it round that spot; out to a side, that half; none,
-// anywhere – the best one there decides where it goes and how it's bent (R2:
-// wrapped round more, for pace). (Developer mode shows them with it.)
+// back in with aftertouch: it goes there); pointing away from goal, that side
+// of it. Then the holes: grouped by where the stick points – towards the
+// goal, the part of it round that spot; out to a side, that half; none,
+// anywhere – the best one there decides where it goes, a little inside the
+// frame. Where it goes decides the bend (sideCurl): into the left part, the
+// inside of the left foot bends it right, back in; into the right, the other
+// way; the longer it's held the more (R2: wrapped round more). (Developer
+// mode and the aim line show them with it.)
 export function shotAim(w, p, kind, kh, pw, sx, sy, sm) {
   const pit = pitchOf(w), dir = teamDir(w, p.team), b = w.ball, gx = dir * pit.L / 2;
-  const hw = pit.goalW / 2, half = hw - 0.35, wide = hw + 1.0;
+  const hw = pit.goalW / 2, half = hw - POST_IN, wide = hw + 1.0;
   let aimY = (Math.abs(b.y) < 0.8 ? (p.id % 2 ? 1 : -1) : -Math.sign(b.y)) * pit.goalW * 0.2;
   let span = null;
   if (sm > 0.3) {
@@ -672,7 +675,8 @@ export function shotAim(w, p, kind, kh, pw, sx, sy, sm) {
     } else if (Math.abs(sy) > 0.2) { aimY = Math.sign(sy) * half; span = sy > 0 ? [0, hw] : [-hw, 0]; }
   }
   if (Math.abs(aimY) <= hw && byPerson(p)) {
-    const hole = shotHole(w, p, kind, kh, pw, 0, span, kind === KICK.FINESSE ? [0.5, -0.5, 1, -1, 0] : [0, -0.5, 0.5], aimY);
+    const bend = kind === KICK.FINESSE ? 1 : 0.8;
+    const hole = shotHole(w, p, kind, kh, pw, 0, span, (ty) => sideCurl(w, p, ty, pw, bend), aimY);
     if (hole) return { tx: gx, ty: hole.ty, kc: hole.kc, hole };
   }
   return { tx: gx, ty: aimY, kc: 0, hole: null };

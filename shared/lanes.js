@@ -11,11 +11,28 @@
 import { stOf, inOwnBox, pitchOf, teamDir, PATH_H, groundSpeedFor, vzToReach, targetHeight, byPerson, stopChance, AIR_K, MU, CF, loftTime, passEndSpeed } from './sim.js';
 import { BALL_R, G, ROLE, ST, KH, KICK } from './constants.js';
 
-// The foot's curl (curve kc -1..1, + bending left of its path; see launch):
-// spin up to CURL_MAX (rad/s the path turns), and curl costs pace – the inside
-// of the foot gives a medium curve for little, more wraps it round at more.
-export const CURL_MAX = 0.55, CURL_COST = 0.3;
+// The foot's curl (curve kc -1..1): spin up to CURL_MAX (rad/s the path
+// turns; + anticlockwise in the sim's coordinates – the pitch is drawn
+// mirrored, so on screen + bends it right, clockwise: the inside of the left
+// foot, or the outside of the right; - bends it left, the inside of the right
+// foot). Curl costs pace – the inside of the foot gives a medium curve for
+// little, more wraps it round at more.
+export const CURL_MAX = 0.9, CURL_COST = 0.3;
 export const curlPace = (kc) => 1 - CURL_COST * kc * kc;
+
+// The bend a shot gets for where it goes (ty, across the goal): into the left
+// part of the goal (as you see it) it's struck with the inside of the left
+// foot and bends right – out wide of it and back in; into the right part, the
+// other way; through the middle, the laces, straight. The harder the swing –
+// the longer the kick's held (pw) – the more it spins (and the quicker it
+// goes); bend: how much the technique gives (R2 wraps it round more).
+export function sideCurl(w, p, ty, pw, bend) {
+  const hw = pitchOf(w).goalW / 2;
+  if (!bend || Math.abs(ty) < 0.25 * hw) return 0;
+  return -Math.sign(ty * teamDir(w, p.team)) * bend * Math.min(1, Math.max(0, (pw - 0.1) / 0.9));
+}
+// (the goal mouth's targets stay a little inside the posts)
+export const POST_IN = 0.7;
 
 // A kick's flight from the origin along angle a – the ball's own physics, as
 // ballPath (gravity, drag, spin, bounces, rolling; 1/30 s steps) – until it's
@@ -205,8 +222,9 @@ export function passHole(w, p, r, kind, kh, lx, ly, kv, curls = [0, -0.5, 0.5]) 
 }
 
 // The best hole in the goal for a shot at height kh (low / mid / top) and
-// power pw: targets across the goal mouth – within `span` [y0, y1] if given
-// (the part the stick points at) – straight or curled (curls). Each is
+// power pw: targets across the goal mouth, a little inside the posts – within
+// `span` [y0, y1] if given (the part the stick points at) – straight or curled
+// (curls: the bends to try, or a function giving the one for a target). Each is
 // worth: the chance it's on target given his aim (err, rad – 0: a person's
 // own risk, not weighed) times the chance nobody (keeper, a man in the way)
 // gets to it first, by its margin – and, all else equal, nearer the spot he
@@ -214,9 +232,19 @@ export function passHole(w, p, r, kind, kh, lx, ly, kv, curls = [0, -0.5, 0.5]) 
 export function shotHole(w, p, kind, kh, pw, err, span, curls = [0, -0.5, 0.5], aim = null, out = null) {
   const b = w.ball, pit = pitchOf(w), dir = teamDir(w, p.team), gx = dir * pit.L / 2, hw = pit.goalW / 2, s = stOf(p);
   const tz = targetHeight(w, p, kind, kh) + (pw > 0.9 ? (pw - 0.9) * 3 : 0);
-  const dc = Math.hypot(gx - b.x, b.y);
+  const dc = Math.hypot(gx - b.x, b.y), maxY = hw - POST_IN;
+  // the targets, grouped by the bend each is struck with
+  const byCurl = new Map();
+  for (let i = 0; i <= 10; i++) {
+    const ty = (-1 + 2 * i / 10) * maxY;
+    if (span && (ty < span[0] - 0.01 || ty > span[1] + 0.01)) continue;
+    for (const kc of typeof curls === 'function' ? [curls(ty)] : curls) {
+      if (!byCurl.has(kc)) byCurl.set(kc, []);
+      byCurl.get(kc).push(ty);
+    }
+  }
   let best = null;
-  for (const kc of curls) {
+  for (const [kc, tys] of byCurl) {
     let speed = (12 + 13 * pw) * s.shot;
     speed *= kh === KH.GROUND ? 1.35 : 1 + 0.1 * Math.min(1, Math.max(0, (pw - 0.2) / 0.3));
     if (kind === KICK.FINESSE) speed *= 0.85;
@@ -224,9 +252,7 @@ export function shotHole(w, p, kind, kh, pw, err, span, curls = [0, -0.5, 0.5], 
     // one flight for the class, turned to each target in the goal mouth
     const vz = kh === KH.GROUND ? 0.4 + 2.5 * Math.max(0, pw - 0.75) : Math.min(14, vzToReach(speed, b.z, dc, tz));
     const fl = classFlight(speed, vz, kc * CURL_MAX, dc, b.z, dc + hw + 2);
-    for (let i = 0; i <= 10; i++) {
-      const ty = (-0.92 + 1.84 * i / 10) * hw;
-      if (span && (ty < span[0] - 0.01 || ty > span[1] + 0.01)) continue;
+    for (const ty of tys) {
       const d = Math.hypot(gx - b.x, ty - b.y), th = Math.atan2(ty - b.y, gx - b.x);
       // where it crosses the line
       let cross = null;

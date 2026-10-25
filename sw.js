@@ -5,7 +5,7 @@
 // with a flaky connection). The deploy workflow stamps VERSION, so every
 // release starts a fresh cache and old ones are dropped.
 
-const VERSION = 'c3485fc.10251424';
+const VERSION = '78a0309.10251456';
 const CACHE = `caput-${VERSION}`;
 const SHELL = ['./', './index.html', './manifest.webmanifest', './client/style.css', './client/main.js', './client/icons/icon-192.png'];
 

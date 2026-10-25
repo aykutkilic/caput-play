@@ -420,11 +420,11 @@ export function poseFor(p, ctx) {
       P.rh = rh; P.rk = rk; P.lh = 0.12; P.lk = 0.3;
       P.lsh = 0.55; P.lab = 0.9; P.rsh = -0.35; P.rab = 0.45; P.lean = 0.02 - 0.1 * big;
       if (p.kc && !ctx.fromHands) {
-        // bent with the inside of the foot (p.kc, + to the left): the toe
-        // turned out, the foot opening onto the ball – more for more curl;
-        // bending it right, the left foot does it
+        // bent with the inside of the foot (p.kc: + bends it right on screen –
+        // the left foot; - left, the right foot): the toe turned out, the foot
+        // opening onto the ball – more for more curl
         P.rfy = Math.min(1, Math.abs(p.kc) * 1.6) * 0.95;
-        if (p.kc < 0) mirrorLegs(P);
+        if (p.kc > 0) mirrorLegs(P);
       }
       if (p.kq === KQ.TURN && k < cT) {
         // turning with the ball first: little steps round on the spot, the
