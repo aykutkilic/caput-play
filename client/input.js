@@ -13,7 +13,7 @@
 //   hold L1 for high, L2 for mid (neither = ground); R1 sprint, R2 precision.
 // Touch (phones/tablets): see touch.js – it feeds `input.touch`.
 
-import { BTN, KT, KH, KICK_MASK, packKick } from '../shared/constants.js';
+import { BTN, KT, KH, KICK_MASK, packKick, JOG_TILT } from '../shared/constants.js';
 
 const KICK_BITS = KICK_MASK | (3 << 3); // target + height
 
@@ -26,7 +26,7 @@ export const KICK_KEYS = {
 
 export const DEFAULT_KEYS = {
   up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight',
-  sprint: 'ShiftLeft', r2: 'Space',
+  sprint: 'ShiftLeft', r2: 'Space', jog: 'KeyG',
   runH: 'KeyQ', mateH: 'KeyW', goalH: 'KeyE', selfH: 'KeyR',
   runG: 'KeyA', mateG: 'KeyS', goalG: 'KeyD', selfG: 'KeyF',
   runM: 'KeyZ', mateM: 'KeyX', goalM: 'KeyC', selfM: 'KeyV',
@@ -35,11 +35,11 @@ export const DEFAULT_KEYS = {
 // v4 replaced the button layout with the target x height grid: of an older
 // saved layout only custom movement / sprint / R2 keys survive.
 const KEYS_VERSION = 4;
-const KEPT = ['up', 'down', 'left', 'right', 'sprint', 'r2'];
+const KEPT = ['up', 'down', 'left', 'right', 'sprint', 'r2', 'jog'];
 
 export const ACTION_LABELS = {
   up: 'Up', down: 'Down', left: 'Left', right: 'Right',
-  sprint: 'R1 Get the ball – run to it, or close down whoever has it', r2: 'R2 Precision dribble / finesse / shield · defending: guard (face the ball)',
+  sprint: 'R1 Get the ball – run to it, or close down whoever has it', jog: 'Jog (hold) – run at a jog instead of flat out (saves stamina)', r2: 'R2 Precision dribble / finesse / shield · defending: guard (face the ball)',
 };
 
 function loadKeys() {
@@ -131,7 +131,9 @@ export class Input {
       if (d.has(k.r2)) b |= BTN.R2;
       b |= this.keyKick();
     }
-    let mag = x || y ? 1 : 0;
+    // (a keyboard direction is full tilt – a sprint – unless the jog key is
+    // held: a gamepad's or the touch stick's tilt sets the pace itself)
+    let mag = x || y ? (this.enabled && this.down.has(this.keys.jog) ? JOG_TILT : 1) : 0;
     const pad = this.pad();
     if (pad && this.enabled) {
       const ax = pad.axes[0] || 0, ay = pad.axes[1] || 0;

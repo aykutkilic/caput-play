@@ -8,7 +8,7 @@
 
 import {
   DT, G, BALL_R, PLAYER_R, BTN, KT, KH, KICK_MASK, packKick, PHASE, ST, ROLE, SP, KICK, PITCHES, GOAL_DEPTH, POST_R, SKILL,
-  GOAL_SIZES, PART, MEET, GKB, KQ, FOOT,
+  GOAL_SIZES, PART, MEET, GKB, KQ, FOOT, JOG_TILT,
 } from './constants.js';
 import { stats } from './physique.js';
 import { aiThink } from './ai.js';
@@ -678,7 +678,7 @@ function runAhead(q, t) {
   const sp = Math.hypot(q.vx, q.vy);
   if (sp < 1.5) return [q.x + q.vx * t, q.y + q.vy * t];
   const s = stOf(q);
-  const vmax = Math.max(sp, byPerson(q) || (q.ib & BTN.SPRINT) ? s.sprint : s.jog);
+  const vmax = Math.max(sp, s.sprint); // (anyone can sprint when he must)
   const t1 = (vmax - sp) / s.accel;
   const d = t <= t1 ? sp * t + s.accel * t * t / 2 : sp * t1 + s.accel * t1 * t1 / 2 + vmax * (t - t1);
   return [q.x + q.vx / sp * d, q.y + q.vy / sp * d];
@@ -1978,15 +1978,16 @@ function movement(w, p, s) {
   const own = b.owner === p.id;
   const owner = b.owner >= 0 ? pById(w, b.owner) : null;
   const oppHas = owner && owner.team !== p.team;
-  // A person moves at full pace – dribbling too – with nothing to manage (the
-  // AI chooses when to sprint with BTN.SPRINT). For a person that button is
-  // "get the ball": run to it and take it, or close down whoever has it.
+  // Pace from the stick's tilt, the same for everyone (AI players press the
+  // same controls): a partial tilt walks or jogs – a jog at JOG_TILT (the jog
+  // key on a keyboard) – full tilt sprints (tired, a little slower: stamina).
+  // R1 is "get the ball": run to it and take it, or close down whoever has it.
   const person = byPerson(p);
-  const chase = person && (p.ib & BTN.SPRINT) && !own && !(owner && owner.team === p.team);
-  const sprint = person ? sm > 0.2 : (p.ib & BTN.SPRINT) && sm > 0.2;
+  const chase = (p.ib & BTN.SPRINT) && !own && !(owner && owner.team === p.team);
+  const sprint = sm > JOG_TILT + 0.1;
   const prec = (p.ib & BTN.R2) && own;
   let dx = sx, dy = sy;
-  let speed = sprint ? s.sprint * tiredPace(p) : s.jog;
+  let speed = paceFor(s, sm, p);
   if (own) speed *= sprint ? 0.93 : 0.96;
   if (prec) speed = s.jog * 0.55;
   if (p.st === ST.STUMBLE) speed *= 0.45;
@@ -2011,7 +2012,7 @@ function movement(w, p, s) {
     const tx = b.x + b.vx * 0.15, ty = b.y + b.vy * 0.15;
     const ddx = tx - p.x, ddy = ty - p.y, dd = Math.hypot(ddx, ddy) || 1;
     dx = ddx / dd; dy = ddy / dd; sm = dd < 0.6 ? 0.3 : 1;
-    speed = person || (p.ib & BTN.SPRINT) ? s.sprint * 0.95 : s.jog * 1.08;
+    speed = s.sprint * 0.95 * tiredPace(p);
   } else if (jockey) {
     const gx = -teamDir(w, p.team) * pitchOf(w).L / 2;
     let ux = gx - owner.x, uy = -owner.y;
@@ -2019,7 +2020,7 @@ function movement(w, p, s) {
     const tx = owner.x + owner.vx * 0.2 + ux * 1.6, ty = owner.y + owner.vy * 0.2 + uy * 1.6;
     const ddx = tx - p.x, ddy = ty - p.y, dd = Math.hypot(ddx, ddy) || 1;
     dx = ddx / dd; dy = ddy / dd; sm = dd < 0.15 ? 0 : Math.min(1, dd / 0.8);
-    speed = person || (p.ib & BTN.SPRINT) ? s.sprint * 0.9 : s.jog;
+    speed = s.sprint * 0.9 * tiredPace(p);
   }
   // get the ball, loose: flat out to where he can first reach it, then it's
   // taken like any other ball coming to him
@@ -2029,7 +2030,7 @@ function movement(w, p, s) {
     const tx = me ? me.x : b.x, ty = me ? me.y : b.y, ddx = tx - p.x, ddy = ty - p.y, dd = Math.hypot(ddx, ddy);
     if (dd > 0.05) { dx = ddx / dd; dy = ddy / dd; }
     sm = dd < 0.25 ? 0 : Math.min(1, dd / 0.6);
-    speed = s.sprint; fetching = true;
+    speed = s.sprint * tiredPace(p); fetching = true;
   }
 
   const taker = m.spTaker === p.id;
@@ -2152,12 +2153,11 @@ function movement(w, p, s) {
     const fd = (Math.cos(p.face) * (b.x - p.x) + Math.sin(p.face) * (b.y - p.y)) / (bd || 1);
     if (bd < 1.3 && fd > 0.5) beginTackle(w, p);
   }
-  // Stamina (p.stam, 0..1): sprinting spends it – a fit man has 5-6 s flat
-  // out in him – easing off brings it back, quickest at a walk; tired, he
-  // can't reach his top speed (tiredPace). The AI manages it – it chooses
-  // when to sprint, and saves it when there's no hurry; a person has nothing
-  // to manage: his stays full.
-  if (!person) {
+  // Stamina (p.stam, 0..1), for everyone: sprinting spends it – a fit man has
+  // 5-6 s flat out in him – easing off brings it back, quickest at a walk;
+  // tired, he can't reach his top speed (tiredPace). (The bar under your
+  // player shows it.)
+  {
     const v = Math.hypot(p.vx, p.vy);
     if (v > s.jog * 1.1) p.stam = Math.max(0, p.stam - DT / (STAM_SPRINT * (0.55 + 0.45 * s.stamina)));
     else p.stam = Math.min(1, p.stam + DT / (v < 2.2 ? STAM_WALK : STAM_JOG));
@@ -2165,6 +2165,21 @@ function movement(w, p, s) {
 }
 const STAM_SPRINT = 6, STAM_WALK = 12, STAM_JOG = 30; // s: flat out from full to empty; back to full walking / jogging
 export const tiredPace = (p) => 0.88 + 0.12 * Math.min(1, p.stam / 0.35);
+// The stick's tilt and the pace it gives (target speed = tilt x paceFor): up
+// to JOG_TILT a walk to a jog, from there to full tilt a jog to his sprint.
+// tiltFor is the other way round – the tilt that runs at v (how the AI
+// presses the stick).
+export function paceFor(s, sm, p) {
+  if (sm <= JOG_TILT) return s.jog / JOG_TILT;
+  const f = Math.min(1, (sm - JOG_TILT) / (1 - JOG_TILT));
+  return (s.jog + f * (s.sprint * tiredPace(p) - s.jog)) / sm;
+}
+export function tiltFor(p, v) {
+  const s = stOf(p);
+  if (v <= s.jog) return Math.max(0, JOG_TILT * v / s.jog);
+  const top = s.sprint * tiredPace(p);
+  return Math.min(1, JOG_TILT + (1 - JOG_TILT) * (v - s.jog) / Math.max(0.1, top - s.jog));
+}
 
 function stateUpdate(w, p, s) {
   const b = w.ball;

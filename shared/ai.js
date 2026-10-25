@@ -2,11 +2,12 @@
 // world's seeded RNG) so that clients predicting AI players get the same
 // decisions as the server.
 
-import { G, BTN, KT, KH, KICK_MASK, packKick, PHASE, ST, ROLE, SP, KICK, GKB, FOOT } from './constants.js';
+import { G, BTN, KT, KH, KICK_MASK, packKick, PHASE, ST, ROLE, SP, KICK, GKB, FOOT, JOG_TILT } from './constants.js';
 import {
   rnd, teamDir, pitchOf, pById, stOf, startKick, beginSlide, beginDive, beginBlock1v1, blockKind, slotOf, slotIndex, shootingPractice,
   inOwnBox, clamp, encodeStick, ballPath, blockPlan, beginBlock, wantsBlock, loftTime,
   groundSpeedFor, passEndSpeed, MU, CF, byPerson, keeperBig, bigReach, exitPoint, keepInReach, beginKeepIn, footFor, footCurl, offsidePos,
+  tiltFor,
 } from './sim.js';
 import { SHAPE, MARK } from './learned.js';
 import { shotHole, aiReact } from './lanes.js';
@@ -47,10 +48,13 @@ const STY = { ALL: 0, DRIBBLER: 1, PASSER: 2, SHOOTER: 3 };
 export const styleOf = (p) => (byPerson(p) ? STY.ALL : ((p.id * 2654435761) >>> 0) % 4);
 const CALM = 1.3, SHARP = 0.45; // s: an easy move into position (see moveTo); a sharp one
 
+// The stick, as a player presses it: tilt 1 sprints, up to JOG_TILT jogs
+// (see sim paceFor); sprint() – full tilt, if he has the legs for it
 function setMove(p, dx, dy, mag) {
   const [a, m] = encodeStick(dx, dy, mag);
   p.ia = a; p.im = m;
 }
+const sprintTilt = (p, floor = 0.05) => (p.stam > floor ? 1 : JOG_TILT);
 
 // tau: no hurry – he goes at the pace that gets him there in about tau
 // seconds (a walk when it's near, a jog when it's moved on a way), and only
@@ -59,9 +63,10 @@ function setMove(p, dx, dy, mag) {
 function moveTo(p, tx, ty, sprintDist = 6, arrive = 0.35, tau = 0) {
   const dx = tx - p.x, dy = ty - p.y, d = Math.hypot(dx, dy);
   if (d < arrive) { p.im = 0; return d; }
-  // ease into position (no fixed walking pace that stops dead on arrival)
-  setMove(p, dx, dy, tau ? Math.min(1, d / tau / stOf(p).jog) : Math.min(1, Math.max(0.12, d / 2.2)));
-  if (d > sprintDist && p.stam > (tau ? 0.6 : 0.2)) p.ib |= BTN.SPRINT;
+  // ease into position (no fixed walking pace that stops dead on arrival): a
+  // tilt up to a jog – full tilt when he sprints
+  const jog = JOG_TILT * (tau ? Math.min(1, d / tau / stOf(p).jog) : Math.min(1, Math.max(0.12, d / 2.2)));
+  setMove(p, dx, dy, d > sprintDist && p.stam > (tau ? 0.6 : 0.2) ? 1 : jog);
   return d;
 }
 
@@ -818,19 +823,19 @@ function defendThink(w, p, c, owner) {
       if (out && keepInReach(w, p) && Math.hypot(b.x - p.x, b.y - p.y) > 1.2) { beginKeepIn(w, p, Math.atan2(out.y - p.y, out.x - p.x)); return; }
       if (out && (go.t >= out.t - 0.05 || go.t >= 9)) {
         if (out.t < 2.5) {
-          setMove(p, out.x - p.x, out.y - p.y, 1);
-          if (p.stam > 0.05) p.ib |= BTN.SPRINT;
+          setMove(p, out.x - p.x, out.y - p.y, sprintTilt(p));
           return;
         }
       }
       if (go.t < 9 && tOpp < go.t + 0.6) {
-        setMove(p, go.x - p.x, go.y - p.y, 1);
-        if (p.stam > 0.05) p.ib |= BTN.SPRINT;
+        setMove(p, go.x - p.x, go.y - p.y, sprintTilt(p));
       } else {
-        // no one else near it: no race – he jogs to where he'll meet it, in time
+        // a loose ball no one else is near: no race – he jogs to where he'll
+        // meet it, in time (a pass to him is run onto as it was played: it's
+        // led for him to get there)
         let tAny = 9;
         for (const o of w.players) if (o.team !== p.team && o.st !== ST.FALLEN) tAny = Math.min(tAny, c.ic.get(o.id).t);
-        const gj = go.t < 9 && tAny > go.t + 1 ? intercept(p, c.path, b.tgt === p.id && b.lastTeam === p.team ? 1.4 : 2.2, stOf(p).jog) : null;
+        const gj = go.t < 9 && tAny > go.t + 1 && !(b.tgt === p.id && b.lastTeam === p.team) ? intercept(p, c.path, 2.2, stOf(p).jog) : null;
         if (gj && gj.t < 9 && gj.t + 0.5 < tAny) moveTo(p, gj.x, gj.y, 99, 0.05, Math.max(0.3, gj.t));
         else moveTo(p, go.x, go.y, go.t > 0.5 ? 2 : 99, 0.05);
       }
@@ -1348,11 +1353,9 @@ function gkThink(w, p, c) {
     let vx = (e > 1e-3 ? ex / e * pull : 0) + spotVx, vy = (e > 1e-3 ? ey / e * pull : 0) + spotVy;
     let vm = Math.hypot(vx, vy);
     if (setNow && vm > s.jog) { vx *= s.jog / vm; vy *= s.jog / vm; vm = s.jog; }
-    const fast = !setNow && vm > s.jog * 0.9;
     if (vm < 0.3) p.im = 0;
     else {
-      setMove(p, vx, vy, Math.min(1, vm / (fast ? s.sprint : s.jog)));
-      if (fast) p.ib |= BTN.SPRINT;
+      setMove(p, vx, vy, tiltFor(p, vm)); // (as fast as the spot moves: a sprint when it must)
     }
   } else moveTo(p, tx, ty, rush ? 1.5 : 3.5, 0.12);
 }
@@ -1371,7 +1374,7 @@ function reacting(w, p) {
 
 export function aiThink(w, p) {
   stand = p.human ? LEVELS[1] : null;
-  if ((p.st === ST.IDLE || p.st === ST.STUMBLE) && reacting(w, p)) { p.ib &= BTN.SPRINT | BTN.R2; return; }
+  if ((p.st === ST.IDLE || p.st === ST.STUMBLE) && reacting(w, p)) { p.ib &= BTN.R2; return; }
   p.ib = 0; p.im = 0;
   const m = w.m;
   if (m.phase === PHASE.KICKOFF || m.phase === PHASE.HALFTIME) return;

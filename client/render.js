@@ -1508,7 +1508,14 @@ export class Renderer {
       g.beginPath();
       g.moveTo(X, Y + bounce); g.lineTo(X - 7 * this.dpr, Y - 10 * this.dpr + bounce); g.lineTo(X + 7 * this.dpr, Y - 10 * this.dpr + bounce);
       g.closePath(); g.fill(); g.stroke();
-      const by = Y - 16 * this.dpr; // (where the stamina bar used to be: the gauge sits above it)
+      const by = Y - 16 * this.dpr;
+      // stamina: sprinting spends it (the jog key / a part tilt saves it) – shown while it's not full
+      if (p.stam < 0.98) {
+        const sw = 36 * this.dpr, sh = 3 * this.dpr;
+        g.fillStyle = 'rgba(0,0,0,0.55)'; g.fillRect(X - sw / 2 - 1, by - 1, sw + 2, sh + 2);
+        g.fillStyle = p.stam > 0.5 ? '#9be36a' : p.stam > 0.25 ? '#f4d03f' : '#ff5a4f';
+        g.fillRect(X - sw / 2, by, sw * Math.max(0, p.stam), sh);
+      }
       // power gauge
       if (p.chgBtn) {
         const u = p.chg / CHG_MAX;
