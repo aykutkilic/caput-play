@@ -74,8 +74,8 @@ export const PITCHES = [
 ];
 export const GOAL_DEPTH = 1.6;
 // room settings: bigger goals make scoring easier against a good keeper / AI
-// (all 10% bigger than they started, wide and high)
-export const GOAL_SIZES = [{ name: 'Small', w: 1.1, h: 1.1 }, { name: 'Large', w: 1.43, h: 1.265 }, { name: 'Huge', w: 1.76, h: 1.43 }];
+// (all 10% bigger than they started, wide and high – Huge a little less high)
+export const GOAL_SIZES = [{ name: 'Small', w: 1.1, h: 1.1 }, { name: 'Large', w: 1.43, h: 1.265 }, { name: 'Huge', w: 1.76, h: 1.32 }];
 export const GOAL_SIZE_DEFAULT = 1; // rooms start with large goals
 export const AI_LEVELS = ['Casual', 'Normal', 'Pro'];
 export const POST_R = 0.06;
