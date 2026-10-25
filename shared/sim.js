@@ -151,16 +151,16 @@ export function ballPath(w) {
   const c = w._bp;
   if (c && c.tick === w.tick && c.w === w) return c.pts;
   const b = w.ball, h = PATH_H, pts = [];
-  let x = b.x, y = b.y, z = b.z, vx = b.vx, vy = b.vy, vz = b.vz, spin = b.spin;
+  let x = b.x, y = b.y, z = b.z, vx = b.vx, vy = b.vy, vz = b.vz, spin = b.spin, ts = b.ts || 0;
   pts.push({ x, y, z });
   for (let k = 1; k <= PATH_N; k++) {
     const onG = z <= BALL_R + 1e-3 && Math.abs(vz) < 0.05;
-    if (!onG) vz -= G * h;
+    if (!onG) { vz -= (G + TS_K * ts * Math.hypot(vx, vy)) * h; ts *= 1 - TS_DECAY * h; } else ts = 0;
     const sp = Math.hypot(vx, vy, vz), f = Math.max(0, 1 - AIR_K * sp * h);
     vx *= f; vy *= f; vz *= f;
     if (spin) { const ox = vx; vx -= vy * spin * h; vy += ox * spin * h; spin *= onG ? 0.95 : 0.994; }
     x += vx * h; y += vy * h; z += vz * h;
-    if (z < BALL_R) { z = BALL_R; if (vz < -1) { vz = -vz * 0.55; vx *= 0.88; vy *= 0.88; } else vz = 0; }
+    if (z < BALL_R) { z = BALL_R; if (vz < -1) { const kh = bounceKeep(ts); vz = -vz * (0.55 - 0.1 * ts); vx *= kh; vy *= kh; ts *= 0.4; } else vz = 0; }
     if (z <= BALL_R + 1e-3 && vz === 0) {
       const hs = Math.hypot(vx, vy);
       if (hs > 0) { const ns = Math.max(0, hs - (MU + CF * hs) * h); vx *= ns / hs; vy *= ns / hs; }
@@ -278,7 +278,7 @@ export function makePlayer(id, team, role, human, hgt = 180, bld = 50, ft = 0) {
 }
 export function makeBall() {
   return {
-    x: 0, y: 0, z: BALL_R, vx: 0, vy: 0, vz: 0, spin: 0, owner: -1, held: 0, last: -1, lastTeam: -1, kt: 255, tgt: -1, sh: -1, dl: 0, nut: -1,
+    x: 0, y: 0, z: BALL_R, vx: 0, vy: 0, vz: 0, spin: 0, ts: 0, owner: -1, held: 0, last: -1, lastTeam: -1, kt: 255, tgt: -1, sh: -1, dl: 0, nut: -1,
     atk: -1, atT: 0, atA: 0, atM: 0, atOn: 0, px: 0, py: 0, pz: BALL_R,
     // the passing so far (for the AI: no playing it back and forth): who
     // played the last pass, for which side and from where (x), the furthest
@@ -398,7 +398,7 @@ export function startKickoff(w, team) {
   const m = w.m, b = w.ball;
   setPhase(w, PHASE.KICKOFF);
   m.ko = team; m.spTaker = -1; m.spType = SP.KICKOFF;
-  Object.assign(b, { x: 0, y: 0, z: BALL_R, vx: 0, vy: 0, vz: 0, spin: 0, owner: -1, held: 0, last: -1, lastTeam: -1, kt: 255, tgt: -1, atk: -1, atT: 0 });
+  Object.assign(b, { x: 0, y: 0, z: BALL_R, vx: 0, vy: 0, vz: 0, spin: 0, ts: 0, owner: -1, held: 0, last: -1, lastTeam: -1, kt: 255, tgt: -1, atk: -1, atT: 0 });
   b.px = 0; b.py = 0; b.pz = BALL_R; b.sh = -1; b.nut = -1;
   placeKickoff(w);
 }
@@ -467,7 +467,7 @@ function keeperRestart(w, team, humansToo = false) {
   }
   if (!gk) return false;
   resetPlayerState(gk);
-  Object.assign(b, { x: gk.x, y: gk.y, z: 1.0, vx: 0, vy: 0, vz: 0, spin: 0, owner: gk.id, held: 1, last: gk.id, lastTeam: gk.team,
+  Object.assign(b, { x: gk.x, y: gk.y, z: 1.0, vx: 0, vy: 0, vz: 0, spin: 0, ts: 0, owner: gk.id, held: 1, last: gk.id, lastTeam: gk.team,
     kt: 255, tgt: -1, sh: -1, dl: 0, nut: -1, atk: -1, atT: 0 });
   b.px = b.x; b.py = b.y; b.pz = b.z;
   w.m.spTaker = -1; w.m.wr = 0;
@@ -483,7 +483,7 @@ function warmRestart(w, team, x, y) {
   if (keeperRestart(w, team, true)) return;
   const b = w.ball, pit = pitchOf(w);
   Object.assign(b, { x: clamp(x, -pit.L / 2 + 1, pit.L / 2 - 1), y: clamp(y, -pit.W / 2 + 0.5, pit.W / 2 - 0.5), z: BALL_R,
-    vx: 0, vy: 0, vz: 0, spin: 0, owner: -1, held: 0, kt: 255, tgt: -1, sh: -1, dl: 0, nut: -1, atk: -1, atT: 0 });
+    vx: 0, vy: 0, vz: 0, spin: 0, ts: 0, owner: -1, held: 0, kt: 255, tgt: -1, sh: -1, dl: 0, nut: -1, atk: -1, atT: 0 });
   b.px = b.x; b.py = b.y; b.pz = b.z;
   w.m.spTaker = -1; w.m.wr = 0;
   resumePhase(w);
@@ -511,7 +511,7 @@ function takeSetPiece(w) {
       if (d < bd) { bd = d; taker = p; }
     }
   }
-  Object.assign(b, { x: m.spX, y: m.spY, z: BALL_R, vx: 0, vy: 0, vz: 0, spin: 0, owner: -1, held: 0, kt: 255, tgt: -1, atk: -1, atT: 0 });
+  Object.assign(b, { x: m.spX, y: m.spY, z: BALL_R, vx: 0, vy: 0, vz: 0, spin: 0, ts: 0, owner: -1, held: 0, kt: 255, tgt: -1, atk: -1, atT: 0 });
   b.px = b.x; b.py = b.y; b.pz = b.z;
   if (!taker) { resumePhase(w); return; }
   const gx = dir * pit.L / 2;
@@ -606,13 +606,37 @@ export function loftTime(d, kh, power, capped = true) {
   return capped ? Math.min(T, kh === KH.HIGH ? 2.2 : 1.6) : T;
 }
 
+// Top and back spin (b.ts: + topspin, - backspin): the ball's spin about the
+// axis across its flight. Topspin pulls it down harder the faster it goes (a
+// drive dips), backspin holds it up (it floats); it fades slowly in the air;
+// at a bounce topspin skids on, backspin checks it up (and it bounces higher),
+// and on the grass it's soon gone.
+// (TS_PLAN: the share of that lift a lofted kick's plan counts on – the spin
+// fades and the ball slows in the air)
+export const TS_K = 0.15, TS_DECAY = 0.18, TS_PLAN = 0.75;
+const bounceKeep = (ts) => clamp(0.88 + 0.07 * ts, 0.78, 0.96);
+// The spin a kick puts on: a full-blooded drive with the laces – topspin, up
+// to 1 at full power (it dips); a curler a little; a soft placed one none; a
+// lofted pass is struck under the ball – backspin, it floats and stops on
+// landing; a punt backspin, a drop kick on the half-volley topspin.
+export function topspinFor(kind, kh, pw, tech, kc, fromHands) {
+  if (fromHands) return kind === KICK.PUNT ? -0.3 : kind === KICK.DROP ? 0.4 : 0;
+  if (tech !== ST.KICK) return 0;
+  if (kind === KICK.SHOT || kind === KICK.FINESSE) {
+    if (kh === KH.GROUND) return 0;
+    return kc ? 0.25 : clamp((pw - 0.5) / 0.4, 0, 1);
+  }
+  if (kh !== KH.GROUND && (kind === KICK.PASS || kind === KICK.THROUGH || kind === KICK.LONG || kind === KICK.CLEAR)) return -0.45;
+  return 0;
+}
+
 // Height the ball reaches after travelling d metres along the ground, launched
 // with horizontal speed vh and vertical speed vz from height z0 – the same
 // gravity and air drag as updateBall (-1 if it never gets there).
-function heightAt(vh, vz, z0, d) {
+function heightAt(vh, vz, z0, d, ts = 0) {
   let x = 0, z = z0, h = vh, v = vz;
   for (let k = 0; k < 600; k++) {
-    v -= G * DT;
+    v -= (G + TS_K * ts * h) * DT; ts *= 1 - TS_DECAY * DT;
     const f = Math.max(0, 1 - AIR_K * Math.hypot(h, v) * DT);
     h *= f; v *= f;
     x += h * DT; z += v * DT;
@@ -622,11 +646,11 @@ function heightAt(vh, vz, z0, d) {
   return -1;
 }
 // Vertical launch speed that brings the ball to height zt after d metres.
-export function vzToReach(vh, z0, d, zt) {
+export function vzToReach(vh, z0, d, zt, ts = 0) {
   let lo = -4, hi = 22;
   for (let i = 0; i < 22; i++) {
     const mid = (lo + hi) / 2;
-    if (heightAt(vh, mid, z0, d) < zt) lo = mid; else hi = mid;
+    if (heightAt(vh, mid, z0, d, ts) < zt) lo = mid; else hi = mid;
   }
   return (lo + hi) / 2;
 }
@@ -854,7 +878,7 @@ function beginOwnKick(w, p, packed, power, quick) {
 
 function touchedBy(w, p) {
   const b = w.ball;
-  b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.kt = 0; b.tgt = -1; b.sh = -1; b.atT = 0; b.spin = 0;
+  b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.kt = 0; b.tgt = -1; b.sh = -1; b.atT = 0; b.spin = 0; b.ts = 0;
   invalidatePath(w);
 }
 
@@ -1162,7 +1186,7 @@ function deflect(w, p, nx, ny, nz, limb) {
     b.vy = p.vy + ty * keep - e * vn * ny;
     b.vz = p.vz + tz * keep - e * vn * nz + (limb ? 1.5 + rnd(w) * 2 : 0.5 + rnd(w));
   }
-  b.spin = 0;
+  b.spin = 0; b.ts = 0;
   b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.kt = 0; b.tgt = -1; b.atT = 0;
   invalidatePath(w);
   w.events.push({ k: 'block', x: b.x, y: b.y, z: b.z, v: Math.abs(vn), id: p.id });
@@ -1475,7 +1499,7 @@ function beginControl(w, p, part, bx, by, bz, self, tk = C_CONTACT[part]) {
 function cushion(w, p, s) {
   const b = w.ball, part = p.stB;
   const rs = Math.hypot(b.vx - p.vx, b.vy - p.vy);
-  b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.kt = 0; b.sh = -1; b.spin = 0;
+  b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.kt = 0; b.sh = -1; b.spin = 0; b.ts = 0;
   b.atk = -1; b.atT = 0;
   if (rs > (part === PART.HEAD ? 17 : 20)) {
     // too hot to control: it comes off him
@@ -1560,6 +1584,8 @@ function launch(w, p, tech) {
   // body orientation vs kick direction
   const misalign = Math.abs(angDiff(p.face, Math.atan2(uy, ux)));
 
+  // top or back spin, as the kick puts it on (see topspinFor)
+  let ts = heel ? 0 : topspinFor(kind, p.kh, pw, tech, p.kc, fromHands);
   switch (kind) {
     case KICK.PASS: case KICK.THROUGH: case KICK.THROW:
     case KICK.LONG: case KICK.PUNT: case KICK.CLEAR: case KICK.DROP: {
@@ -1584,7 +1610,7 @@ function launch(w, p, tech) {
           : kind === KICK.DROP ? Math.max(0.35, d / (clamp(14 + 0.25 * d, 14, 24) + 2 * pw))
             : loftTime(d, kind === KICK.PUNT || kind === KICK.CLEAR ? KH.HIGH : lofted, pw, kind !== KICK.PUNT && kind !== KICK.CLEAR && !thrown);
         vh = d / T * (kind === KICK.DROP ? 1.1 : 1.04);
-        vz = (zt - b.z + 0.5 * G * T * T * 1.03) / T;
+        vz = (zt - b.z + 0.5 * (G + TS_PLAN * TS_K * ts * vh) * T * T * 1.03) / T;
         const cap = (thrown ? (b.z < 1.6 ? 17 : 21) : isHead ? 16 : 32) * s.shot;
         const v = Math.hypot(vh, vz);
         if (v > cap) { vh *= cap / v; vz *= cap / v; }
@@ -1620,7 +1646,7 @@ function launch(w, p, tech) {
       if (pw > 0.9) tz += (pw - 0.9) * 3; // a blasted shot climbs
       vh = speed;
       if (p.kh === KH.GROUND && tech === ST.KICK) vz = 0.4 + 2.5 * Math.max(0, pw - 0.75); // skims the grass
-      else vz = Math.min(14, vzToReach(speed, b.z, d, tz)); // low pace + high target = a chip
+      else vz = Math.min(14, vzToReach(speed, b.z, d, tz, ts)); // low pace + high target = a chip
       const techErr = { [ST.KICK]: 0, [ST.VOLLEY]: 0.035, [ST.HEADER]: 0.03, [ST.OVERHEAD]: 0.06, [ST.DIVEHEAD]: 0.04 }[tech] || 0;
       const mis = tech === ST.KICK ? (misalign > 1.0 ? (misalign - 1.0) * 0.07 : 0) : 0;
       const sprint = Math.hypot(p.vx, p.vy) > s.jog * 1.15 ? 0.015 : 0; // struck at full tilt
@@ -1650,7 +1676,7 @@ function launch(w, p, tech) {
   // inside of the foot – the right one bends it left, the left one right –
   // it spins; aimed off by as much as the spin will bring it back
   if (p.kc && tech === ST.KICK && !fromHands && !heel && kind !== KICK.SELF) {
-    const sp = p.kc * CURL_MAX, a = curlAim(vh, vz, sp, d, b.z);
+    const sp = p.kc * CURL_MAX, a = curlAim(vh, vz, sp, d, b.z, ts);
     spin += sp;
     const ca = Math.cos(a), sa = Math.sin(a), nux = ux * ca - uy * sa, nuy = ux * sa + uy * ca;
     ux = nux; uy = nuy;
@@ -1667,7 +1693,7 @@ function launch(w, p, tech) {
   b.vx = ux * vh + (aerial ? p.vx * 0.15 : 0);
   b.vy = uy * vh + (aerial ? p.vy * 0.15 : 0);
   b.vz = vz;
-  b.spin = spin;
+  b.spin = spin; b.ts = ts;
   // the passing record (see makeBall): a new move when the other side last
   // passed it; a pass that gets it 3 m further than they've had it starts the
   // count of passes going nowhere again
@@ -2471,7 +2497,7 @@ function updateBall(w) {
       const cx = b.x + o.vx * DT, cy = b.y + o.vy * DT;
       const [nx, ny] = keepIn(w, o.team, cx + (tx - cx) * k, cy + (ty - cy) * k);
       b.vx = (nx - b.x) / DT; b.vy = (ny - b.y) / DT;
-      b.x = nx; b.y = ny; b.z = BALL_R; b.vz = 0; b.spin = 0; b.atT = 0;
+      b.x = nx; b.y = ny; b.z = BALL_R; b.vz = 0; b.spin = 0; b.ts = 0; b.atT = 0;
       if (Math.hypot(b.x - o.x, b.y - o.y) > 2) { b.owner = -1; b.dl = 0; }
       return;
     }
@@ -2479,7 +2505,7 @@ function updateBall(w) {
   // free ball
   if (b.atT > 0) aftertouch(w, b);
   const onGround = b.z <= BALL_R + 1e-3 && Math.abs(b.vz) < 0.05;
-  if (!onGround) b.vz -= G * DT;
+  if (!onGround) { b.vz -= (G + TS_K * b.ts * Math.hypot(b.vx, b.vy)) * DT; b.ts *= 1 - TS_DECAY * DT; } else b.ts = 0;
   const sp = Math.hypot(b.vx, b.vy, b.vz);
   if (sp > 0) {
     const f = Math.max(0, 1 - AIR_K * sp * DT);
@@ -2496,7 +2522,8 @@ function updateBall(w) {
     b.z = BALL_R;
     if (b.vz < -1.0) {
       if (b.vz < -3) w.events.push({ k: 'bounce', x: b.x, y: b.y, v: -b.vz });
-      b.vz = -b.vz * 0.55; b.vx *= 0.88; b.vy *= 0.88;
+      const kh = bounceKeep(b.ts);
+      b.vz = -b.vz * (0.55 - 0.1 * b.ts); b.vx *= kh; b.vy *= kh; b.ts *= 0.4;
     } else b.vz = 0;
   }
   if (b.z <= BALL_R + 1e-3 && b.vz === 0) {
@@ -2624,7 +2651,7 @@ function tipAway(w, p, s, tgt, at) {
     if (Math.abs(vy - b.vy) > 9) return false;
     b.vy = vy; b.vz = b.vz * 0.6 + 0.4;
   }
-  b.vx = vx; b.spin = 0;
+  b.vx = vx; b.spin = 0; b.ts = 0;
   b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.kt = 0; b.tgt = -1;
   p.kcd = 25;
   if (p.st === ST.DIVE) p.hit = 2; // (the top hand flicks it – see the renderer)
@@ -2650,7 +2677,7 @@ function punchClear(w, p, at, contest) {
   const a = Math.atan2(uy, ux) + gauss(w) * 0.2;
   let pw = two ? 13 + rnd(w) * 5 : 9 + rnd(w) * 4 + 0.25 * v;
   if (rnd(w) < (contest ? 0.12 : 0.04)) pw *= 0.5;
-  b.vx = Math.cos(a) * pw; b.vy = Math.sin(a) * pw; b.vz = 4.5 + rnd(w) * 2.5; b.spin = 0;
+  b.vx = Math.cos(a) * pw; b.vy = Math.sin(a) * pw; b.vz = 4.5 + rnd(w) * 2.5; b.spin = 0; b.ts = 0;
   b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.kt = 0; b.tgt = -1; b.sh = -1;
   p.kcd = 22;
   if (isFree(p)) beginHandsTo(w, p, ST.PUNCH, at, two ? 2 : 1);
@@ -2783,7 +2810,7 @@ function gkSave(w, p) {
     p.hit = 1;
     const sep = Math.hypot(b.x - victim.x, b.y - victim.y);
     if (rnd(w) > clamp(0.3 + (sep - 0.5) * 0.9, 0.2, 0.85)) { w.events.push({ k: 'miss', x: p.x, y: p.y }); return false; }
-    b.owner = p.id; b.held = 1; b.vx = b.vy = b.vz = 0; b.spin = 0;
+    b.owner = p.id; b.held = 1; b.vx = b.vy = b.vz = 0; b.spin = 0; b.ts = 0;
     b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.tgt = -1; b.sh = -1;
     victim.kcd = 20;
     w.events.push({ k: 'catch', x: b.x, y: b.y, smother: 1 });
@@ -2831,7 +2858,7 @@ function gkSave(w, p) {
   if (body) pc *= 0.5;
   pc = clamp((pc - awkward) * hands, 0.04, 0.99);
   if (rnd(w) < pc) {
-    b.owner = p.id; b.held = 1; b.vx = b.vy = b.vz = 0; b.spin = 0;
+    b.owner = p.id; b.held = 1; b.vx = b.vy = b.vz = 0; b.spin = 0; b.ts = 0;
     b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.tgt = -1; b.sh = -1;
     p.hold = 0; p.chgBtn = 0; p.qa = 0;
     w.events.push({ k: 'catch', x: b.x, y: b.y });
@@ -2857,7 +2884,7 @@ function gkSave(w, p) {
       b.vy = b.vy * 0.3 + side * (3.5 + rnd(w) * 4.5);
       b.vz = low ? 0.6 + rnd(w) * 1.6 : 2.2 + rnd(w) * 3.5;
     }
-    b.spin = 0;
+    b.spin = 0; b.ts = 0;
     if ((legs || body) && isFree(p) && p.z <= 0) {
       // the leg that stopped it, out towards the ball – or braced, it off his body
       p.st = ST.BLOCK; p.stT = 3; p.stDur = 22; p.hit = 1;
@@ -2969,7 +2996,7 @@ function possession(w) {
       const hands = p.role === ROLE.GK && keeperHands(w, p) && inOwnBox(w, p.team, b.x, b.y, 0.3) && inOwnBox(w, p.team, p.x, p.y, 0.6);
       const take = clamp(0.62 + 0.4 * (stOf(p).strength - os.strength) - ((o.ib & BTN.R2) ? 0.12 : 0) + (hands ? 0.15 : 0), 0.3, 0.9);
       if ((!down && canControl(p) && p.tcd === 0 && rnd(w) < take) || (down && hands && p.st === ST.DIVE && rnd(w) < 0.75)) {
-        b.owner = p.id; b.held = hands ? 1 : 0; b.vx = b.vy = b.vz = 0; b.spin = 0;
+        b.owner = p.id; b.held = hands ? 1 : 0; b.vx = b.vy = b.vz = 0; b.spin = 0; b.ts = 0;
         b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.tgt = -1; b.sh = -1; p.dph = 0;
         o.kcd = 12;
         w.events.push(hands ? { k: 'catch', x: b.x, y: b.y, smother: 1 } : { k: 'steal', x: b.x, y: b.y });
@@ -3049,7 +3076,7 @@ function possession(w) {
     w.events.push({ k: 'head', x: b.x, y: b.y, z: b.z, v, id: p.id });
     return;
   }
-  b.owner = p.id; b.held = 0; b.vz = 0; b.z = BALL_R; b.spin = 0; b.tgt = -1; b.sh = -1;
+  b.owner = p.id; b.held = 0; b.vz = 0; b.z = BALL_R; b.spin = 0; b.ts = 0; b.tgt = -1; b.sh = -1;
   b.last = p.id; b.lastTeam = p.team; b.dl = 0;
   p.dph = 0;
   if (p.st === ST.CONTROL) { p.st = ST.IDLE; p.stT = 0; p.hit = 0; }

@@ -8,7 +8,7 @@
 // wider the longer the ball takes to get past him, none where it's above him,
 // shifted where a curled ball swings. What's left open are the holes; how
 // much time is spare in one is its margin (> 0: it gets there first).
-import { stOf, inOwnBox, pitchOf, teamDir, PATH_H, groundSpeedFor, vzToReach, targetHeight, byPerson, stopChance, AIR_K, MU, CF, loftTime, passEndSpeed } from './sim.js';
+import { stOf, inOwnBox, pitchOf, teamDir, PATH_H, groundSpeedFor, vzToReach, targetHeight, byPerson, stopChance, AIR_K, MU, CF, loftTime, passEndSpeed, TS_K, TS_DECAY, TS_PLAN, topspinFor } from './sim.js';
 import { BALL_R, G, ROLE, ST, KH, KICK } from './constants.js';
 
 // The foot's curl (curve kc -1..1): spin up to CURL_MAX (rad/s the path
@@ -37,17 +37,17 @@ export const POST_IN = 0.7;
 // A kick's flight from the origin along angle a – the ball's own physics, as
 // ballPath (gravity, drag, spin, bounces, rolling; 1/30 s steps) – until it's
 // dMax out (or 2.5 s)
-function flight(vh, vz, spin, z0, a, dMax) {
+function flight(vh, vz, spin, z0, a, dMax, ts = 0) {
   const h = PATH_H, out = [], d2 = dMax * dMax;
   let x = 0, y = 0, z = Math.max(BALL_R, z0), vx = Math.cos(a) * vh, vy = Math.sin(a) * vh, sp = spin;
   for (let k = 1; k <= 75; k++) {
     const onG = z <= BALL_R + 1e-3 && Math.abs(vz) < 0.05;
-    if (!onG) vz -= G * h;
+    if (!onG) { vz -= (G + TS_K * ts * Math.hypot(vx, vy)) * h; ts *= 1 - TS_DECAY * h; } else ts = 0;
     const f = Math.max(0, 1 - AIR_K * Math.hypot(vx, vy, vz) * h);
     vx *= f; vy *= f; vz *= f;
     if (sp) { const ox = vx; vx -= vy * sp * h; vy += ox * sp * h; sp *= onG ? 0.95 : 0.994; }
     x += vx * h; y += vy * h; z += vz * h;
-    if (z < BALL_R) { z = BALL_R; if (vz < -1) { vz = -vz * 0.55; vx *= 0.88; vy *= 0.88; } else vz = 0; }
+    if (z < BALL_R) { z = BALL_R; if (vz < -1) { const kh = Math.min(0.96, Math.max(0.78, 0.88 + 0.07 * ts)); vz = -vz * (0.55 - 0.1 * ts); vx *= kh; vy *= kh; ts *= 0.4; } else vz = 0; }
     if (z <= BALL_R + 1e-3 && vz === 0) {
       const hs = Math.hypot(vx, vy);
       if (hs > 0) { const ns = Math.max(0, hs - (MU + CF * hs) * h); vx *= ns / hs; vy *= ns / hs; }
@@ -61,9 +61,9 @@ function flight(vh, vz, spin, z0, a, dMax) {
 // How far off the line to a target d metres away a curled kick is aimed: the
 // angle its flight turns through by then (aimed that much the other way, it
 // bends back onto the target). Launch uses it too, so plan and kick agree.
-export function curlAim(vh, vz, spin, d, z0) {
+export function curlAim(vh, vz, spin, d, z0, ts = 0) {
   if (!spin) return 0;
-  const pts = flight(vh, vz, spin, z0, 0, d);
+  const pts = flight(vh, vz, spin, z0, 0, d, ts);
   let q = pts[pts.length - 1];
   for (const p of pts) if (p.x * p.x + p.y * p.y >= d * d) { q = p; break; }
   return -Math.atan2(q.y, q.x);
@@ -71,8 +71,8 @@ export function curlAim(vh, vz, spin, d, z0) {
 
 // A class's flight (aimed off for its curl to come back on line d metres
 // out), every 0.1 s up to dMax: (x, y) from the ball, rho, height, time
-function classFlight(vh, vz, spin, d, z0, dMax) {
-  const pts = flight(vh, vz, spin, z0, curlAim(vh, vz, spin, d, z0), dMax), out = [];
+function classFlight(vh, vz, spin, d, z0, dMax, ts = 0) {
+  const pts = flight(vh, vz, spin, z0, curlAim(vh, vz, spin, d, z0, ts), dMax, ts), out = [];
   for (let k = 2; k < pts.length; k += 3) {
     const q = pts[k];
     out.push({ rho: Math.hypot(q.x, q.y), x: q.x, y: q.y, z: q.z, t: q.t });
@@ -185,8 +185,8 @@ function receiveAt(r, bx, by, fl, th, top) {
 function passFlight(p, kind, kh, d, kv, z0) {
   const s = stOf(p);
   if (kh === KH.GROUND) return { vh: Math.min(groundSpeedFor(d, kv), 28) * (0.97 + 0.06 * s.shot), vz: 0 };
-  const T = kv, zt = kh === KH.HIGH ? 1.75 : 1.0;
-  return { vh: d / T * 1.04, vz: (zt - z0 + 0.5 * G * T * T * 1.03) / T };
+  const T = kv, zt = kh === KH.HIGH ? 1.75 : 1.0, ts = topspinFor(kind, kh, 0.5, ST.KICK, 0, false), vh = d / T * 1.04;
+  return { vh, vz: (zt - z0 + 0.5 * (G + TS_PLAN * TS_K * ts * vh) * T * T * 1.03) / T, ts };
 }
 
 const ANGLES = [0, 0.04, -0.04, 0.08, -0.08, 0.13, -0.13, 0.19, -0.19, 0.26, -0.26, 0.34, -0.34]; // rad off the line to him
@@ -201,9 +201,9 @@ export function passHole(w, p, r, kind, kh, lx, ly, kv, curls = [0, -0.5, 0.5]) 
   let best = null, straight = null;
   for (const kc of curls) {
     if (kh === KH.GROUND && kc) continue; // (along the grass the spin soon goes: ground passes go straight – aftertouch can still bend one)
-    const { vh, vz } = passFlight(p, kind, kh, d, kv, b.z);
+    const { vh, vz, ts } = passFlight(p, kind, kh, d, kv, b.z);
     const v = vh * (kc ? Math.min(1, 28 * curlPace(kc) / vh) : 1);
-    const fl = classFlight(v, vz, kc * CURL_MAX, d, b.z, d + 8);
+    const fl = classFlight(v, vz, kc * CURL_MAX, d, b.z, d + 8, ts);
     for (const da of ANGLES) {
       const th = th0 + da, rec = receiveAt(r, b.x, b.y, fl, th, top);
       if (!rec) continue;
@@ -261,8 +261,9 @@ export function shotHole(w, p, kind, kh, pw, err, span, curls = [0, -0.5, 0.5], 
     if (kind === KICK.FINESSE) speed *= 0.85;
     speed *= curlPace(kc);
     // one flight for the class, turned to each target in the goal mouth
-    const vz = kh === KH.GROUND ? 0.4 + 2.5 * Math.max(0, pw - 0.75) : Math.min(14, vzToReach(speed, b.z, dc, tz));
-    const fl = classFlight(speed, vz, kc * CURL_MAX, dc, b.z, dc + hw + 2);
+    const ts = topspinFor(kind, kh, pw, ST.KICK, kc, false);
+    const vz = kh === KH.GROUND ? 0.4 + 2.5 * Math.max(0, pw - 0.75) : Math.min(14, vzToReach(speed, b.z, dc, tz, ts));
+    const fl = classFlight(speed, vz, kc * CURL_MAX, dc, b.z, dc + hw + 2, ts);
     for (const ty of tys) {
       const d = Math.hypot(gx - b.x, ty - b.y), th = Math.atan2(ty - b.y, gx - b.x);
       // where it crosses the line
@@ -289,13 +290,13 @@ export function shotHole(w, p, kind, kh, pw, err, span, curls = [0, -0.5, 0.5], 
 // first (-1: none – open as far as it goes), and the flight to draw (points
 // relative to the ball, to be turned by th).
 export function laneFan(w, team, kh, kc, d, th0, spread = 2.4, n = 41) {
-  const b = w.ball;
+  const b = w.ball, ts = topspinFor(KICK.PASS, kh, 0.3, ST.KICK, kc, false);
   let vh, vz;
   if (kh === KH.GROUND) { vh = Math.min(groundSpeedFor(d, 7), 28); vz = 0; } else {
     const T = loftTime(d, kh, 0.3), zt = kh === KH.HIGH ? 1.75 : 1.0;
-    vh = d / T * 1.04; vz = (zt - b.z + 0.5 * G * T * T * 1.03) / T;
+    vh = d / T * 1.04; vz = (zt - b.z + 0.5 * (G + TS_PLAN * TS_K * ts * vh) * T * T * 1.03) / T;
   }
-  const fl = classFlight(vh * (kc ? curlPace(kc) : 1), vz, kc * CURL_MAX, d, b.z, d + 6), rays = [];
+  const fl = classFlight(vh * (kc ? curlPace(kc) : 1), vz, kc * CURL_MAX, d, b.z, d + 6, ts), rays = [];
   for (let i = 0; i < n; i++) {
     const th = th0 - spread / 2 + spread * i / (n - 1), c = Math.cos(th), sn = Math.sin(th);
     let shut = -1;
@@ -316,20 +317,21 @@ export function kickFlight(w, p) {
   const b = w.ball, s = stOf(p), kind = p.kk, pw = p.kp, kh = p.kh;
   const d = Math.hypot(p.kx - b.x, p.ky - b.y) || 0.1, th = Math.atan2(p.ky - b.y, p.kx - b.x);
   let vh, vz;
+  const ts = topspinFor(kind, kh, pw, ST.KICK, p.kc, false);
   if (kind === KICK.SHOT || kind === KICK.FINESSE) {
     vh = (12 + 13 * pw) * s.shot * (kh === KH.GROUND ? 1.35 : 1 + 0.1 * Math.min(1, Math.max(0, (pw - 0.2) / 0.3)));
     if (kind === KICK.FINESSE) vh *= 0.85;
     if (p.kc) vh *= curlPace(p.kc);
     const tz = targetHeight(w, p, kind, kh) + (pw > 0.9 ? (pw - 0.9) * 3 : 0);
-    vz = kh === KH.GROUND ? 0.4 + 2.5 * Math.max(0, pw - 0.75) : Math.min(14, vzToReach(vh, b.z, d, tz));
+    vz = kh === KH.GROUND ? 0.4 + 2.5 * Math.max(0, pw - 0.75) : Math.min(14, vzToReach(vh, b.z, d, tz, ts));
   } else if (kh === KH.GROUND) {
     vh = Math.min(groundSpeedFor(d, p.kv > 0 ? p.kv : passEndSpeed(kind, d, pw)), 28) * (0.97 + 0.06 * s.shot);
     if (p.kc) vh = Math.min(vh, 28 * curlPace(p.kc));
     vz = 0;
   } else {
     const T = p.kv > 0 && p.kt >= 0 ? p.kv : loftTime(d, kh, pw), zt = targetHeight(w, p, kind, kh);
-    vh = d / T * 1.04; vz = (zt - b.z + 0.5 * G * T * T * 1.03) / T;
+    vh = d / T * 1.04; vz = (zt - b.z + 0.5 * (G + TS_PLAN * TS_K * ts * vh) * T * T * 1.03) / T;
   }
   const spin = (p.kc || 0) * CURL_MAX;
-  return flight(vh, vz, spin, b.z, th + (spin ? curlAim(vh, vz, spin, d, b.z) : 0), d + 1.5).map((q) => ({ x: b.x + q.x, y: b.y + q.y, z: q.z }));
+  return flight(vh, vz, spin, b.z, th + (spin ? curlAim(vh, vz, spin, d, b.z, ts) : 0), d + 1.5, ts).map((q) => ({ x: b.x + q.x, y: b.y + q.y, z: q.z }));
 }
