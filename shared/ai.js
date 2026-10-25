@@ -9,7 +9,7 @@ import {
   groundSpeedFor, passEndSpeed, MU, CF, byPerson, keeperBig, bigReach, exitPoint, keepInReach, beginKeepIn, strikeSurface, OUTSIDE_CURL,
 } from './sim.js';
 import { SHAPE, MARK } from './learned.js';
-import { shotHole, sideCurl } from './lanes.js';
+import { shotHole, sideCurl, aiReact } from './lanes.js';
 
 const AI_CARRY = 1, AI_SUPPORT = 2, AI_PRESS = 3, AI_MARK = 4; // (a marker's man in aiY)
 const PATH_N = 25; // 2.5 s look-ahead in 0.1 s steps
@@ -1282,8 +1282,19 @@ function gkThink(w, p, c) {
 
 // ------------------------------------------------------------ entry
 
+// Reaction: a kick by the other side is seen a moment late (longer when it's
+// struck behind his back – lanes.aiReact); till then he carries on as he was.
+// His own side reads it as it's played.
+function reacting(w, p) {
+  const b = w.ball;
+  if (w.m.phase !== PHASE.PLAY || p.role !== ROLE.OUT || b.owner >= 0 || b.last < 0 || b.lastTeam === p.team || b.kt >= 40) return false;
+  const k = pById(w, b.last);
+  return !!k && b.kt / 60 < aiReact(w, p, k.x, k.y);
+}
+
 export function aiThink(w, p) {
   stand = p.human ? LEVELS[1] : null;
+  if ((p.st === ST.IDLE || p.st === ST.STUMBLE) && reacting(w, p)) { p.ib &= BTN.SPRINT | BTN.R2; return; }
   p.ib = 0; p.im = 0;
   const m = w.m;
   if (m.phase === PHASE.KICKOFF || m.phase === PHASE.HALFTIME) return;

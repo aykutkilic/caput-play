@@ -82,6 +82,16 @@ function classFlight(vh, vz, spin, d, z0, dMax) {
   return out;
 }
 
+// How long an AI player takes to react to a kick from (kx, ky) – real
+// defenders take about a third of a second to move off a pass (SkillCorner
+// tracking); by level: Casual, Normal, Pro – and more when it's struck
+// behind his back (he has to turn to find it)
+export const AI_REACT = [0.4, 0.3, 0.22], REACT_BEHIND = 0.15;
+export function aiReact(w, o, kx, ky) {
+  const a = Math.atan2(ky - o.y, kx - o.x) - o.face, behind = Math.cos(a) < -0.17; // (more than ~100° off where he faces)
+  return (AI_REACT[w.m.ai] ?? AI_REACT[1]) + (behind ? REACT_BEHIND : 0);
+}
+
 // Seconds o needs to get to the ball at (x, y, z): a reaction, then running
 // up to his sprint until it's within his reach (a keeper in his box: or set
 // and dive); Infinity above him
@@ -90,9 +100,10 @@ function oppTime(w, o, x, y, z) {
   if (z > (gk ? 2.7 : 2.25)) return Infinity;
   const s = stOf(o), d = Math.hypot(x - o.x, y - o.y);
   const busy = o.st !== ST.IDLE && o.st !== ST.STUMBLE ? Math.max(0, o.stDur - o.stT) / 60 : 0;
-  // (an AI player reads it the moment it's struck; a person takes a moment;
-  // already on his way there, he's that much quicker)
-  const react = byPerson(o) ? 0.18 : 0.06;
+  // (a person takes a moment to read it; an AI player his level's reaction,
+  // more when it's struck behind his back – see aiReact; already on his way
+  // there, he's that much quicker)
+  const react = byPerson(o) ? 0.18 : aiReact(w, o, w.ball.x, w.ball.y);
   const v0 = d > 0 ? Math.max(0, Math.min(s.sprint, (o.vx * (x - o.x) + o.vy * (y - o.y)) / d)) : 0;
   const run = (gap) => {
     if (gap <= 0) return 0.05 + busy;
