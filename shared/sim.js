@@ -1074,7 +1074,6 @@ export function diveReach(p, s, ball) {
 }
 
 // AI kick accuracy and keeper handling by the room's AI level (Casual / Normal / Pro)
-const GK_HANDS = [0.85, 1, 1.08];
 
 // ---------------------------------------------------------------- blocking
 
@@ -1818,8 +1817,13 @@ function handleButtons(w, p) {
       const ownGoalDanger = p.role === ROLE.GK && inOwnBox(w, p.team, b.x, b.y, 8)
         && (b.vx * teamDir(w, p.team) < -3) && Math.hypot(b.x - p.x, b.y - p.y) > 1.2
         && (pressed !== KT.GOAL || goalLineCross(w, p.team, b).on);
-      const plan = !ownGoalDanger && wantsBlock(w, p) ? blockPlan(w, p) : null;
-      if (ownGoalDanger) humanDive(w, p);  // keeper: hands
+      // (a keeper in his box: a loose ball low with one of theirs about to reach it – the smother)
+      let smother = false;
+      if (p.role === ROLE.GK && keeperHands(w, p) && b.z < 0.5 && Math.hypot(b.x - p.x, b.y - p.y) < 2.6 && Math.hypot(b.vx, b.vy) < 6) {
+        for (const q of w.players) if (q.team !== p.team && Math.hypot(b.x - q.x, b.y - q.y) < 2.2) smother = true;
+      }
+      const plan = !ownGoalDanger && !smother && wantsBlock(w, p) ? blockPlan(w, p) : null;
+      if (ownGoalDanger || smother) keeperDive(w, p);  // keeper: hands
       else if (plan && free) beginBlock(w, p, plan);
       else {
         // first-time kick when the ball arrives; pressing again keeps the charge built so far
@@ -1829,7 +1833,7 @@ function handleButtons(w, p) {
       }
     } else if (oppHas) {
       if (pressed === KT.GOAL && free) {
-        if (p.role === ROLE.GK && inOwnBox(w, p.team, p.x, p.y, 2)) humanDive(w, p);
+        if (p.role === ROLE.GK && inOwnBox(w, p.team, p.x, p.y, 2)) keeperDive(w, p);
         else beginSlide(w, p);
       } else if (pressed === KT.SELF && free && p.role === ROLE.GK && inOwnBox(w, p.team, p.x, p.y, 2)) {
         // keeper: a one-on-one block at the man on the ball, the one that suits where he is
@@ -1852,27 +1856,60 @@ export function keepInReach(w, p) {
   return !!out && out.t < 0.45 && out.z < 0.5 && Math.hypot(out.x - p.x, out.y - p.y) < 0.85 + 8.5 * out.t;
 }
 
-function humanDive(w, p) {
-  const b = w.ball;
+// The keeper's save on the dive key – the same for anyone (the AI's keeper
+// presses it too): the save that suits the ball, as his training picks it.
+// At a man's feet (or a loose ball low with one of theirs on it): down at it,
+// the smother. A shot struck from close in, within a block's reach: the
+// block, on reflex – spread low, the K-barrier up to the waist, the star jump
+// at a high one near him. Made big with it within reach of a hand: no going
+// down (the hands take it). Low, just wide and on him in a flash – first of
+// all: a leg slid out, the splits. Otherwise a dive – where the stick points, or across to
+// where it's going – at the height it comes.
+function keeperDive(w, p) {
+  const b = w.ball, s = stOf(p);
+  const owner = b.owner >= 0 ? pById(w, b.owner) : null;
+  const dBall = Math.hypot(b.x - p.x, b.y - p.y);
+  let rival = owner && owner.team !== p.team ? owner : null;
+  if (!owner && b.z < 0.5 && Math.hypot(b.vx, b.vy) < 6) for (const q of w.players) if (q.team !== p.team && Math.hypot(b.x - q.x, b.y - q.y) < 2.2) rival = q;
+  if (rival && b.z < 0.5 && dBall < 2.6) {
+    p.tcd = 50;
+    beginDive(w, p, Math.atan2(b.y - p.y, b.x - p.x), 0.15, Math.max(0.15, dBall / 7), dBall + 0.3);
+    return;
+  }
   const [sx, sy, sm] = stickOf(p);
   let ang, h = 0.5, dist = Infinity;
   // predicted crossing of the keeper's lateral line
   const t = Math.abs(b.vx) > 0.5 ? (p.x - b.x) / b.vx : -1;
   const cx = b.x + b.vx * Math.max(t, 0), cy = b.y + b.vy * Math.max(t, 0);
   if (t > 0 && t < 2) h = clamp(b.z + b.vz * t - 0.5 * G * t * t, 0.2, 2.3);
+  const off = cy - p.y, offA = Math.abs(off);
+  if (t > 0 && t < 2) {
+    // a low one just wide of him, on him in a flash: a leg slid out along the grass
+    if (t < 0.24 && h < 0.45 && offA > 0.5 && offA < 1.5) {
+      const to = Math.atan2(b.y - p.y, b.x - p.x);
+      p.tcd = 40;
+      beginBlock1v1(w, p, to, GKB.SPLITS, Math.cos(to) * off >= 0 ? 1 : -1);
+      return;
+    }
+    // close in, too quick to dive: the block that covers its height
+    if (t < 0.3 && p.tcd === 0) {
+      const kind = blockKind(w, b.x, b.y, dBall), zk = b.z + b.vz * t - 0.5 * G * t * t;
+      const nearHim = offA > 0.55 && offA < 1.15 && zk > 1.0 && zk < 2.3;
+      if ((kind === GKB.SPREAD && dBall < 4.5 && zk < 0.7 && offA < 1.8) || (kind === GKB.STAR && nearHim && t < 0.25) || (kind === GKB.KNEE && dBall < 6.5 && zk < 1.1 && offA < 1.3)) {
+        p.tcd = 50;
+        beginBlock1v1(w, p, Math.atan2(-b.vy, -b.vx), kind);
+        return;
+      }
+    }
+    // made big, coming within reach of a hand: he stays up
+    if (keeperBig(w, p) && h >= 0.45 && offA < bigReach(s, h)) return;
+  }
   if (sm > 0.3) ang = Math.atan2(sy, sx);
   else if (t > 0 && t < 2) ang = Math.atan2(cy - p.y, (cx - p.x) * 0.3);
   else ang = Math.atan2(b.y - p.y, b.x - p.x);
   if (t > 0 && t < 2) {
     const along = (cx - p.x) * Math.cos(ang) + (cy - p.y) * Math.sin(ang);
     if (along > 0) dist = along;
-  }
-  // a low one just wide of him, on him in a flash: a leg slid out along the grass
-  const off = cy - p.y;
-  if (t > 0 && t < 0.2 && h < 0.45 && Math.abs(off) > 0.5 && Math.abs(off) < 1.5) {
-    const to = Math.atan2(b.y - p.y, b.x - p.x);
-    beginBlock1v1(w, p, to, GKB.SPLITS, Math.cos(to) * off >= 0 ? 1 : -1);
-    return;
   }
   beginDive(w, p, ang, h, t > 0 ? t : 0.45, dist);
 }
@@ -2646,12 +2683,6 @@ function goalFrame(w) {
 
 function canControl(p) { return isFree(p) && p.kcd === 0 && p.z < 0.3; }
 
-// AI keepers' choices at the ball by the room's AI level: how often a ball
-// heading in is tipped over the bar / round the post (rather than parried
-// back into play) and a high ball in a crowd punched clear (rather than risk
-// the catch). A human keeper chooses for himself.
-const GK_TIP = [0.5, 0.78, 0.92], GK_PUNCH = [0.35, 0.65, 0.85];
-const GK_MID = [1.4, 1, 0.65]; // (how often a parry drops back into the middle, relative)
 
 // Where the ball would cross a team's goal line: on target or not (between
 // the posts, under the bar – a ball that bounces first counts).
@@ -2861,7 +2892,7 @@ function gkSave(w, p) {
   const rs = Math.hypot(b.vx - p.vx, b.vy - p.vy, b.vz - p.vz);
   const edge = dPass / tol;
   // fingertip contact on a hard shot may not be enough to keep it out
-  const hands = p.human ? 1 : GK_HANDS[w.m.ai] || 1;
+  const hands = 1; // (the same hands for anyone's keeper: the AI's level is how it reads and reacts)
   const stop = clamp((1.45 - rs / 60 - edge * edge * 0.6 - (p.st === ST.DIVE ? 0.05 : 0)) * hands, 0.3, 0.99);
   if (rs > 9 && rnd(w) > stop) {
     const k = 0.7 + rnd(w) * 0.15;
@@ -2882,13 +2913,13 @@ function gkSave(w, p) {
   // a high ball, standing or in the air: punched clear – a human with the
   // shoot key down, the AI when he'd have to catch it in a crowd
   if (!p.spr && p.st !== ST.DIVE && zr > sH * 0.7) {
-    const key = byPerson(p) && (p.qa & KICK_MASK) === KT.GOAL;
-    if (key || (!byPerson(p) && contest && rnd(w) < (GK_PUNCH[m.ai] ?? 0.65))) { punchClear(w, p, at, contest); return true; }
+    // (the shot key held for it: the AI's keeper holds it too, when he means to punch)
+    if ((p.qa & KICK_MASK) === KT.GOAL) { punchClear(w, p, at, contest); return true; }
   }
   // going back under a ball dropping in over his head: tip it over the bar
   // rather than take it and carry it over his own line
   const back = (p.vx * teamDir(w, p.team)) < -1.2;
-  if (tgt.on && back && !p.spr && zr > sH * 1.05 && rnd(w) < (byPerson(p) ? 0.9 : GK_TIP[m.ai] ?? 0.78) && tipAway(w, p, s, tgt, at)) return true;
+  if (tgt.on && back && !p.spr && zr > sH * 1.05 && rnd(w) < 0.9 && tipAway(w, p, s, tgt, at)) return true;
   // Holding on to it: with two hands on it a keeper catches it – only a
   // rocket gets spilled; with one hand he can only push it away, unless it's
   // a gentle one he can pull in. Someone challenging him for it makes it harder.
@@ -2907,7 +2938,7 @@ function gkSave(w, p) {
   } else {
     // going in: tipped over the bar or round the post if he can
     const arm = !leg && (!p.spr || (p.spr === GKB.STAR && segs[part][5] > p.z + 0.85 * sH));
-    if (tgt.on && !legs && arm && rnd(w) < (byPerson(p) ? 0.85 : GK_TIP[m.ai] ?? 0.78) && tipAway(w, p, s, tgt, at)) return true;
+    if (tgt.on && !legs && arm && rnd(w) < 0.85 && tipAway(w, p, s, tgt, at)) return true;
     // parried: pushed out wide (to the side it was on) rather than back into
     // the middle, and up – off his legs or a block's body it stays lower. A
     // hard one, or one he only gets a hand to at full stretch, sometimes
@@ -2917,7 +2948,7 @@ function gkSave(w, p) {
     const sp = Math.hypot(b.vx, b.vy);
     const low = legs || (p.spr && !arm);
     const side = Math.abs(b.y - p.y) > 0.15 ? Math.sign(b.y - p.y) : (rnd(w) < 0.5 ? -1 : 1);
-    const pMid = clamp(0.08 + 0.015 * Math.max(0, sp - 15) + (p.st === ST.DIVE ? 0.08 : 0), 0, 0.4) * (byPerson(p) ? 1 : GK_MID[m.ai] ?? 1);
+    const pMid = clamp(0.08 + 0.015 * Math.max(0, sp - 15) + (p.st === ST.DIVE ? 0.08 : 0), 0, 0.4);
     if (body || (!twoHands && rnd(w) < pMid)) {
       // off his body (or that parry): back out in front of him, not far
       b.vx = dir * (2 + sp * 0.15) + (rnd(w) - 0.5) * 2; b.vy = b.vy * 0.15 + (rnd(w) - 0.5) * 3; b.vz = (low ? 0.4 : 1) + rnd(w) * 1.5;

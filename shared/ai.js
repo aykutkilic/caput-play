@@ -4,7 +4,7 @@
 
 import { G, BTN, KT, KH, KICK_MASK, packKick, PHASE, ST, ROLE, SP, KICK, GKB, FOOT, JOG_TILT } from './constants.js';
 import {
-  rnd, teamDir, pitchOf, pById, stOf, startKick, beginDive, beginBlock1v1, blockKind, slotOf, slotIndex, shootingPractice,
+  rnd, teamDir, pitchOf, pById, stOf, startKick, blockKind, slotOf, slotIndex, shootingPractice,
   inOwnBox, clamp, encodeStick, ballPath, blockPlan, wantsBlock, loftTime,
   groundSpeedFor, passEndSpeed, MU, CF, byPerson, keeperBig, bigReach, exitPoint, keepInReach, footFor, footCurl, offsidePos,
   tiltFor, CHG_MAX,
@@ -32,9 +32,9 @@ const TAU = Math.PI * 2;
 // goal (lanes.sideCurl, as his foot allows – Casual not at all); aimErr:
 // how wayward his strikes are (as launch scales them).
 const LEVELS = [
-  { react: 18, spin: 0, misread: 0.8, think: 9, block: 0.04, sweep: 0.4, hold: 70, shuffle: false, angle: 0.9, smother: 1.1, read: false, spread: 99, spreadP: 0, misjudge: 0.12, claim: 6, bend: 0, aimErr: 1.6, aimNoise: 0.07, holdNoise: 4 },
-  { react: 10, spin: 0.25, misread: 0.35, think: 5, block: 0.12, sweep: 0.2, hold: 45, shuffle: false, angle: 1, smother: 0.85, read: true, spread: 4, spreadP: 0.75, misjudge: 0.05, claim: 8, bend: 0.6, aimErr: 1, aimNoise: 0.035, holdNoise: 2 },
-  { react: 6, spin: 0.45, misread: 0.12, think: 3, block: 0.3, sweep: 0.05, hold: 28, shuffle: true, angle: 1, smother: 0.7, read: true, spread: 2, spreadP: 0.9, misjudge: 0.015, claim: 10, bend: 0.85, aimErr: 0.75, aimNoise: 0.015, holdNoise: 1 },
+  { react: 18, spin: 0, misread: 0.8, think: 9, block: 0.04, sweep: 0.4, hold: 70, shuffle: false, angle: 0.9, smother: 1.1, read: false, spread: 99, spreadP: 0, misjudge: 0.12, claim: 6, bend: 0, aimErr: 1.6, aimNoise: 0.07, holdNoise: 4, punch: 0.35 },
+  { react: 10, spin: 0.25, misread: 0.35, think: 5, block: 0.12, sweep: 0.2, hold: 45, shuffle: false, angle: 1, smother: 0.85, read: true, spread: 4, spreadP: 0.75, misjudge: 0.05, claim: 8, bend: 0.6, aimErr: 1, aimNoise: 0.035, holdNoise: 2, punch: 0.65 },
+  { react: 6, spin: 0.45, misread: 0.12, think: 3, block: 0.3, sweep: 0.05, hold: 28, shuffle: true, angle: 1, smother: 0.7, read: true, spread: 2, spreadP: 0.9, misjudge: 0.015, claim: 10, bend: 0.85, aimErr: 0.75, aimNoise: 0.015, holdNoise: 1, punch: 0.85 },
 ];
 // a lagging human's stand-in plays at the middle level, whatever the room's AI
 let stand = null;
@@ -1208,8 +1208,7 @@ function gkThink(w, p, c) {
     // (only at a shot that comes within the block's reach: one going across
     // him to the far post is a dive)
     if ((kind === GKB.SPREAD && dB < 4.5 && zk < 0.7 && off < 1.8) || (kind === GKB.STAR && nearHim && tk < 0.25) || (kind === GKB.KNEE && dB < 6.5 && zk < 1.1 && off < 1.3)) {
-      p.tcd = 50;
-      beginBlock1v1(w, p, Math.atan2(-b.vy, -b.vx), kind);
+      tapKey(p, KT.RUN); // (a dive key – any but the shot key, which at a ball going wide means punch: on a shot from close in it's the block – see the sim's keeperDive)
       return;
     }
   }
@@ -1239,14 +1238,15 @@ function gkThink(w, p, c) {
         // low and just wide, too quick to dive for: a leg slid out along the grass
         // (when there's really no time – otherwise it's a dive, which can hold it)
         if (zk < 0.45 && Math.abs(dy) > 0.5 && Math.abs(dy) < 1.5 && p.tcd === 0 && (tt < 0.18 || (tt < 0.24 && rnd(w) < 0.4))) {
-          const to = Math.atan2(b.y - p.y, b.x - p.x);
-          p.tcd = 40;
-          beginBlock1v1(w, p, to, GKB.SPLITS, Math.cos(to) * dy >= 0 ? 1 : -1);
+          tapKey(p, KT.RUN); // (a dive key: low, just wide and on him – the splits, see keeperDive)
           return;
         }
         if (Math.abs(dy) > 0.65 && tt < 0.4 + s.h * 0.08) {
+          // the dive key, the stick the way he goes (as he reads it – a
+          // weaker keeper misreads it more)
           const ey = dy + (rnd(w) - 0.5) * 2 * lv.misread;
-          beginDive(w, p, Math.atan2(ey, dir * 0.25 * Math.abs(ey)), Math.min(zk, 2.3), tt, Math.abs(ey) * 1.03);
+          setMove(p, dir * 0.25 * Math.abs(ey), ey, 1);
+          tapKey(p, KT.RUN);
           return;
         }
         moveTo(p, p.x + dir * 0.05, yk, lv.shuffle ? 0.5 : 99, 0.05);
@@ -1274,9 +1274,15 @@ function gkThink(w, p, c) {
     if ((inBox && (wins || called)) || sweep || (meant && ic.t < 9)) {
       const dBall = Math.hypot(b.x - p.x, b.y - p.y);
       if (inBox && rival && b.z < 0.5 && dBall < 2.4 && dBall > 0.9 && Math.hypot(b.x - rival.x, b.y - rival.y) < 2.2 && p.tcd === 0) {
-        p.tcd = 50;
-        beginDive(w, p, Math.atan2(b.y - p.y, b.x - p.x), 0.15, Math.max(0.15, dBall / 7), dBall + 0.3);
+        tapKey(p, KT.GOAL); // (the dive key at a loose ball one of theirs is reaching: down at it)
         return;
+      }
+      // a high ball he's coming for in a crowd: the shot key held as it comes
+      // means punch it (as a person does) – decided once for the ball, more
+      // often the better he is
+      if (inBox && high && rival && ic.t < 0.6 && Math.hypot(ic.x - rival.x, ic.y - rival.y) < 1.8) {
+        const flight = (w.tick - b.kt) * 2654435761 + b.last * 40503 >>> 0;
+        if ((flight % 1000) / 1000 < lv.punch) p.ib = (p.ib & ~KICK_MASK & ~(3 << 3)) | packKick(KT.GOAL, KH.HIGH);
       }
       moveTo(p, ic.x, ic.y, 1.5, 0.05);
       return;
@@ -1316,8 +1322,7 @@ function gkThink(w, p, c) {
     const pace = Math.hypot(owner.vx, owner.vy);
     if ((alone || charge || close) && !shooting && inOwnBox(w, p.team, b.x, b.y, 0.5) && p.tcd === 0 && b.z < 0.5
       && dBall < 2.6 && ((sep > lv.smother && dBall < sep + 0.3) || (dBall < 1.3 && threat && pace >= 3.5))) {
-      p.tcd = 50;
-      beginDive(w, p, Math.atan2(b.y - p.y, b.x - p.x), 0.15, Math.max(0.15, dBall / 7), dBall + 0.3);
+      tapKey(p, KT.GOAL); // (the dive key at a man's feet: the smother – see keeperDive)
       return;
     }
     // ...a man in the box who stands or walks with it – a real chance or not –
