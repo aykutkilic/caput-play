@@ -82,7 +82,7 @@ const game = new NetGame(null);
 const input = new Input();
 const renderer = new Renderer($('game'));
 // developer mode: Cmd/Ctrl+Shift+D three times (see devview.js)
-const devView = new DevView((on) => toast(on ? 'Developer mode on – lanes, holes, AI' : 'Developer mode off'));
+const devView = new DevView((on) => toast(on ? 'Developer mode on – lanes, holes, AI' : 'Developer mode off'), (action) => keyName(input.keys[action]));
 const sfx = new Sfx();
 try { renderer.setPreset(localStorage.getItem('caput.cam') || 'iso'); renderer.zoom = Number(localStorage.getItem('caput.zoom')) || 1; } catch { renderer.setPreset('iso'); }
 

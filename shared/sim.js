@@ -652,6 +652,32 @@ function runAhead(q, t) {
   return [q.x + q.vx / sp * d, q.y + q.vy / sp * d];
 }
 
+// Where a person's shot goes for a stick (world direction sx, sy, magnitude
+// sm), the key's height kh and power pw: aimed where the stick points – the
+// spot on the goal line along it, up to a metre wide of a post (to bend it
+// back in with aftertouch: it goes there); pointing away from goal, the corner
+// on that side. Then the holes: grouped by where the stick points – towards
+// the goal, the part of it round that spot; out to a side, that half; none,
+// anywhere – the best one there decides where it goes and how it's bent (R2:
+// wrapped round more, for pace). (Developer mode shows them with it.)
+export function shotAim(w, p, kind, kh, pw, sx, sy, sm) {
+  const pit = pitchOf(w), dir = teamDir(w, p.team), b = w.ball, gx = dir * pit.L / 2;
+  const hw = pit.goalW / 2, half = hw - 0.35, wide = hw + 1.0;
+  let aimY = (Math.abs(b.y) < 0.8 ? (p.id % 2 ? 1 : -1) : -Math.sign(b.y)) * pit.goalW * 0.2;
+  let span = null;
+  if (sm > 0.3) {
+    if (sx * dir > 0.15) {
+      aimY = clamp(b.y + sy / sx * (gx - b.x), -wide, wide);
+      span = [clamp(aimY, -hw, hw) - hw * 0.45, clamp(aimY, -hw, hw) + hw * 0.45];
+    } else if (Math.abs(sy) > 0.2) { aimY = Math.sign(sy) * half; span = sy > 0 ? [0, hw] : [-hw, 0]; }
+  }
+  if (Math.abs(aimY) <= hw && byPerson(p)) {
+    const hole = shotHole(w, p, kind, kh, pw, 0, span, kind === KICK.FINESSE ? [0.5, -0.5, 1, -1, 0] : [0, -0.5, 0.5], aimY);
+    if (hole) return { tx: gx, ty: hole.ty, kc: hole.kc, hole };
+  }
+  return { tx: gx, ty: aimY, kc: 0, hole: null };
+}
+
 // Picks a target for a kick. Humans aim with the stick (PES-style assisted
 // passing: the receiver closest to the stick direction gets it).
 export function planKick(w, p, kind, power, tx, ty, tid = -1, kh) {
@@ -662,29 +688,8 @@ export function planKick(w, p, kind, power, tx, ty, tid = -1, kh) {
   const [sx, sy, sm] = stickOf(p);
   const ax = sm > 0.3 ? sx : Math.cos(p.face), ay = sm > 0.3 ? sy : Math.sin(p.face);
   if (kind === KICK.SHOT || kind === KICK.FINESSE) {
-    const gx = dir * pit.L / 2;
-    // aimed where the stick points: the spot on the goal line along it – up
-    // to a metre wide of a post (to bend it back in with aftertouch);
-    // pointing away from goal, the corner on that side
-    const hw = pit.goalW / 2, half = hw - 0.35, wide = hw + 1.0;
-    let aimY = (Math.abs(b.y) < 0.8 ? (p.id % 2 ? 1 : -1) : -Math.sign(b.y)) * pit.goalW * 0.2;
-    // the holes in the goal, grouped by where the stick points: towards the
-    // goal, the part of it round that spot; out to a side, that half; none,
-    // anywhere. The key's row picks the height; the best hole there decides
-    // where it goes and how it's bent (R2: wrapped round more, for pace)
-    let span = null;
-    if (sm > 0.3) {
-      if (sx * dir > 0.15) {
-        aimY = clamp(b.y + sy / sx * (gx - b.x), -wide, wide);
-        span = [clamp(aimY, -hw, hw) - hw * 0.45, clamp(aimY, -hw, hw) + hw * 0.45];
-      } else if (Math.abs(sy) > 0.2) { aimY = Math.sign(sy) * half; span = sy > 0 ? [0, hw] : [-hw, 0]; }
-    }
-    p.kx = gx; p.ky = aimY;
-    // (aimed wide of a post on purpose – to bend it back in with aftertouch – it goes there)
-    if (Math.abs(aimY) <= hw && byPerson(p)) {
-      const hole = shotHole(w, p, kind, kh, p.kp, 0, span, kind === KICK.FINESSE ? [0.5, -0.5, 1, -1, 0] : [0, -0.5, 0.5], aimY);
-      if (hole) { p.ky = hole.ty; p.kc = hole.kc; }
-    }
+    const a = shotAim(w, p, kind, kh, p.kp, sx, sy, sm);
+    p.kx = a.tx; p.ky = a.ty; p.kc = a.kc;
     return;
   }
   if (kind === KICK.SELF) {

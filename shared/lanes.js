@@ -238,7 +238,7 @@ export function shotHole(w, p, kind, kh, pw, err, span, curls = [0, -0.5, 0.5], 
       const beat = 1 / (1 + Math.exp(-m / 0.1));
       const score = on * beat - 0.01 * Math.abs(kc) - (aim === null ? 0 : 0.06 * Math.abs(ty - aim));
       if (out) out.push({ ty, z: cross.z, kc, m, on, score });
-      if (!best || score > best.score) best = { score, m, on, kc, ty, tx: gx, fl, th, tEnd: cross.t };
+      if (!best || score > best.score) best = { score, m, on, kc, ty, tx: gx, fl, th, tEnd: cross.t, z: cross.z };
     }
   }
   return best;

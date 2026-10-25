@@ -6,11 +6,13 @@
 //     theirs could get to it, red beyond: their time shadows (shared/lanes.js);
 //     a lofted class arcs over the men it clears
 //   · the holes in the goal: every target the shot search looks at, coloured
-//     by its margin (green: nobody there in time), the best one ringed with
-//     its flight – low, mid and top
+//     by its margin (green: nobody there in time); for you, the hole each shot
+//     key picks (its row: low / mid / top) with no stick – ringed, its flight
+//     drawn – and with the stick out to either side (the arrow as it points
+//     on screen); for an AI player, his best at each height
 //   · the best pass lane to each team-mate, coloured by its odds
 //   · the ball's predicted path, the AI's roles and where it's heading
-import { pitchOf, teamDir, ballPath, pById, passEndSpeed, loftTime } from '../shared/sim.js';
+import { pitchOf, teamDir, ballPath, pById, passEndSpeed, loftTime, shotAim, byPerson } from '../shared/sim.js';
 import { laneFan, passHole, shotHole } from '../shared/lanes.js';
 import { KH, KICK, ROLE, KICK_MASK } from '../shared/constants.js';
 
@@ -19,8 +21,12 @@ const OPEN = 'rgba(90,235,130,0.5)', SHUT = 'rgba(255,85,70,0.8)';
 const marginCol = (m) => (m > 0.1 ? 'rgba(90,235,130,0.95)' : m > -0.1 ? 'rgba(255,214,90,0.95)' : 'rgba(255,85,70,0.9)');
 const oddsCol = (o) => (o > 0.7 ? 'rgba(90,235,130,0.9)' : o > 0.4 ? 'rgba(255,214,90,0.9)' : 'rgba(255,85,70,0.85)');
 
+const SHOT_KEY = ['goalG', 'goalM', 'goalH'], PASS_KEY = ['mateG', 'mateM', 'mateH'];
+
 export class DevView {
-  constructor(onToggle) {
+  // keyLabel(action): the key bound to a binding (e.g. 'goalG' -> 'D')
+  constructor(onToggle, keyLabel = (a) => a) {
+    this.keyLabel = keyLabel;
     try { this.on = localStorage.getItem('caput.dev') === '1'; } catch { this.on = false; }
     this.presses = [];
     this.cache = null;
@@ -56,10 +62,16 @@ export class DevView {
     // the holes in the goal (in range)
     const dGoal = Math.hypot(gx - b.x, b.y);
     if (dGoal < 36 && (gx - b.x) * dir > 2) {
+      const pw = p.chgBtn ? Math.max(0.3, p.chg / 40) : 0.7;
       for (const h of [KH.GROUND, KH.MID, KH.HIGH]) {
-        const all = [], best = shotHole(w, p, KICK.SHOT, h, 0.7, 0, null, [0, -0.5, 0.5], null, all);
+        const all = [], best = shotHole(w, p, KICK.SHOT, h, pw, 0, null, [0, -0.5, 0.5], null, all);
         out.holes.push(...all);
-        if (best) out.best.push({ ...best, kh: h, pick: target === 3 && h === kh });
+        if (!byPerson(p)) { if (best) out.best.push({ ...best, kh: h, stick: 0, pick: false }); continue; }
+        // what each key picks: no stick, and the stick out to either side of the goal
+        for (const sy of [0, 1, -1]) {
+          const a = shotAim(w, p, KICK.SHOT, h, pw, 0, sy, sy ? 1 : 0);
+          if (a.hole) out.best.push({ ...a.hole, kh: h, stick: sy, pick: target === 3 && h === kh && !sy });
+        }
       }
     }
     // the best lane to each team-mate, at the height he's charging (feet otherwise)
@@ -126,7 +138,7 @@ export class DevView {
           const [X, Y] = P(h.rx, h.ry, 0);
           g.fillStyle = oddsCol(h.odds); g.beginPath(); g.arc(X, Y, 3.5 * dpr, 0, 7); g.fill();
           g.font = `600 ${Math.round(9 * dpr)}px system-ui, sans-serif`; g.textAlign = 'center';
-          g.fillText(`${Math.round(h.odds * 100)}%${h.kc ? (h.kc > 0 ? ' ↶' : ' ↷') : ''}`, X, Y - 6 * dpr);
+          g.fillText(`${d.p && byPerson(d.p) ? this.keyLabel(PASS_KEY[d.fan ? d.fan.kh : 0]) + ' ' : ''}${Math.round(h.odds * 100)}%${h.kc ? (h.kc > 0 ? ' ↶' : ' ↷') : ''}`, X, Y - 6 * dpr);
         }
       }
       // the holes in the goal mouth, and the best at each height with its flight
@@ -138,12 +150,31 @@ export class DevView {
         g.beginPath(); g.arc(X, Y, (h.kc ? 2.5 : 3.5) * dpr, 0, 7); g.fill();
       }
       g.globalAlpha = 1;
+      // the stick's arrow for each side of the goal, as it points on this screen
+      const [ax0, ay0] = P(gx, -1, 1), [ax1, ay1] = P(gx, 1, 1), sdx = ax1 - ax0, sdy = ay1 - ay0;
+      const arrow = (sy) => (Math.abs(sdx) >= Math.abs(sdy) ? (sdx * sy > 0 ? '→' : '←') : (sdy * sy > 0 ? '↓' : '↑'));
+      g.font = `700 ${Math.round(10 * dpr)}px system-ui, sans-serif`; g.textAlign = 'center';
+      // (the same hole picked more than one way: one ring, one label – "E ←E")
+      const spots = new Map();
       for (const h of d.best) {
-        path(turned(h.fl, h.th).filter((q, k, a) => k === 0 || Math.hypot(q[0] - b.x, q[1] - b.y) <= Math.hypot(gx - b.x, h.ty - b.y) + 0.3), h.pick ? '#ffffff' : 'rgba(255,255,255,0.45)', h.pick ? 2 : 1.2);
-        const z = h.kh === KH.GROUND ? 0.25 : h.kh === KH.MID ? 1.1 : pit.goalH - 0.3;
+        const key = `${h.kh}:${h.ty.toFixed(2)}:${h.kc}`;
+        if (!spots.has(key)) spots.set(key, []);
+        spots.get(key).push(h);
+      }
+      for (const hs of spots.values()) {
+        const h = hs.find((x) => !x.stick) || hs[0], free = hs.some((x) => !x.stick);
+        if (free) path(turned(h.fl, h.th).filter((q, k) => k === 0 || Math.hypot(q[0] - b.x, q[1] - b.y) <= Math.hypot(gx - b.x, h.ty - b.y) + 0.3), h.pick ? '#ffffff' : 'rgba(255,255,255,0.45)', h.pick ? 2 : 1.2);
+        const z = h.z ?? (h.kh === KH.GROUND ? 0.25 : h.kh === KH.MID ? 1.1 : pit.goalH - 0.3);
         if (!vis(gx, h.ty, z)) continue;
         const [X, Y] = P(gx, h.ty, z);
-        g.strokeStyle = '#fff'; g.lineWidth = 1.5 * dpr; g.beginPath(); g.arc(X, Y, 6 * dpr, 0, 7); g.stroke();
+        g.strokeStyle = '#fff'; g.lineWidth = (free ? 1.5 : 1) * dpr;
+        g.beginPath(); g.arc(X, Y, (free ? 6.5 : 4) * dpr, 0, 7); g.stroke();
+        if (!d.p || !byPerson(d.p)) continue;
+        // which key (and stick) picks it
+        const key = this.keyLabel(SHOT_KEY[h.kh]);
+        const label = hs.map((x) => (x.stick ? arrow(x.stick) : '') + key).join(' ') + (h.kc ? (h.kc > 0 ? ' ↶' : ' ↷') : '');
+        g.lineWidth = 3 * dpr; g.strokeStyle = 'rgba(0,0,0,0.7)';
+        g.strokeText(label, X, Y - 9 * dpr); g.fillStyle = free ? '#fff' : 'rgba(255,255,255,0.8)'; g.fillText(label, X, Y - 9 * dpr);
       }
     }
     // the AI: role, and where a supporter is heading
@@ -162,6 +193,7 @@ export class DevView {
       if (top) lines.push(`best hole ${['low', 'mid', 'top'][top.kh]} y ${top.ty.toFixed(1)}${top.kc ? (top.kc > 0 ? ' curl ↶' : ' curl ↷') : ''} · margin ${top.m.toFixed(2)} s`);
       if (d.passes.length) lines.push('passes ' + d.passes.map((h) => `${Math.round(h.odds * 100)}%`).join(' '));
     }
+    if (d && d.p && byPerson(d.p) && d.holes.length) lines.push(`shot keys: ${this.keyLabel('goalG')} low · ${this.keyLabel('goalM')} mid · ${this.keyLabel('goalH')} top · stick to a side: that half (↶↷: bent)`);
     lines.push('⌘/Ctrl+Shift+D ×3: leave');
     g.font = `600 ${Math.round(11 * dpr)}px ui-monospace, Menlo, monospace`; g.textAlign = 'left';
     const lh = 14 * dpr, x0 = 10 * dpr, y0 = cam.h - (lines.length * lh) - 120 * dpr;
