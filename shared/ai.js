@@ -721,7 +721,16 @@ function defendThink(w, p, c, owner) {
       // at most), not where it could only be headed on
       const mc = b.tgt === p.id && b.lastTeam === p.team ? intercept(p, c.path, 1.4) : ic;
       const go = mc.t < 9 ? mc : ic;
-      moveTo(p, go.x, go.y, go.t > 0.5 ? 2 : 99, 0.05);
+      // a ball along the ground and one of them close behind him in getting
+      // to it: a race – flat out to the first point he can reach (it moves up
+      // towards the ball as he closes), to touch it first rather than wait
+      // for it to slow down (in the air he still gets under it and times it)
+      let tOpp = 9;
+      if (b.z < 0.5 && Math.abs(b.vz) < 2) for (const o of w.players) if (o.team !== p.team && o.st !== ST.FALLEN) tOpp = Math.min(tOpp, c.ic.get(o.id).t);
+      if (go.t < 9 && tOpp < go.t + 0.6) {
+        setMove(p, go.x - p.x, go.y - p.y, 1);
+        if (p.stam > 0.05) p.ib |= BTN.SPRINT;
+      } else moveTo(p, go.x, go.y, go.t > 0.5 ? 2 : 99, 0.05);
       const d = Math.hypot(b.x - p.x, b.y - p.y);
       if (!p.qa && d < 7) {
         const gx = dir * pit.L / 2, dGoal = Math.hypot(gx - p.x, p.y);

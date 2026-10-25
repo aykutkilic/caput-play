@@ -1573,7 +1573,7 @@ function launch(w, p, tech) {
       let speed = (12 + 13 * pw) * s.shot * techF;
       // struck along the grass it's quicker still; in the air a little quicker
       // too – but not a soft one meant to loop up (a chip stays a chip)
-      if (p.kh === KH.GROUND && tech === ST.KICK) speed *= 1.2;
+      if (p.kh === KH.GROUND && tech === ST.KICK) speed *= 1.35;
       else speed *= 1 + 0.1 * clamp((pw - 0.2) / 0.3, 0, 1);
       // a header: neck and jump, plus the run he put into it – well short of a
       // kick (a standing one ~45 km/h at most, met on the run ~55-60)
@@ -1670,6 +1670,11 @@ function handleButtons(w, p) {
   const free = isFree(p);
   const live = m.phase === PHASE.PLAY || m.phase === PHASE.WARMUP;
   if (!live) { p.chgBtn = 0; p.chg = 0; p.qa = 0; p.tap = 0; return; }
+  // the other side on the ball: a kick being charged for a loose ball is off –
+  // the key held now means pressing him (and no gauge)
+  if (oppHas && p.chgBtn) { p.chgBtn = 0; p.chg = 0; p.qa = 0; }
+  // ...and while they pass it between them, the team-mate key presses too
+  const theirPass = !owner && b.lastTeam >= 0 && b.lastTeam !== p.team && b.tgt >= 0 && (pById(w, b.tgt) || p).team !== p.team;
 
   const code = btn & KICK_MASK;                   // kick target held (0 = none)
   const packed = code | (((btn >> 3) & 3) << 3);  // ... with its height
@@ -1695,7 +1700,8 @@ function handleButtons(w, p) {
       p.chgBtn = packed;
       if (p.qa) p.qa = packed;
       if (p.tapH < 255) p.tapH++;
-      p.chg = Math.min(CHG_MAX, p.chg + (p.tap >= 2 ? 2 : 1));
+      // (a shot winds up half as fast again)
+      p.chg = Math.min(CHG_MAX, p.chg + (p.tap >= 2 ? 2 : 1) + (code === KT.GOAL && p.tapH & 1 ? 1 : 0));
       if (p.chg >= CHG_MAX && mine && free && (code === KT.GOAL || code === KT.SELF || p.tap >= 2)) fire(p.chgBtn, 1);
     } else {
       p.tapT = 0; p.tapK = p.chgBtn & KICK_MASK;
@@ -1714,7 +1720,7 @@ function handleButtons(w, p) {
     p.tapH = 0;
     if (mine) {
       if (free) { p.chgBtn = packed; p.chg = 0; }
-    } else if (!owner) {
+    } else if (!owner && !(theirPass && pressed === KT.MATE)) {
       // keeper: a ball coming in – a dive; but the shoot key at one that isn't
       // going in (a cross) means punch it (see gkSave)
       const ownGoalDanger = p.role === ROLE.GK && inOwnBox(w, p.team, b.x, b.y, 8)
