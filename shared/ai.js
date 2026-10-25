@@ -8,6 +8,7 @@ import {
   inOwnBox, clamp, encodeStick, ballPath, blockPlan, beginBlock, wantsBlock, loftTime,
   groundSpeedFor, passEndSpeed, MU, CF, byPerson, keeperBig, bigReach,
 } from './sim.js';
+import { SHAPE, MARK } from './learned.js';
 
 const AI_CARRY = 1, AI_SUPPORT = 2, AI_PRESS = 3, AI_MARK = 4; // (a marker's man in aiY)
 const PATH_N = 25; // 2.5 s look-ahead in 0.1 s steps
@@ -306,7 +307,12 @@ function lossCost(w, team, x) {
 }
 
 // Rough chance a shot from p scores: the goal mouth he can see, the distance,
-// someone in the way, someone on him.
+// someone in the way, someone on him – put on the scale of what goes in:
+// fitted to ~1,500 shots in our own AI matches (goal ~ logistic in the logit
+// of the geometry's figure), the long ones score more often than the geometry
+// says and the best chances less. (Steeper fits make the AI shoot so much it
+// scores less.)
+const XG_A = -0.28, XG_B = 0.666;
 function shotChance(w, p) {
   const pit = pitchOf(w), dir = teamDir(w, p.team), gx = dir * pit.L / 2;
   const fx = (gx - p.x) * dir;
@@ -315,7 +321,8 @@ function shotChance(w, p) {
   let xg = 0.9 * ang * Math.exp(-Math.hypot(gx - p.x, p.y) / 9);
   if (laneBlocked(w, p.team, p.x, p.y, gx, 0, 0.7)) xg *= 0.5;
   if (openness(w, p.team, p.x, p.y) < 1.3) xg *= 0.75;
-  return xg;
+  const q = clamp(xg, 0.002, 0.99);
+  return 1 / (1 + Math.exp(-(XG_A + XG_B * Math.log(q / (1 - q)))));
 }
 
 // The best pass by expected value: to feet, into the space ahead of a runner,
@@ -409,23 +416,58 @@ function bestPass(w, p, forPeople = 0.08) {
   return best;
 }
 
+// A curve learned over the ball's depth: values at the middles of equal bins
+// from our goal line (-1) to theirs (+1), straight lines in between.
+function overDepth(v, X) {
+  const n = v.length, f = clamp((X + 1) / 2 * n - 0.5, 0, n - 1), i = Math.min(n - 2, Math.floor(f));
+  return v[i] + (v[i + 1] - v[i]) * (f - i);
+}
+// A table learned over a man's distance to goal (rows, at MARK.g m) and to
+// the ball (columns, at MARK.b m), straight lines in between.
+function along(E, v) {
+  if (v <= E[0]) return 0;
+  for (let i = 0; i < E.length - 1; i++) if (v < E[i + 1]) return i + (v - E[i]) / (E[i + 1] - E[i]);
+  return E.length - 1;
+}
+function overGrid(t, dGoal, dBall) {
+  const fi = along(MARK.g, dGoal), fj = along(MARK.b, dBall);
+  const i = Math.min(t.length - 2, Math.floor(fi)), j = Math.min(t[0].length - 2, Math.floor(fj)), di = fi - i, dj = fj - j;
+  return (t[i][j] * (1 - dj) + t[i][j + 1] * dj) * (1 - di) + (t[i + 1][j] * (1 - dj) + t[i + 1][j + 1] * dj) * di;
+}
+// The formation slots of a side of n, standardised (mean 0, spread 1 along
+// and across) so the learned spread sizes them.
+const slotZs = new Map();
+function slotZ(n, i) {
+  let z = slotZs.get(n);
+  if (!z) {
+    const s = Array.from({ length: n }, (_, j) => slotOf(n, j));
+    const norm = (k) => {
+      const mu = s.reduce((t, q) => t + q[k], 0) / n, sd = Math.sqrt(s.reduce((t, q) => t + (q[k] - mu) * (q[k] - mu), 0) / n);
+      return s.map((q) => (sd > 1e-6 ? (q[k] - mu) / sd : 0));
+    };
+    const za = norm(0), zb = norm(1);
+    z = s.map((_, j) => [za[j], zb[j]]);
+    slotZs.set(n, z);
+  }
+  return z[i % n];
+}
+
 function slotTarget(w, p, attacking) {
   const pit = pitchOf(w), dir = teamDir(w, p.team), b = w.ball, m = w.m;
   const [i, n] = slotIndex(w, p);
-  const [a, sb] = slotOf(Math.max(1, n), Math.max(0, i));
   const hx = pit.L / 2, hy = pit.W / 2;
-  let x;
-  if (attacking) {
-    // push up: forwards hold a high line, everyone moves with the ball
-    x = dir * Math.min(0.75, a + 0.5) * hx * 0.75 + b.x * 0.3;
-  } else {
-    x = dir * (a - 0.05) * hx * 0.6 + b.x * 0.4;
-    if ((x - b.x) * dir > -1.5) x = b.x - dir * 1.5;
-  }
-  let y = sb * hy * 0.65 + b.y * 0.25;
+  // the shape real sides keep (learned from broadcast tracking of league
+  // matches, see learned.js): where its middle is and how far it spreads,
+  // along and across, for where the ball is – with and without it. His
+  // formation slot says where in that shape he stands.
+  const sh = attacking ? SHAPE.ip : SHAPE.op, X = clamp(b.x * dir / hx, -1, 1);
+  const [za, zb] = slotZ(Math.max(1, n), Math.max(0, i));
+  let x = dir * (overDepth(sh.cx, X) + za * overDepth(sh.sx, X)) * hx;
+  if (!attacking && (x - b.x) * dir > -1.5) x = b.x - dir * 1.5;
+  let y = sh.cyk * b.y + zb * overDepth(sh.sy, X) * hy;
   // corners: attackers crowd the box, defenders track back
   if (m.phase !== PHASE.KICKOFF && m.spType === SP.CORNER && (m.phase === PHASE.SETPIECE || m.spTaker >= 0)) {
-    const sdir = teamDir(w, m.spTeam), gx = sdir * hx;
+    const sdir = teamDir(w, m.spTeam), gx = sdir * hx, [, sb] = slotOf(Math.max(1, n), Math.max(0, i));
     x = gx - sdir * (pit.penSpot * (0.6 + 0.5 * ((i % 3) / 2)));
     y = sb * pit.boxW * 0.3;
   }
@@ -590,7 +632,9 @@ function supportThink(w, p, owner) {
     let line = -dir * 1e9;
     for (const o of w.players) if (o.team !== p.team && o.role === ROLE.OUT && (o.x - line) * dir > 0) line = o.x;
     const [, n] = slotIndex(w, p);
-    const cands = [[p.aiX, p.aiY, 0.02], [sx, sy, 0]];
+    // (keeping his spot is worth a little: as much as keeps him on the move
+    // about half the time, as real players without the ball are)
+    const cands = [[p.aiX, p.aiY, 0.01], [sx, sy, 0]];
     const a0 = rnd(w) * TAU;
     for (let k = 0; k < 10; k++) {
       const a = a0 + k / 10 * TAU, r = k % 2 ? 4.5 : 9;
@@ -731,12 +775,17 @@ function defendThink(w, p, c, owner) {
   if (mk !== undefined) {
     const o = pById(w, mk);
     if (o) {
-      // goal-side of the man, shaded towards the ball to cut the passing lane
-      const dx = ogx - o.x, dy = -o.y, d = Math.hypot(dx, dy) || 1;
-      const lx = o.x + (owner.x - o.x) * 0.22, ly = o.y + (owner.y - o.y) * 0.22;
-      const tight = Math.hypot(o.x - ogx, o.y) < pit.boxD + 10 ? 1.2 : 2.0;
-      tx = (lx + dx / d * tight) * 0.8 + sx * 0.2;
-      ty = (ly + dy / d * tight) * 0.8 + sy * 0.2;
+      // where real defenders stand off a man without the ball (learned.js):
+      // goal-side, shaded to the ball's side, closer the nearer he is to our
+      // goal and to the ball
+      const dG = Math.hypot(o.x - ogx, o.y) || 1, ux = (ogx - o.x) / dG, uy = -o.y / dG;
+      let vx = -uy, vy = ux;
+      if ((owner.x - o.x) * vx + (owner.y - o.y) * vy < 0) { vx = -vx; vy = -vy; }
+      const dB = Math.hypot(owner.x - o.x, owner.y - o.y);
+      const r = overGrid(MARK.r, dG, dB), a = overGrid(MARK.a, dG, dB);
+      // (off where he'll be in a moment: he's on the move)
+      tx = o.x + o.vx * 0.3 + (ux * Math.cos(a) + vx * Math.sin(a)) * r;
+      ty = o.y + o.vy * 0.3 + (uy * Math.cos(a) + vy * Math.sin(a)) * r;
     }
   }
   guardTo(p, tx, ty, 5, 0.5); // (ball and man in view)
