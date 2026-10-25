@@ -8,7 +8,7 @@ import {
   inOwnBox, clamp, encodeStick, ballPath, blockPlan, beginBlock, wantsBlock, loftTime,
   groundSpeedFor, passEndSpeed, MU, CF, byPerson, keeperBig, bigReach,
 } from './sim.js';
-import { SHAPE, MARK } from './learned.js';
+import { SHAPE, MARK, PRESS } from './learned.js';
 
 const AI_CARRY = 1, AI_SUPPORT = 2, AI_PRESS = 3, AI_MARK = 4; // (a marker's man in aiY)
 const PATH_N = 25; // 2.5 s look-ahead in 0.1 s steps
@@ -119,15 +119,17 @@ function laneSpot(w, p, owner, r) {
 // ------------------------------------------------------------ per-tick analysis
 
 function predictPath(w) {
-  const b = w.ball, path = [];
+  const b = w.ball;
   if (b.owner >= 0) {
-    const o = pById(w, b.owner);
+    // (the same points every tick, refilled – it's only looked at this tick)
+    const o = pById(w, b.owner), path = w._pp || (w._pp = Array.from({ length: PATH_N + 1 }, () => ({ x: 0, y: 0, z: 0 })));
     for (let k = 0; k <= PATH_N; k++) {
-      const t = Math.min(k * 0.1, 0.8);
-      path.push({ x: b.x + (o ? o.vx : 0) * t, y: b.y + (o ? o.vy : 0) * t, z: b.z });
+      const t = Math.min(k * 0.1, 0.8), q = path[k];
+      q.x = b.x + (o ? o.vx : 0) * t; q.y = b.y + (o ? o.vy : 0) * t; q.z = b.z;
     }
     return path;
   }
+  const path = [];
   const pts = ballPath(w);
   for (let k = 0; k <= PATH_N; k++) path.push(pts[Math.min(pts.length - 1, k * 3)]);
   return path;
@@ -137,9 +139,8 @@ function intercept(p, path, top = 2.2) {
   const s = stOf(p), v0 = Math.hypot(p.vx, p.vy);
   for (let k = 0; k < path.length; k++) {
     const t = k * 0.1, q = path[k];
-    const d = Math.hypot(q.x - p.x, q.y - p.y) - 0.45;
-    const reach = t < 0.2 ? v0 * t : v0 * 0.2 + s.sprint * (t - 0.2) * 0.92;
-    if (d <= reach && q.z < top) return { t, x: q.x, y: q.y, z: q.z };
+    const reach = (t < 0.2 ? v0 * t : v0 * 0.2 + s.sprint * (t - 0.2) * 0.92) + 0.45, dx = q.x - p.x, dy = q.y - p.y;
+    if (dx * dx + dy * dy <= reach * reach && q.z < top) return { t, x: q.x, y: q.y, z: q.z };
   }
   const q = path[path.length - 1];
   return { t: 9, x: q.x, y: q.y, z: q.z };
@@ -229,11 +230,16 @@ function openness(w, team, x, y) {
 // Seconds q needs to get to (x, y): a short reaction, then accelerating from
 // his current speed towards that spot up to his sprint speed. Someone on the
 // floor or mid-move needs the rest of it first.
-function reachTime(q, x, y) {
+// Racing several to a spot, the best time so far can be passed as cap: whoever
+// couldn't beat it even sprinting all the way is out of it (Infinity) without
+// working it out – the race comes out the same, for a fraction of the work.
+function reachTime(q, x, y, cap = Infinity) {
   const s = stOf(q);
-  const dx = x - q.x, dy = y - q.y, dl = Math.hypot(dx, dy);
+  const dx = x - q.x, dy = y - q.y;
   const busy = q.st !== ST.IDLE && q.st !== ST.STUMBLE ? Math.max(0, q.stDur - q.stT) / 60 : 0;
-  const d = dl - (q.role === ROLE.GK ? 1.0 : 0.6);
+  const rr = q.role === ROLE.GK ? 1.0 : 0.6, R = rr + s.sprint * (cap - 0.18 - busy);
+  if (R > rr && dx * dx + dy * dy >= R * R) return Infinity;
+  const dl = Math.hypot(dx, dy), d = dl - rr;
   if (d <= 0) return 0.08 + busy;
   const v0 = clamp((q.vx * dx + q.vy * dy) / dl, 0, s.sprint);
   const a = s.accel, vmax = s.sprint;
@@ -246,10 +252,12 @@ function reachTime(q, x, y) {
 // lead the ball keeps over any opponent anywhere along a ground pass (only the
 // landing spot – and a charge-down at the start – for a lofted one), and the
 // race between receiver and opponents at the target.
+const OPPS = [];
 function passOdds(w, team, x0, y0, x1, y1, kind, kh, pw, recv) {
   const d = Math.hypot(x1 - x0, y1 - y0) || 0.01, ux = (x1 - x0) / d, uy = (y1 - y0) / d;
   let tEnd = 0, margin = 9;
-  const opps = [];
+  const opps = OPPS;
+  opps.length = 0;
   for (const o of w.players) if (o.team !== team && o.st !== ST.FALLEN) opps.push(o);
   if (kh === KH.GROUND) {
     const v0 = groundSpeedFor(d, passEndSpeed(kind, d, pw)), K = MU / CF;
@@ -259,7 +267,7 @@ function passOdds(w, team, x0, y0, x1, y1, kind, kh, pw, recv) {
       for (const o of opps) {
         // a keeper can only use his hands in his box
         if (o.role === ROLE.GK && !inOwnBox(w, o.team, px, py, 0)) continue;
-        margin = Math.min(margin, reachTime(o, px, py) - t);
+        margin = Math.min(margin, reachTime(o, px, py, margin + t) - t);
       }
       if (sd >= d || t > 4) { tEnd = t; break; }
     }
@@ -275,13 +283,14 @@ function passOdds(w, team, x0, y0, x1, y1, kind, kh, pw, recv) {
       const sd = d * t / tEnd, px = x0 + ux * sd, py = y0 + uy * sd;
       for (const o of opps) {
         if (o.role === ROLE.GK && !inOwnBox(w, o.team, px, py, 0)) continue;
-        margin = Math.min(margin, reachTime(o, px, py) - t);
+        margin = Math.min(margin, reachTime(o, px, py, margin + t) - t);
       }
     }
-    for (const o of opps) margin = Math.min(margin, reachTime(o, x1, y1) - tEnd + (kh === KH.HIGH ? -0.15 : 0));
+    const late = tEnd - (kh === KH.HIGH ? -0.15 : 0);
+    for (const o of opps) margin = Math.min(margin, reachTime(o, x1, y1, margin + late) - late);
   }
   let tOpp = 9;
-  for (const o of opps) tOpp = Math.min(tOpp, reachTime(o, x1, y1));
+  for (const o of opps) tOpp = Math.min(tOpp, reachTime(o, x1, y1, tOpp));
   const tRecv = recv ? reachTime(recv, x1, y1) : 9;
   margin = Math.min(margin, tOpp - Math.max(tRecv, tEnd) + 0.15);
   // a receiver arriving well after the ball leaves it to run loose
@@ -355,7 +364,7 @@ function bestPass(w, p, forPeople = 0.08) {
   const wide = Math.abs(p.y) > pit.boxW / 2 - 3 && (gx - p.x) * dir < pit.boxD + 10;
   // back to the keeper only as the very last way out: with a man right on him
   let tPress = 9;
-  for (const o of w.players) if (o.team !== p.team) tPress = Math.min(tPress, reachTime(o, p.x, p.y));
+  for (const o of w.players) if (o.team !== p.team) tPress = Math.min(tPress, reachTime(o, p.x, p.y, tPress));
   const cornered = tPress < 0.45;
   let best = null;
   const consider = (t, kind, kh, pw, tx, ty) => {
@@ -582,7 +591,7 @@ function carrierThink(w, p) {
     // minus the cost of losing it), or keep it (fine while nobody can get to
     // him; dribbling buys a little).
     let tPress = 9;
-    for (const o of w.players) if (o.team !== p.team) tPress = Math.min(tPress, reachTime(o, p.x, p.y));
+    for (const o of w.players) if (o.team !== p.team) tPress = Math.min(tPress, reachTime(o, p.x, p.y, tPress));
     const safe = 1 / (1 + Math.exp(-(tPress - 0.5) / 0.12));
     const keep = safe * spotValue(w, p.team, p.x + dir * 3 * safe, p.y * 0.9) - (1 - safe) * lossCost(w, p.team, p.x);
     const xg = dGoal < 30 ? shotChance(w, p) : 0;
@@ -621,6 +630,11 @@ function carrierThink(w, p) {
 // a team-mate and not too far from his slot – the man nearest the ball comes
 // to show for it at an angle. The current target gets a small bonus so he
 // doesn't dither between similar spots.
+const ADDS = [];
+function finishScore(sc, adds) {
+  for (const a of adds) sc += a;
+  return sc;
+}
 function supportThink(w, p, owner) {
   const pit = pitchOf(w), dir = teamDir(w, p.team);
   const hx = pit.L / 2 - 1.5, hy = pit.W / 2 - 1.2;
@@ -658,27 +672,33 @@ function supportThink(w, p, owner) {
       // who controls that spot when he gets there
       const tMe = reachTime(p, cx, cy);
       let tOpp = 9;
-      for (const o of w.players) if (o.team !== p.team) tOpp = Math.min(tOpp, reachTime(o, cx, cy));
-      const control = 1 / (1 + Math.exp(-(tOpp - tMe) / 0.3));
-      const odds = passOdds(w, p.team, owner.x, owner.y, cx, cy, KICK.PASS, d > 22 ? KH.MID : KH.GROUND, 0.5, null);
-      let sc = control * (0.4 + 0.6 * odds) * spotValue(w, p.team, cx, cy) + bonus;
+      for (const o of w.players) if (o.team !== p.team) tOpp = Math.min(tOpp, reachTime(o, cx, cy, tOpp));
+      const control = 1 / (1 + Math.exp(-(tOpp - tMe) / 0.3)), spot = spotValue(w, p.team, cx, cy);
+      // the rest of the score, in order:
+      const adds = ADDS;
+      adds.length = 0;
       // empty space: the further from their nearest man, the better
       let open = 9;
       for (const o of w.players) if (o.team !== p.team && o.role === ROLE.OUT) open = Math.min(open, Math.hypot(o.x - cx, o.y - cy));
-      sc += 0.002 * clamp(open - 2, 0, 5);
+      adds.push(0.002 * clamp(open - 2, 0, 5));
       // the man nearest the ball shows for it: an angle 6-14 m off the carrier
       // (with no going back to the keeper, he's the way out under pressure)
-      if (nearest && d >= 6 && d <= 14) sc += 0.06;
-      sc -= 0.004 * Math.max(0, d - 26);
+      if (nearest && d >= 6 && d <= 14) adds.push(0.06);
+      adds.push(-(0.004 * Math.max(0, d - 26)));
       for (const q of w.players) {
         if (q === p || q === owner || q.team !== p.team || q.role === ROLE.GK) continue;
         const qx = q.ai === AI_SUPPORT ? q.aiX : q.x, qy = q.ai === AI_SUPPORT ? q.aiY : q.y;
         const dq = Math.hypot(cx - qx, cy - qy);
-        if (dq < 7) sc -= (7 - dq) * 0.006;
+        if (dq < 7) adds.push(-((7 - dq) * 0.006));
       }
-      sc -= Math.hypot(cx - sx, cy - sy) * (n > 3 ? 0.003 : 0.0015);
+      adds.push(-(Math.hypot(cx - sx, cy - sy) * (n > 3 ? 0.003 : 0.0015)));
       // waiting behind the last defender is no use until the ball is played
-      if ((cx - line) * dir > 4) sc -= 0.05;
+      if ((cx - line) * dir > 4) adds.push(-0.05);
+      // (if even a pass sure to get there can't beat the best spot so far,
+      // the odds needn't be worked out)
+      if (!(finishScore(control * (0.4 + 0.6 * 1) * spot + bonus, adds) > bestS)) continue;
+      const odds = passOdds(w, p.team, owner.x, owner.y, cx, cy, KICK.PASS, d > 22 ? KH.MID : KH.GROUND, 0.5, null);
+      const sc = finishScore(control * (0.4 + 0.6 * odds) * spot + bonus, adds);
       if (sc > bestS) { bestS = sc; best = [cx, cy]; }
     }
     if (best) { p.aiX = best[0]; p.aiY = best[1]; }
@@ -736,9 +756,19 @@ function defendThink(w, p, c, owner) {
         return;
       }
     }
-    // goal-side of him, on his shooting line
+    // goal-side of him, on his shooting line – in his own third and the
+    // middle one standing off him as real sides do (learned.js): off a man
+    // coming forward, closer to one turning back or out by the touchline (a
+    // few metres closer than they do: the full distance wins too few balls
+    // for a small-sided game); in ours he's closed down
     const [gx, gy] = bisector(w, p.team, owner.x, owner.y);
-    const tx = owner.x + owner.vx * 0.2 + gx * 0.8, ty = owner.y + owner.vy * 0.2 + gy * 0.8;
+    const third = Math.floor((clamp(-owner.x * dir / (pit.L / 2), -1, 0.999) + 1) * 1.5);
+    let off = 0.8;
+    if (third < 2) {
+      const fwd = -owner.vx * dir, wide = Math.abs(owner.y) > pit.W / 2 * (1 - 8 / 34) ? 1 : 0;
+      off = Math.max(0.8, PRESS[third][fwd < -1 ? 0 : fwd > 1 ? 2 : 1][wide] - 3);
+    }
+    const tx = owner.x + owner.vx * 0.2 + gx * off, ty = owner.y + owner.vy * 0.2 + gy * off;
     const d = Math.hypot(owner.x - p.x, owner.y - p.y);
     // closing him down: the last few metres facing him, side-on, goal-side
     if (d < 6) guardTo(p, tx, ty, 2.5, 0.05); else moveTo(p, tx, ty, 2.5, 0.05);
@@ -786,6 +816,13 @@ function defendThink(w, p, c, owner) {
       // (off where he'll be in a moment: he's on the move)
       tx = o.x + o.vx * 0.3 + (ux * Math.cos(a) + vx * Math.sin(a)) * r;
       ty = o.y + o.vy * 0.3 + (uy * Math.cos(a) + vy * Math.sin(a)) * r;
+      // the last man holds the line real sides keep for where the ball is
+      // (learned.js, give or take 2 m): a man coming short beyond it is let
+      // go – there's no offside to save him from a ball in behind
+      let last = true;
+      for (const q of w.players) if (q !== p && q.team === p.team && q.role === ROLE.OUT && (q.x - p.x) * dir < 0) last = false;
+      const line = (overDepth(SHAPE.op.back, clamp(b.x * dir / (pit.L / 2), -1, 1)) * pit.L / 2 + 2) * dir;
+      if (last && (tx - line) * dir > 0) tx = line;
     }
   }
   guardTo(p, tx, ty, 5, 0.5); // (ball and man in view)

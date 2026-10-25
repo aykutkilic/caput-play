@@ -7,10 +7,17 @@
 // ball's depth (8 equal bins from the side's own goal line to the other's):
 // where its middle is along the pitch (cx, of the half length), its spread
 // along (sx, of the half length) and across (sy, of the half width); cyk: how
-// far across it follows the ball (a share of the ball's y).
+// far across it follows the ball (a share of the ball's y); front, back: where
+// its most advanced and its last man are (of the half length).
 export const SHAPE = {
-  ip: { cx: [-0.51,-0.352,-0.202,-0.041,0.119,0.269,0.418,0.547], sx: [0.242,0.23,0.216,0.206,0.203,0.209,0.227,0.242], sy: [0.39,0.431,0.438,0.431,0.413,0.384,0.354,0.325], cyk: 0.378 },
-  op: { cx: [-0.677,-0.542,-0.388,-0.232,-0.071,0.09,0.241,0.39], sx: [0.182,0.176,0.172,0.172,0.18,0.194,0.224,0.258], sy: [0.267,0.294,0.315,0.333,0.341,0.345,0.344,0.332], cyk: 0.413 },
+  ip: {
+    cx: [-0.51,-0.352,-0.202,-0.041,0.119,0.269,0.418,0.547], sx: [0.242,0.23,0.216,0.206,0.203,0.209,0.227,0.242], sy: [0.39,0.431,0.438,0.431,0.413,0.384,0.354,0.325], cyk: 0.378,
+    front: [-0.099,0.016,0.129,0.266,0.415,0.561,0.712,0.863], back: [-0.833,-0.675,-0.516,-0.349,-0.189,-0.059,0.049,0.141],
+  },
+  op: {
+    cx: [-0.677,-0.542,-0.388,-0.232,-0.071,0.09,0.241,0.39], sx: [0.182,0.176,0.172,0.172,0.18,0.194,0.224,0.258], sy: [0.267,0.294,0.315,0.333,0.341,0.345,0.344,0.332], cyk: 0.413,
+    front: [-0.304,-0.192,-0.071,0.063,0.224,0.396,0.588,0.776], back: [-0.875,-0.738,-0.594,-0.448,-0.3,-0.164,-0.06,0.023],
+  },
 };
 
 // A man without the ball: how far off him the nearest opponent stands
@@ -40,3 +47,11 @@ export const MARK = {
     [0.25,0.31,0.36,0.43,0.59],
   ],
 };
+
+// The man on the ball: how far off him the nearest opponent is (m, the
+// median), by the third he's in (his own, the middle; in the last one he's
+// closed down), what he's doing – going back towards his own goal, standing,
+// going forward – and whether he's in the middle or out by the touchline.
+// Real sides hold off a man coming forward and close in on one turning back
+// or near the line.
+export const PRESS = [[[5.88,4.88],[9.13,6.63],[9.63,6.38]],[[6.13,5.38],[8.13,6.63],[7.63,6.13]]];

@@ -49,15 +49,17 @@ export function angDiff(a, b) { let d = (b - a) % TAU; if (d > Math.PI) d -= TAU
 // The pitch with the room's goal size applied (cached per pitch x goal size).
 const scaledPitches = new Map();
 export function pitchOf(w) {
-  const base = PITCHES[w.pitchId] || PITCHES[1];
   const gs = (w.m && w.m.goalS) || 0;
   const key = (w.pitchId << 2) | gs;
+  if (w._pitK === key) return w._pit;
+  const base = PITCHES[w.pitchId] || PITCHES[1];
   let pit = scaledPitches.get(key);
   if (!pit) {
     const g = GOAL_SIZES[gs] || GOAL_SIZES[0];
     pit = { ...base, goalW: base.goalW * g.w, goalH: base.goalH * g.h };
     scaledPitches.set(key, pit);
   }
+  w._pitK = key; w._pit = pit;
   return pit;
 }
 export function teamDir(w, team) { return team === 0 ? w.m.dir0 : -w.m.dir0; }
@@ -67,7 +69,12 @@ export function pById(w, id) {
   for (let i = 0; i < ps.length; i++) if (ps[i].id === id) return ps[i];
   return null;
 }
-export function stOf(p) { return stats(p.hgt, p.bld); }
+// (kept on the player – asked for hundreds of times a tick)
+export function stOf(p) {
+  const k = p.hgt * 256 + p.bld;
+  if (p._stK !== k) { p._stK = k; p._st = stats(p.hgt, p.bld); }
+  return p._st;
+}
 export function stickOf(p) {
   const mag = p.im / 15;
   if (mag < 0.05) return [0, 0, 0];
