@@ -291,7 +291,10 @@ export function poseFor(p, ctx) {
   const vt = Math.max(0.5, sp), back = clamp(-(ctx.vf || 0) / vt, 0, 1);
   const shuffle = clamp((Math.abs(ctx.vl || 0) / vt - 0.6) / 0.3, 0, 1) * clamp((5.5 - sp) / 2, 0, 1);
   const lift = (1.2 + 0.4 * Math.max(0, A - 0.8)) * (1 - 0.5 * back);
-  const swing = A * 0.8 * (1 - 2 * back) * (1 - 0.3 * back);
+  // the thigh swings as far as each step needs (with the cadence in
+  // animState) for the foot on the grass to go back under him as fast as he
+  // goes forward – fitted so the planted foot stays put rather than skating
+  const swing = Math.min(1.05, 0.25 + 0.085 * sp) * Math.min(1, sp / 0.6) * (1 - 2 * back) * (1 - 0.3 * back);
   P.lh = swing * s; P.rh = -swing * s;
   P.lk = 0.12 + A * (0.25 + lift * Math.max(0, c));
   P.rk = 0.12 + A * (0.25 + lift * Math.max(0, -c));
@@ -309,6 +312,11 @@ export function poseFor(p, ctx) {
     P.la = mix(P.la, 0.06 + 0.3 * outL, shuffle); P.ra = mix(P.ra, 0.06 + 0.3 * outR, shuffle);
     P.tw *= 1 - shuffle; P.lsh *= 1 - shuffle; P.rsh *= 1 - shuffle;
   }
+  // hard off the mark he leans into it; braking hard he sits back on bent
+  // knees, the feet out in front
+  const acc = ctx.acc || 0, brake = clamp(-acc / 12, 0, 1) * Math.min(1, sp / 2), drive = clamp(acc / 10, 0, 1);
+  P.lean += 0.12 * drive - 0.28 * brake;
+  P.lk += 0.25 * brake; P.rk += 0.25 * brake; P.drop += 0.04 * H * brake;
   P.head = -P.lean * 0.55;
   P.bob = A * 0.05 * Math.abs(s);
   if (A < 0.25) {
@@ -1313,9 +1321,11 @@ export class Renderer {
 
   animState(p, dt) {
     let a = this.anim.get(p.id);
-    if (!a) { a = { ph: Math.random() * TAU, sp: 0, face: p.face, turn: 0, P: null, vf: 0, vl: 0 }; this.anim.set(p.id, a); }
-    const sp = Math.hypot(p.vx, p.vy);
+    if (!a) { a = { ph: Math.random() * TAU, sp: 0, face: p.face, turn: 0, P: null, vf: 0, vl: 0, acc: 0 }; this.anim.set(p.id, a); }
+    const sp = Math.hypot(p.vx, p.vy), sp0 = a.sp;
     a.sp += (sp - a.sp) * (1 - Math.exp(-dt * 12));
+    // speeding up / braking (m/s², smoothed): leaning into it, or back
+    if (dt > 0) a.acc += ((a.sp - sp0) / dt - a.acc) * (1 - Math.exp(-dt * 8));
     // velocity in his own frame: forwards, and towards his R side (see skeleton)
     const cf = Math.cos(p.face), sf = Math.sin(p.face), kv = 1 - Math.exp(-dt * 10);
     a.vf += (p.vx * cf + p.vy * sf - a.vf) * kv; a.vl += (-p.vx * sf + p.vy * cf - a.vl) * kv;
@@ -1323,8 +1333,11 @@ export class Renderer {
     const turn = dt > 0 ? angDiff(a.face, p.face) / dt : 0;
     a.turn += (clamp(turn, -12, 12) - a.turn) * (1 - Math.exp(-dt * 10));
     a.face = p.face;
-    const stride = 1.0 + 0.16 * a.sp;
-    a.ph += a.sp * dt / stride * Math.PI;
+    // a real runner's cadence – steps a second 1.6 + 0.35 x speed (~2 walking,
+    // ~2.7 jogging, ~4.5 flat out), each step that much ground: no feet
+    // gliding along in long slow strides; easing to nothing standing
+    const cadence = (1.6 + 0.35 * a.sp) * Math.min(1, a.sp / 0.6);
+    a.ph += cadence * dt * Math.PI;
     if (a.ph > 1e4) a.ph -= 1e4 - (1e4 % TAU);
     return a;
   }
@@ -1397,7 +1410,7 @@ export class Renderer {
     if (a.carry && (!holding || this.time - a.carry.t0 > (a.carry.dive ? 0.5 : 0.3))) a.carry = null;
     const carrying = a.carry && !a.carry.dive ? ease(clamp((this.time - a.carry.t0) / 0.3, 0, 1)) : -1;
     const ctx = {
-      H: s.H, speed: a.sp, phase: a.ph, time: this.time,
+      H: s.H, speed: a.sp, phase: a.ph, time: this.time, acc: a.acc,
       gkStance: p.role === ROLE.GK && b.owner !== p.id ? 1 : 0,
       gkBig: 0,
       holding,
