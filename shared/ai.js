@@ -346,20 +346,31 @@ function bestPass(w, p, forPeople = 0.08) {
   const dir = teamDir(w, p.team), b = w.ball, pit = pitchOf(w);
   const gx = dir * pit.L / 2;
   const wide = Math.abs(p.y) > pit.boxW / 2 - 3 && (gx - p.x) * dir < pit.boxD + 10;
+  // back to the keeper only as the very last way out: with a man right on him
+  let tPress = 9;
+  for (const o of w.players) if (o.team !== p.team) tPress = Math.min(tPress, reachTime(o, p.x, p.y));
+  const cornered = tPress < 0.45;
   let best = null;
   const consider = (t, kind, kh, pw, tx, ty) => {
     tx = clamp(tx, -pit.L / 2 + 0.8, pit.L / 2 - 0.8); ty = clamp(ty, -pit.W / 2 + 0.8, pit.W / 2 - 0.8);
     const odds = passOdds(w, p.team, b.x, b.y, tx, ty, kind, kh, pw, t);
     let v = odds * spotValue(w, p.team, tx, ty) - (1 - odds) * lossCost(w, p.team, (b.x + tx) / 2);
     if (byPerson(t)) v += forPeople * odds;   // give it to the people playing
-    // forwards rather than back: ground gained counts a little, and back to
-    // the keeper is the last way out
+    // forwards rather than back: ground gained counts a little
     v += 0.015 * odds * clamp((tx - b.x) * dir / 12, 0, 1.5);
-    if (t.role === ROLE.GK) v -= 0.1;
+    if (t.role === ROLE.GK) v -= 0.3;
+    // the keeper doesn't give it to a man who has an opponent on him: he'd be
+    // closed down as it gets to him, in front of goal
+    if (p.role === ROLE.GK) {
+      let dO = 9;
+      for (const o of w.players) if (o.team !== p.team) dO = Math.min(dO, Math.hypot(o.x - tx, o.y - ty));
+      if (dO < 5) v -= 0.2 * (5 - dO) / 5;
+    }
     if (!best || v > best.v) best = { t, kind, kh, pw, tx, ty, v, odds };
   };
   for (const t of w.players) {
     if (t === p || t.team !== p.team || t.st === ST.FALLEN || t.st === ST.SLIDE) continue;
+    if (t.role === ROLE.GK && p.role !== ROLE.GK && !cornered) continue;
     const d = Math.hypot(t.x - p.x, t.y - p.y);
     if (d < 3.5 || d > 42) continue;
     // to feet (where he'll be when it gets there)
@@ -551,24 +562,26 @@ function carrierThink(w, p) {
   if (press < 1.3) p.ib |= BTN.R2;
 }
 
-// Off-ball movement. Every so often a supporting player looks at spots around
-// his formation slot, a few runs in behind and into the channels, and picks
-// the most useful: one he gets to before any defender (pitch control), that
-// the carrier can find with a pass (pass odds), worth having the ball in
-// (spot value), not crowding a team-mate and not too far from his slot. The
-// current target gets a bonus so he doesn't dither between similar spots.
+// Off-ball movement. Every quarter to half a second a supporting player looks
+// at spots around his formation slot, runs in behind, into the channels and
+// into the space ahead of the ball, and picks the most useful: one he gets to
+// before any defender (pitch control), that the carrier can find with a pass
+// (pass odds), worth having the ball in (spot value), in space, not crowding
+// a team-mate and not too far from his slot – the man nearest the ball comes
+// to show for it at an angle. The current target gets a small bonus so he
+// doesn't dither between similar spots.
 function supportThink(w, p, owner) {
   const pit = pitchOf(w), dir = teamDir(w, p.team);
   const hx = pit.L / 2 - 1.5, hy = pit.W / 2 - 1.2;
   if (p.ai !== AI_SUPPORT) { p.ai = AI_SUPPORT; p.aiT = 0; p.aiX = p.x; p.aiY = p.y; }
   if (p.aiT === 0) {
-    p.aiT = 24 + Math.floor(rnd(w) * 24);
+    p.aiT = 14 + Math.floor(rnd(w) * 16);
     const [sx, sy] = slotTarget(w, p, true);
     // the opponents' last line (deepest outfield defender)
     let line = -dir * 1e9;
     for (const o of w.players) if (o.team !== p.team && o.role === ROLE.OUT && (o.x - line) * dir > 0) line = o.x;
     const [, n] = slotIndex(w, p);
-    const cands = [[p.aiX, p.aiY, 0.04], [sx, sy, 0]];
+    const cands = [[p.aiX, p.aiY, 0.02], [sx, sy, 0]];
     const a0 = rnd(w) * TAU;
     for (let k = 0; k < 10; k++) {
       const a = a0 + k / 10 * TAU, r = k % 2 ? 4.5 : 9;
@@ -578,6 +591,12 @@ function supportThink(w, p, owner) {
     for (const off of [-8, 0, 8]) cands.push([line + dir * 3, clamp(p.y + off, -hy, hy), 0]);
     cands.push([owner.x + dir * 12, clamp(owner.y + (p.y > owner.y ? 9 : -9), -hy, hy), 0]);
     cands.push([owner.x + dir * 2, clamp(owner.y + (p.y > owner.y ? 7 : -7), -hy, hy), 0]);
+    // into the space ahead of the ball, between their men
+    for (const [ax, ay] of [[7, -6], [7, 6], [14, -4], [14, 4], [10, 0]]) cands.push([owner.x + dir * ax, clamp(p.y + ay, -hy, hy), 0]);
+    // (is he the team-mate nearest the man on the ball?)
+    let nearest = true;
+    const dMe = Math.hypot(p.x - owner.x, p.y - owner.y);
+    for (const q of w.players) if (q !== p && q !== owner && q.team === p.team && q.role !== ROLE.GK && Math.hypot(q.x - owner.x, q.y - owner.y) < dMe) nearest = false;
     let best = null, bestS = -1e9;
     for (const [cx0, cy0, bonus] of cands) {
       const cx = clamp(cx0, -hx, hx), cy = clamp(cy0, -hy, hy);
@@ -590,6 +609,13 @@ function supportThink(w, p, owner) {
       const control = 1 / (1 + Math.exp(-(tOpp - tMe) / 0.3));
       const odds = passOdds(w, p.team, owner.x, owner.y, cx, cy, KICK.PASS, d > 22 ? KH.MID : KH.GROUND, 0.5, null);
       let sc = control * (0.4 + 0.6 * odds) * spotValue(w, p.team, cx, cy) + bonus;
+      // empty space: the further from their nearest man, the better
+      let open = 9;
+      for (const o of w.players) if (o.team !== p.team && o.role === ROLE.OUT) open = Math.min(open, Math.hypot(o.x - cx, o.y - cy));
+      sc += 0.002 * clamp(open - 2, 0, 5);
+      // the man nearest the ball shows for it: an angle 6-14 m off the carrier
+      // (with no going back to the keeper, he's the way out under pressure)
+      if (nearest && d >= 6 && d <= 14) sc += 0.06;
       sc -= 0.004 * Math.max(0, d - 26);
       for (const q of w.players) {
         if (q === p || q === owner || q.team !== p.team || q.role === ROLE.GK) continue;
@@ -801,11 +827,15 @@ function gkThink(w, p, c) {
     // person playing rather than an AI one, when he's anywhere near as free
     const bp = bestPass(w, p, 0.25);
     const d = bp ? Math.hypot(bp.tx - p.x, bp.ty - p.y) : 99;
-    const clear = bp && bp.kh === KH.GROUND && bp.odds > 0.85 && d < 32;
-    // ball at his feet with someone closing in: no time to wait – out of his
-    // box (sweeping up) with a man on him, it's cleared, long and wide
+    // (short only to a man who's free where it gets to him – nobody within 4 m)
+    let freeAt = 0;
+    if (bp) { freeAt = 9; for (const o of w.players) if (o.team !== p.team) freeAt = Math.min(freeAt, Math.hypot(o.x - bp.tx, o.y - bp.ty)); }
+    const clear = bp && bp.kh === KH.GROUND && bp.odds > 0.85 && d < 32 && freeAt > 4;
+    // ball at his feet with someone closing in: no time to wait – with a man
+    // on him (in his box too), unless there's a safe pass to a free man, it's
+    // cleared, long and wide: he doesn't hand it on to be pressed
     const rushed = !b.held && openness(w, p.team, p.x, p.y) < 8;
-    if (rushed && !inOwnBox(w, p.team, p.x, p.y, 0) && openness(w, p.team, p.x, p.y) < 4.5 && m.spTaker !== p.id) {
+    if (rushed && openness(w, p.team, p.x, p.y) < 4.5 && !(clear && bp.odds > 0.92) && m.spTaker !== p.id) {
       const side = p.y >= 0 ? 1 : -1;
       aiKick(w, p, KICK.CLEAR, 0.95, p.x + dir * 32, side * pit.W * 0.38, -1, KH.HIGH);
       return;
@@ -815,7 +845,7 @@ function gkThink(w, p, c) {
       return;
     }
     if (clear) aiKick(w, p, bp.kind, bp.pw, bp.tx, bp.ty, bp.t.id, KH.GROUND);
-    else if (bp && bp.odds > 0.65) aiKick(w, p, bp.kind, bp.pw, bp.tx, bp.ty, bp.t.id, bp.kh);
+    else if (bp && bp.odds > 0.65 && freeAt > 4) aiKick(w, p, bp.kind, bp.pw, bp.tx, bp.ty, bp.t.id, bp.kh);
     else {
       // long: the team-mate (or the wide space) a high ball is most likely to
       // reach – raced against everyone who could head it on the way
