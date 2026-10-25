@@ -210,10 +210,16 @@ function clipNear(pts, near) {
 
 // ---------------------------------------------------------------- pose
 
+// a pose done with the other leg (and the arms swapped to balance it)
+function mirrorLegs(P) {
+  for (const [l, r] of [['lh', 'rh'], ['lk', 'rk'], ['la', 'ra'], ['lfy', 'rfy'], ['lsh', 'rsh'], ['lab', 'rab'], ['lel', 'rel']]) [P[l], P[r]] = [P[r], P[l]];
+  P.tw = -P.tw;
+}
+
 function basePose() {
   return {
     lean: 0.04, tw: 0, drop: 0, bob: 0, head: 0,
-    lh: 0, lk: 0.12, la: 0.05, rh: 0, rk: 0.12, ra: 0.05,
+    lh: 0, lk: 0.12, la: 0.05, rh: 0, rk: 0.12, ra: 0.05, lfy: 0, rfy: 0,
     lsh: 0.08, lab: 0.12, lel: 0.25, rsh: 0.08, rab: 0.12, rel: 0.25,
     pitch: 0, roll: 0,
   };
@@ -413,6 +419,13 @@ export function poseFor(p, ctx) {
       }
       P.rh = rh; P.rk = rk; P.lh = 0.12; P.lk = 0.3;
       P.lsh = 0.55; P.lab = 0.9; P.rsh = -0.35; P.rab = 0.45; P.lean = 0.02 - 0.1 * big;
+      if (p.kc && !ctx.fromHands) {
+        // bent with the inside of the foot (p.kc, + to the left): the toe
+        // turned out, the foot opening onto the ball – more for more curl;
+        // bending it right, the left foot does it
+        P.rfy = Math.min(1, Math.abs(p.kc) * 1.6) * 0.95;
+        if (p.kc < 0) mirrorLegs(P);
+      }
       if (p.kq === KQ.TURN && k < cT) {
         // turning with the ball first: little steps round on the spot, the
         // leg drawing back only as he comes round to face the goal

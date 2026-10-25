@@ -12,6 +12,7 @@ import {
 } from './constants.js';
 import { stats } from './physique.js';
 import { aiThink } from './ai.js';
+import { CURL_MAX, curlPace, curlAim, passHole, shotHole } from './lanes.js';
 
 export const CHG_MAX = 40;          // ticks to fill the power gauge
 // Pressing the same kick key again right after letting go, while the ball is
@@ -31,7 +32,7 @@ const AT_SPIN_MAX = 0.65;            // rad/s turn rate of the ball's path
 const AT_LIFT = 19;                  // m/s^2 upward while pulling back
 const AT_DIP = 10;                   // m/s^2 downward while pushing forward
 export const MU = 1.0, CF = 0.22;   // rolling resistance: dv/dt = -(MU + CF v)
-const AIR_K = 0.006;                // quadratic air drag
+export const AIR_K = 0.006;         // quadratic air drag
 const TAU = Math.PI * 2;
 
 // ---------------------------------------------------------------- helpers
@@ -116,14 +117,6 @@ export function rollTime(v0, v1) { return Math.log((v0 + MU / CF) / (Math.max(0,
 export function passEndSpeed(kind, d, power) {
   return kind === KICK.THROUGH ? 2.6 + 0.065 * d + 2 * power : Math.min(16, 6.5 + 0.28 * d + 5 * power);
 }
-// The pace a ball rolled at v0 still has after covering a metres (0: it stops short).
-function rollSpeedAt(v0, a) {
-  if (a >= rollDist(v0)) return 0;
-  let lo = 0, hi = v0;
-  for (let i = 0; i < 20; i++) { const mid = (lo + hi) / 2; if (rollDist(v0) - rollDist(mid) > a) lo = mid; else hi = mid; }
-  return hi;
-}
-
 // How likely q is to stop a ground ball the other side plays past him: h is
 // how close its line comes to him, v its pace against his, (ux, uy) its way.
 // Straight at him he closes his legs on it – now and then it goes through
@@ -138,31 +131,6 @@ export function stopChance(q, h, v, ux, uy) {
   c -= 0.015 * Math.max(0, v - 7);
   if (Math.cos(q.face) * ux + Math.sin(q.face) * uy > 0.2) c -= 0.25; // it comes from behind him
   return clamp(c, 0.15, 0.97);
-}
-
-// Chance a ground ball from (x0, y0) towards (x1, y1), rolled at v0, gets
-// past every opponent near its line: each can step across towards it in the
-// time it takes to get to him, which stretches his reach – the further he has
-// to go for it the likelier it beats him (stopChance above). Markers round the
-// receiver who are further from the spot than he is don't count.
-function laneOdds(w, team, x0, y0, x1, y1, v0, recv) {
-  const d = Math.hypot(x1 - x0, y1 - y0) || 0.01, ux = (x1 - x0) / d, uy = (y1 - y0) / d;
-  const rd = recv ? Math.hypot(recv.x - x1, recv.y - y1) : 99;
-  let odds = 1;
-  for (const o of w.players) {
-    if (o.team === team || o.st === ST.FALLEN || o.st === ST.DIVE || o.st === ST.SLIDE) continue;
-    const along = (o.x - x0) * ux + (o.y - y0) * uy;
-    if (along < 0.3 || along > d + 0.6) continue;
-    if (along > d - 1.5 && Math.hypot(o.x - x1, o.y - y1) > rd + 0.5) continue;
-    const h = Math.abs((o.x - x0) * uy - (o.y - y0) * ux);
-    if (h > 4) continue;
-    const v = rollSpeedAt(v0, Math.min(along, d));
-    if (v <= 0.5) { odds *= 0.1; continue; } // it stops before getting past him
-    const step = Math.max(0, rollTime(v0, v) - 0.25) * 4;
-    const r = o.role === ROLE.GK && inOwnBox(w, o.team, o.x, o.y, 0) ? 1.0 : 0.62;
-    if (h < r + step) odds *= 1 - stopChance(o, h * 0.62 / (r + step), v, ux, uy);
-  }
-  return odds;
 }
 
 export function groundSpeedFor(d, vEnd) {
@@ -298,7 +266,7 @@ export function makePlayer(id, team, role, human, hgt = 180, bld = 50) {
     id, team, role, human: human ? 1 : 0, hgt, bld,
     x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, face: 0,
     st: 0, stT: 0, stDur: 0, stA: 0, stB: 0, hit: 0,
-    kk: 0, kp: 0, kx: 0, ky: 0, kt: -1, kv: 0, kh: 0, kq: 0,
+    kk: 0, kp: 0, kx: 0, ky: 0, kt: -1, kv: 0, kh: 0, kq: 0, kc: 0,
     chg: 0, chgBtn: 0, stam: 1, pb: 0, kcd: 0, tcd: 0, tap: 0, tapT: 255, tapK: 0, tapH: 0, spr: 0,
     bot: 0, miss: 0, tm: 0, qk: 0,
     qa: 0, qt: 0, qp: 0, dph: 0, hold: 0,
@@ -653,7 +621,7 @@ function heightAt(vh, vz, z0, d) {
   return -1;
 }
 // Vertical launch speed that brings the ball to height zt after d metres.
-function vzToReach(vh, z0, d, zt) {
+export function vzToReach(vh, z0, d, zt) {
   let lo = -4, hi = 22;
   for (let i = 0; i < 22; i++) {
     const mid = (lo + hi) / 2;
@@ -663,7 +631,7 @@ function vzToReach(vh, z0, d, zt) {
 }
 
 // Height the ball should have when it reaches its target.
-function targetHeight(w, p, kind, kh) {
+export function targetHeight(w, p, kind, kh) {
   if (kind === KICK.SHOT || kind === KICK.FINESSE) {
     return kh === KH.HIGH ? pitchOf(w).goalH - 0.15 : kh === KH.MID ? 1.15 : 0.22; // high: just under the bar
   }
@@ -686,11 +654,10 @@ function runAhead(q, t) {
 
 // Picks a target for a kick. Humans aim with the stick (PES-style assisted
 // passing: the receiver closest to the stick direction gets it).
-const LANES = [0, 0.04, -0.04, 0.08, -0.08, 0.13, -0.13, 0.19, -0.19, 0.26, -0.26, 0.34, -0.34]; // rad off the straight pass
 export function planKick(w, p, kind, power, tx, ty, tid = -1, kh) {
   const pit = pitchOf(w), dir = teamDir(w, p.team), b = w.ball;
   if (kh === undefined) kh = kind === KICK.LONG || kind === KICK.PUNT || kind === KICK.CLEAR ? KH.HIGH : kind === KICK.SHOT ? KH.MID : KH.GROUND;
-  p.kk = kind; p.kp = clamp(power, 0, 1); p.kt = -1; p.kv = 0; p.kh = kh;
+  p.kk = kind; p.kp = clamp(power, 0, 1); p.kt = -1; p.kv = 0; p.kh = kh; p.kc = 0;
   if (tx !== undefined) { p.kx = tx; p.ky = ty; p.kt = tid; return; }
   const [sx, sy, sm] = stickOf(p);
   const ax = sm > 0.3 ? sx : Math.cos(p.face), ay = sm > 0.3 ? sy : Math.sin(p.face);
@@ -699,13 +666,25 @@ export function planKick(w, p, kind, power, tx, ty, tid = -1, kh) {
     // aimed where the stick points: the spot on the goal line along it – up
     // to a metre wide of a post (to bend it back in with aftertouch);
     // pointing away from goal, the corner on that side
-    const half = pit.goalW / 2 - 0.35, wide = pit.goalW / 2 + 1.0;
+    const hw = pit.goalW / 2, half = hw - 0.35, wide = hw + 1.0;
     let aimY = (Math.abs(b.y) < 0.8 ? (p.id % 2 ? 1 : -1) : -Math.sign(b.y)) * pit.goalW * 0.2;
+    // the holes in the goal, grouped by where the stick points: towards the
+    // goal, the part of it round that spot; out to a side, that half; none,
+    // anywhere. The key's row picks the height; the best hole there decides
+    // where it goes and how it's bent (R2: wrapped round more, for pace)
+    let span = null;
     if (sm > 0.3) {
-      if (sx * dir > 0.15) aimY = clamp(b.y + sy / sx * (gx - b.x), -wide, wide);
-      else if (Math.abs(sy) > 0.2) aimY = Math.sign(sy) * half;
+      if (sx * dir > 0.15) {
+        aimY = clamp(b.y + sy / sx * (gx - b.x), -wide, wide);
+        span = [clamp(aimY, -hw, hw) - hw * 0.45, clamp(aimY, -hw, hw) + hw * 0.45];
+      } else if (Math.abs(sy) > 0.2) { aimY = Math.sign(sy) * half; span = sy > 0 ? [0, hw] : [-hw, 0]; }
     }
     p.kx = gx; p.ky = aimY;
+    // (aimed wide of a post on purpose – to bend it back in with aftertouch – it goes there)
+    if (Math.abs(aimY) <= hw && byPerson(p)) {
+      const hole = shotHole(w, p, kind, kh, p.kp, 0, span, kind === KICK.FINESSE ? [0.5, -0.5, 1, -1, 0] : [0, -0.5, 0.5], aimY);
+      if (hole) { p.ky = hole.ty; p.kc = hole.kc; }
+    }
     return;
   }
   if (kind === KICK.SELF) {
@@ -760,20 +739,13 @@ export function planKick(w, p, kind, power, tx, ty, tid = -1, kh) {
       }
     }
     if (fb) [lx, ly, vEnd] = fb;
-    if (!lofted && (kind === KICK.PASS || kind === KICK.THROUGH)) {
-      // Pick the lane: angle the pass round an opponent near its line, as long
-      // as the receiver can still get to it. With no clear lane it goes as
-      // close past him (or through his legs) as gives it the best chance.
-      const dist = Math.hypot(lx - b.x, ly - b.y), base = Math.atan2(ly - b.y, lx - b.x);
-      const v0 = groundSpeedFor(dist, Math.max(1.5, vEnd)), tBall = rollTime(v0, Math.max(1.5, vEnd));
-      let top = -1, cx = lx, cy = ly;
-      for (const da of LANES) {
-        const x = b.x + Math.cos(base + da) * dist, y = b.y + Math.sin(base + da) * dist;
-        if (da && Math.hypot(x - lx, y - ly) > 1.5 + 0.8 * tBall) continue; // he has to get to it
-        const sc = laneOdds(w, p.team, b.x, b.y, x, y, v0, best) - 0.35 * Math.abs(da);
-        if (sc > top + 1e-9) { top = sc; cx = x; cy = y; }
-      }
-      lx = cx; ly = cy;
+    if ((kind === KICK.PASS || kind === KICK.THROUGH) && byPerson(p)) {
+      // The hole: at the height of the key pressed, the way round (or over)
+      // the men in between that gets to him first – angled, or bent with the
+      // inside of the foot (more curl costs pace) – as long as he can still
+      // get to it. With no clear hole, the one that gives it the best chance.
+      const hole = passHole(w, p, best, kind, kh, lx, ly, lofted ? vEnd : Math.max(1.5, vEnd), [0, -0.5, 0.5, -1, 1]);
+      if (hole) { lx = hole.tx; ly = hole.ty; p.kc = hole.kc; }
     }
     p.kv = lofted ? vEnd : Math.max(1.5, vEnd); // lofted: flight time; ground: arrival pace
     p.kx = clamp(lx, -pit.L / 2 - 1, pit.L / 2 + 1); p.ky = clamp(ly, -pit.W / 2 + 0.5, pit.W / 2 - 0.5); p.kt = best.id;
@@ -1569,6 +1541,7 @@ function launch(w, p, tech) {
         // along the ground, arriving at a pace the receiver can control
         const vEnd = p.kv > 0 ? p.kv : passEndSpeed(kind, d, pw);
         vh = Math.min(groundSpeedFor(d, vEnd), kind === KICK.THROW ? 17 : 28) * (0.97 + 0.06 * s.shot);
+        if (p.kc && footOnly) vh = Math.min(vh, 28 * curlPace(p.kc)); // (curl costs pace)
         vz = kind === KICK.THROW ? (fromHands && b.z > 1.8 ? 1.5 : b.z < 0.5 ? 0.15 : 0.6) : 0; // (rolled out: along the grass)
         err = 0.012 + (misalign > 1.2 ? (misalign - 1.2) * 0.05 : 0) + pressure * 0.5;
       } else {
@@ -1613,9 +1586,10 @@ function launch(w, p, tech) {
       // kick (a standing one ~45 km/h at most, met on the run ~55-60)
       if (isHead) speed = (6.5 + 6 * pw) * (0.9 + 0.2 * s.h) + 0.4 * Math.max(0, p.vx * ux + p.vy * uy);
       if (kind === KICK.FINESSE) speed *= 0.85;
+      const curled = tech === ST.KICK && p.kc;
+      if (curled) speed *= curlPace(p.kc); // curl costs pace
       let tz = targetHeight(w, p, kind, p.kh);
       if (pw > 0.9) tz += (pw - 0.9) * 3; // a blasted shot climbs
-      const t = d / speed * 1.03;
       vh = speed;
       if (p.kh === KH.GROUND && tech === ST.KICK) vz = 0.4 + 2.5 * Math.max(0, pw - 0.75); // skims the grass
       else vz = Math.min(14, vzToReach(speed, b.z, d, tz)); // low pace + high target = a chip
@@ -1624,21 +1598,11 @@ function launch(w, p, tech) {
       const sprint = Math.hypot(p.vx, p.vy) > s.jog * 1.15 ? 0.015 : 0; // struck at full tilt
       // the further out, the wider the spread (and a full-power strike is wilder)
       err = 0.035 + 0.0016 * d + 0.00011 * d * d + 0.06 * pw * pw + techErr + mis + pressure + sprint;
-      if (kind === KICK.FINESSE) {
-        err *= 0.6;
-        // curl: aim outside, let the spin bring it back
-        const cx = -b.x + p.kx, cy = -b.y; // towards goal centre line
-        const cross = ux * cy - uy * cx;
-        const sgn = cross === 0 ? (p.ky > 0 ? -1 : 1) : Math.sign(cross);
-        const beta = 0.1;
-        const ca = Math.cos(-beta * sgn), sa = Math.sin(-beta * sgn);
-        const nux = ux * ca - uy * sa, nuy = ux * sa + uy * ca;
-        ux = nux; uy = nuy;
-        spin = sgn * (2 * d * beta / (t * t)) / speed;
-      }
+      if (kind === KICK.FINESSE) err *= 0.6; // placed
+      else if (curled) err *= 0.8; // the inside of the foot
       zErr = (0.2 + 0.35 * pw) * (0.8 + d / 25);
       // no strike is perfectly clean: it swerves a little one way or the other
-      if (kind !== KICK.FINESSE) spin += gauss(w) * (0.05 + 0.1 * pw);
+      spin += gauss(w) * (curled || kind === KICK.FINESSE ? 0.03 : 0.05 + 0.1 * pw);
       break;
     }
     case KICK.SELF: {
@@ -1653,6 +1617,15 @@ function launch(w, p, tech) {
       err = 0.03;
       break;
     }
+  }
+  // The foot's curl (planned kc, + bending left): struck off-centre with the
+  // inside of the foot – the right one bends it left, the left one right –
+  // it spins; aimed off by as much as the spin will bring it back
+  if (p.kc && tech === ST.KICK && !fromHands && !heel && kind !== KICK.SELF) {
+    const sp = p.kc * CURL_MAX, a = curlAim(vh, vz, sp, d, b.z);
+    spin += sp;
+    const ca = Math.cos(a), sa = Math.sin(a), nux = ux * ca - uy * sa, nuy = ux * sa + uy * ca;
+    ux = nux; uy = nuy;
   }
   if (!p.human) err *= AI_ERR[w.m.ai] || 1;
   if (err > 0) {

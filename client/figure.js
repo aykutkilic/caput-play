@@ -25,18 +25,19 @@ export function shade(hex, amt) {
 
 // ---------------------------------------------------------------- skeleton
 
-function legFK(out, hip, th, kn, abd, side, thigh, shin, foot) {
+function legFK(out, hip, th, kn, abd, side, thigh, shin, foot, yaw = 0) {
   const ca = Math.cos(abd), sa = Math.sin(abd) * side;
   const kx = hip[0] + Math.sin(th) * thigh * ca;
   const ky = hip[1] + sa * thigh;
   const kz = hip[2] - Math.cos(th) * thigh * ca;
   const a2 = th - kn;
   const ax = kx + Math.sin(a2) * shin * ca, ay = ky + sa * shin * 0.6, az = kz - Math.cos(a2) * shin * ca;
-  // the foot points forward, roughly square to the shin (ankle flex limited)
+  // the foot points forward, roughly square to the shin (ankle flex limited);
+  // yaw turns the toe out (an inside-of-the-foot strike)
   const fa = Math.max(-0.5, Math.min(0.9, a2 * 0.7));
   out[0] = [kx, ky, kz];
   out[1] = [ax, ay, az];
-  out[2] = [ax + Math.cos(fa) * foot, ay, az + Math.sin(fa) * foot - 0.012];
+  out[2] = [ax + Math.cos(fa) * Math.cos(yaw) * foot, ay + side * Math.sin(yaw) * Math.cos(fa) * foot, az + Math.sin(fa) * foot - 0.012];
 }
 
 function armFK(out, sh, th, abd, el, side, upper, fore) {
@@ -73,8 +74,8 @@ export function skeleton(p, P, H, wd, x, y, z, face, female = false) {
   const headUp = [head[0] + sha * 0.1, 0, head[2] + cha * 0.1];
   const headR = [head[0], 0.1, head[2]];
   const L = [], R = [], AL = [], AR = [];
-  legFK(L, hipL, P.lh, P.lk, P.la, -1, thigh, shin, foot);
-  legFK(R, hipR, P.rh, P.rk, P.ra, 1, thigh, shin, foot);
+  legFK(L, hipL, P.lh, P.lk, P.la, -1, thigh, shin, foot, P.lfy || 0);
+  legFK(R, hipR, P.rh, P.rk, P.ra, 1, thigh, shin, foot, P.rfy || 0);
   armFK(AL, shL, P.lsh + P.lean * 0.6, P.lab, P.lel, -1, upper, fore);
   armFK(AR, shR, P.rsh + P.lean * 0.6, P.rab, P.rel, 1, upper, fore);
   const J = {
