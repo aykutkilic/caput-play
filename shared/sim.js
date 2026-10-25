@@ -267,6 +267,30 @@ export function meetBall(w, p) {
 }
 function invalidatePath(w) { w._bp = null; w._meet = null; }
 
+// Where and when the ball goes out of play on its way (null: it doesn't within
+// the predicted path; over the goal line inside the goal mouth is a goal)
+export function exitPoint(w) {
+  const pts = ballPath(w), pit = pitchOf(w), hx = pit.L / 2 + BALL_R, hy = pit.W / 2 + BALL_R;
+  for (let k = 1; k < pts.length; k++) {
+    const q = pts[k];
+    if (Math.abs(q.y) > hy) return { t: k * PATH_H, x: q.x, y: Math.sign(q.y) * (hy - BALL_R), z: q.z };
+    if (Math.abs(q.x) > hx) {
+      if (Math.abs(q.y) < pit.goalW / 2 && q.z < pit.goalH) return null;
+      return { t: k * PATH_H, x: Math.sign(q.x) * (hx - BALL_R), y: q.y, z: q.z };
+    }
+  }
+  return null;
+}
+
+// A touch near a line: what would take it over is mostly taken off – players
+// keep it in (towards the goal itself is fine)
+function keptIn(w, x, y, vx, vy) {
+  const pit = pitchOf(w), hx = pit.L / 2, hy = pit.W / 2, lim = 2.5;
+  if (Math.abs(y) > hy - lim && vy * Math.sign(y) > 0) vy *= 0.05 + 0.95 * clamp((hy - 0.5 - Math.abs(y)) / (lim - 0.5), 0, 1);
+  if (Math.abs(x) > hx - lim && vx * Math.sign(x) > 0 && Math.abs(y) > pit.goalW / 2) vx *= 0.05 + 0.95 * clamp((hx - 0.5 - Math.abs(x)) / (lim - 0.5), 0, 1);
+  return [vx, vy];
+}
+
 // ---------------------------------------------------------------- creation
 
 export function makePlayer(id, team, role, human, hgt = 180, bld = 50) {
@@ -921,10 +945,19 @@ export function beginLift(w, p, power, kh = KH.HIGH) {
 export function beginSlide(w, p) {
   if (!isFree(p) || p.z > 0) return;
   const sp = Math.min(Math.max(Math.hypot(p.vx, p.vy), 5) + 2.2, 9.5);
-  p.st = ST.SLIDE; p.stT = 0; p.stDur = 50; p.stB = 0; p.hit = 0;
+  p.st = ST.SLIDE; p.stT = 0; p.stDur = 50; p.stA = 0; p.stB = 0; p.hit = 0;
   p.vx = Math.cos(p.face) * sp; p.vy = Math.sin(p.face) * sp;
   p.tcd = 70; p.chgBtn = 0; p.qa = 0;
   w.events.push({ k: 'slide', x: p.x, y: p.y });
+}
+
+// A slide to keep a ball in that's on its way out: along the grass to where
+// it crosses, the foot hooking it back into the pitch (stA 1)
+export function beginKeepIn(w, p, ang) {
+  if (!isFree(p) || p.z > 0) return;
+  p.face = ang;
+  beginSlide(w, p);
+  p.stA = 1;
 }
 
 export function beginTackle(w, p) {
@@ -1476,6 +1509,7 @@ function cushion(w, p, s) {
     // killed: it drops just in front of him
     vx = p.vx * 0.55 + fx * 0.9; vy = p.vy * 0.55 + fy * 0.9;
   }
+  [vx, vy] = keptIn(w, b.x, b.y, vx, vy);
   // a heavy touch: the faster it came and the clumsier he is, the more it runs off
   const heavy = clamp((rs - 7) / 14, 0, 1) * (1.25 - 0.3 * s.control);
   vx += b.vx * 0.12 * heavy + gauss(w) * 1.2 * heavy;
@@ -1720,6 +1754,10 @@ function handleButtons(w, p) {
     p.tapH = 0;
     if (mine) {
       if (free) { p.chgBtn = packed; p.chg = 0; }
+    } else if (!owner && pressed === KT.GOAL && free && p.role !== ROLE.GK && keepInReach(w, p)) {
+      // the slide key at a ball just about to go out: slide and keep it in
+      const out = exitPoint(w);
+      beginKeepIn(w, p, Math.atan2(out.y - p.y, out.x - p.x));
     } else if (!owner && !(theirPass && pressed === KT.MATE)) {
       // keeper: a ball coming in – a dive; but the shoot key at one that isn't
       // going in (a cross) means punch it (see gkSave)
@@ -1749,6 +1787,15 @@ function handleButtons(w, p) {
       // a MATE key held = press the ball carrier (see movement)
     }
   }
+}
+
+// A ball low on the grass going out in under half a second, near enough to
+// reach the line with a slide in time
+export function keepInReach(w, p) {
+  const b = w.ball;
+  if (b.owner >= 0 || b.z > 0.5) return false;
+  const out = exitPoint(w);
+  return !!out && out.t < 0.45 && out.z < 0.5 && Math.hypot(out.x - p.x, out.y - p.y) < 0.85 + 8.5 * out.t;
 }
 
 function humanDive(w, p) {
@@ -1904,8 +1951,15 @@ function movement(w, p, s) {
   const charging = p.role === ROLE.GK && !own && (p.team === 0 ? m.gkc0 : m.gkc1) > 0 && byPerson(p);
   // guarding (R2 held without the ball, the other side on it): he keeps
   // facing the ball and side-steps or backs off into position – between it
-  // and the goal – instead of turning his back on it to run there
-  const guard = oppHas && !own && (p.ib & BTN.R2) && !pressing && !jockey && !charging;
+  // and the goal – instead of turning his back on it to run there. A person
+  // does it anyway close to the man on the ball while he's goal-side of him
+  // (back-pedalling, half pace); once he's beaten he turns and runs.
+  let close = false;
+  if (person && oppHas && !own && p.role !== ROLE.GK && Math.hypot(owner.x - p.x, owner.y - p.y) < 9) {
+    const ogx = -teamDir(w, p.team) * pitchOf(w).L / 2;
+    close = Math.hypot(p.x - ogx, p.y) < Math.hypot(owner.x - ogx, owner.y) + 0.5;
+  }
+  const guard = oppHas && !own && ((p.ib & BTN.R2) || close) && !pressing && !jockey && !charging;
   if (pressing || charging) {
     const tx = b.x + b.vx * 0.15, ty = b.y + b.vy * 0.15;
     const ddx = tx - p.x, ddy = ty - p.y, dd = Math.hypot(ddx, ddy) || 1;
@@ -1980,11 +2034,11 @@ function movement(w, p, s) {
     if (om < sm - 1e-6) { if (om > 1e-3) { dx = ox / om; dy = oy / om; } sm = om; }
   }
 
-  // can't sprint as fast sideways/backwards relative to facing (a keeper
-  // back-pedalling, facing the play, is slower still)
+  // can't sprint as fast sideways/backwards relative to facing (back-pedalling
+  // facing the play – a keeper, a defender guarding – slower still: half pace)
   if (sm > 0.1) {
     const align = Math.cos(angDiff(p.face, Math.atan2(dy, dx)));
-    speed *= align >= 0 || p.role !== ROLE.GK ? 0.72 + 0.28 * Math.max(0, align) : 0.72 + 0.17 * align;
+    speed *= align >= 0 ? 0.72 + 0.28 * align : p.role === ROLE.GK ? 0.72 + 0.17 * align : guard ? 0.72 + 0.22 * align : 0.72;
     if (strafe && assist) speed = Math.max(speed, Math.min(need, 0.72 * s.sprint)); // (still in time)
   }
   const tvx = dx * sm * speed, tvy = dy * sm * speed;
@@ -2813,7 +2867,17 @@ function slideContacts(w) {
     const Fx = p.x + fx * 0.85, Fy = p.y + fy * 0.85;
     if (p.stB === 0 && b.z < 0.6 && Math.hypot(Fx - b.x, Fy - b.y) < 0.75 && !b.held && !(b.owner >= 0 && b.owner === m.spTaker)) {
       const prev = b.owner >= 0 ? pById(w, b.owner) : null;
-      if (!prev || prev.team !== p.team) {
+      if (p.stA === 1 && !prev) {
+        // keeping it in: hooked back off the line into the pitch
+        const pit = pitchOf(w), byTouch = pit.W / 2 - Math.abs(b.y) < pit.L / 2 - Math.abs(b.x);
+        const nx = byTouch ? 0 : -Math.sign(b.x), ny = byTouch ? -Math.sign(b.y) : 0, push = 3 + 1.5 * rnd(w);
+        const along = (b.vx * ny - b.vy * nx) * 0.25;
+        b.vx = nx * push + ny * along; b.vy = ny * push - nx * along; b.vz = 0.3;
+        b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.kt = 0; b.tgt = -1; b.sh = -1; b.atk = -1;
+        p.stB = 1;
+        invalidatePath(w);
+        w.events.push({ k: 'keepin', x: b.x, y: b.y, id: p.id });
+      } else if (!prev || prev.team !== p.team) {
         const sp = Math.hypot(p.vx, p.vy), lat = (rnd(w) - 0.5) * 3;
         b.owner = -1; b.held = 0;
         b.vx = fx * (sp * 0.8 + 3) - fy * lat; b.vy = fy * (sp * 0.8 + 3) + fx * lat; b.vz = 0.8 + rnd(w);

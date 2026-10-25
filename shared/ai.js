@@ -6,7 +6,7 @@ import { G, BTN, KT, KH, KICK_MASK, packKick, PHASE, ST, ROLE, SP, KICK, GKB } f
 import {
   rnd, teamDir, pitchOf, pById, stOf, startKick, beginSlide, beginDive, beginBlock1v1, blockKind, slotOf, slotIndex, shootingPractice,
   inOwnBox, clamp, encodeStick, ballPath, blockPlan, beginBlock, wantsBlock, loftTime,
-  groundSpeedFor, passEndSpeed, MU, CF, byPerson, keeperBig, bigReach,
+  groundSpeedFor, passEndSpeed, MU, CF, byPerson, keeperBig, bigReach, exitPoint, keepInReach, beginKeepIn,
 } from './sim.js';
 import { SHAPE, MARK } from './learned.js';
 
@@ -727,6 +727,17 @@ function defendThink(w, p, c, owner) {
       // for it to slow down (in the air he still gets under it and times it)
       let tOpp = 9;
       if (b.z < 0.5 && Math.abs(b.vz) < 2) for (const o of w.players) if (o.team !== p.team && o.st !== ST.FALLEN) tOpp = Math.min(tOpp, c.ic.get(o.id).t);
+      // ours to lose (we touched it last) and on its way out: keep it in – a
+      // slide to hook it back when it's just going, flat out to it before
+      const out = b.lastTeam === p.team && p.role === ROLE.OUT ? exitPoint(w) : null;
+      if (out && keepInReach(w, p) && Math.hypot(b.x - p.x, b.y - p.y) > 1.2) { beginKeepIn(w, p, Math.atan2(out.y - p.y, out.x - p.x)); return; }
+      if (out && (go.t >= out.t - 0.05 || go.t >= 9)) {
+        if (out.t < 2.5) {
+          setMove(p, out.x - p.x, out.y - p.y, 1);
+          if (p.stam > 0.05) p.ib |= BTN.SPRINT;
+          return;
+        }
+      }
       if (go.t < 9 && tOpp < go.t + 0.6) {
         setMove(p, go.x - p.x, go.y - p.y, 1);
         if (p.stam > 0.05) p.ib |= BTN.SPRINT;
