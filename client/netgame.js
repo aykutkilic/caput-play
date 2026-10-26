@@ -42,6 +42,7 @@ export class NetGame {
     this.offsets = new Map();   // entity -> [dx, dy, dz]
     this.sampleInput = () => ({ a: 0, m: 0, b: 0 });
     this.onEvent = () => {};
+    this.onTick = () => {};     // after every tick played forward (not the rollback's re-runs)
     this.stats = { lead: 0, target: 2, err: 0, replay: 0, corrections: 0, ahead: 0, resyncs: 0 };
     this.history = [];          // recent authoritative states, for goal replays
     this.lastLead = 0;
@@ -190,7 +191,7 @@ export class NetGame {
     w.replay = silent;
     step(w, frame);
     w.replay = false;
-    if (!silent) for (const e of w.events) this.onEvent(e, w);
+    if (!silent) { for (const e of w.events) this.onEvent(e, w); this.onTick(w); }
     this.inputHist.delete(t - 240);
   }
 

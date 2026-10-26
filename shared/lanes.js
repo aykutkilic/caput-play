@@ -16,9 +16,14 @@ import { BALL_R, G, ROLE, ST, KH, KICK } from './constants.js';
 // mirrored, so on screen + bends it right, clockwise: the inside of the left
 // foot, or the outside of the right; - bends it left, the inside of the right
 // foot). Curl costs pace – the inside of the foot gives a medium curve for
-// little, more wraps it round at more.
+// next to nothing (half the curl 2%, a held shot's two thirds 5%), more wraps
+// it round at more (all of it 30%).
 export const CURL_MAX = 0.9, CURL_COST = 0.3;
-export const curlPace = (kc) => 1 - CURL_COST * kc * kc;
+export const curlPace = (kc) => 1 - CURL_COST * kc * kc * kc * kc;
+// A shot struck along the grass goes quicker than one in the air, the harder
+// it's hit the more (pw: the hold – a tap placed, a full one blasted; see the
+// sim's launch)
+export const groundShot = (pw) => 1.35 + 0.25 * pw;
 
 // The bend a shot gets for where it goes (ty, across the goal): into the left
 // part of the goal (as you see it) it's struck with the inside of the left
@@ -257,7 +262,7 @@ export function shotHole(w, p, kind, kh, pw, err, span, curls = [0, -0.5, 0.5], 
   let best = null;
   for (const [kc, tys] of byCurl) {
     let speed = (12 + 13 * pw) * s.shot;
-    speed *= kh === KH.GROUND ? 1.35 : 1 + 0.1 * Math.min(1, Math.max(0, (pw - 0.2) / 0.3));
+    speed *= kh === KH.GROUND ? groundShot(pw) : 1 + 0.1 * Math.min(1, Math.max(0, (pw - 0.2) / 0.3));
     if (kind === KICK.FINESSE) speed *= 0.85;
     speed *= curlPace(kc);
     // one flight for the class, turned to each target in the goal mouth
@@ -319,7 +324,7 @@ export function kickFlight(w, p) {
   let vh, vz;
   const ts = topspinFor(kind, kh, pw, ST.KICK, p.kc, false);
   if (kind === KICK.SHOT || kind === KICK.FINESSE) {
-    vh = (12 + 13 * pw) * s.shot * (kh === KH.GROUND ? 1.35 : 1 + 0.1 * Math.min(1, Math.max(0, (pw - 0.2) / 0.3)));
+    vh = (12 + 13 * pw) * s.shot * (kh === KH.GROUND ? groundShot(pw) : 1 + 0.1 * Math.min(1, Math.max(0, (pw - 0.2) / 0.3)));
     if (kind === KICK.FINESSE) vh *= 0.85;
     if (p.kc) vh *= curlPace(p.kc);
     const tz = targetHeight(w, p, kind, kh) + (pw > 0.9 ? (pw - 0.9) * 3 : 0);

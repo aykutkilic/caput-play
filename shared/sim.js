@@ -12,7 +12,7 @@ import {
 } from './constants.js';
 import { stats } from './physique.js';
 import { aiThink } from './ai.js';
-import { CURL_MAX, curlPace, curlAim, passHole, shotHole, sideCurl, POST_IN } from './lanes.js';
+import { CURL_MAX, curlPace, groundShot, curlAim, passHole, shotHole, sideCurl, POST_IN } from './lanes.js';
 
 export const CHG_MAX = 40;          // ticks to fill the power gauge
 // Pressing the same kick key again right after letting go, while the ball is
@@ -1658,7 +1658,7 @@ function launch(w, p, tech) {
       let speed = (12 + 13 * pw) * s.shot * techF;
       // struck along the grass it's quicker still; in the air a little quicker
       // too – but not a soft one meant to loop up (a chip stays a chip)
-      if (p.kh === KH.GROUND && tech === ST.KICK) speed *= 1.35;
+      if (p.kh === KH.GROUND && tech === ST.KICK) speed *= groundShot(pw);
       else speed *= 1 + 0.1 * clamp((pw - 0.2) / 0.3, 0, 1);
       // a header: neck and jump, plus the run he put into it – well short of a
       // kick (a standing one ~45 km/h at most, met on the run ~55-60)

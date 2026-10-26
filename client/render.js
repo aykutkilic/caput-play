@@ -1550,6 +1550,11 @@ export class Renderer {
       g.globalAlpha = 1;
       if (p.human && !mine) { g.fillStyle = TEAM_COLORS[p.team].ui; g.fillRect(X - 7 * this.dpr, nameY + 2 * this.dpr, 14 * this.dpr, 1.5 * this.dpr); }
     }
+    // the keys an AI player presses (see aikeys.js), over his name
+    if (info.aiKeys) {
+      const base = name ? nameY - fs - 2 * this.dpr : nameY, top = info.aiKeys.draw(this, w, p, X, base);
+      if (top < base) nameY = top + fs + 2 * this.dpr; // (a bubble goes above them)
+    }
     // quick-chat bubble
     const bub = info.bubbles && info.bubbles.get(p.id);
     if (bub) {
