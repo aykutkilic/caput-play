@@ -2,12 +2,12 @@
 // keys as people (see the README's "Playing by the keys"): the arrow pushed
 // (the stick as a keyboard has it: the nearest of the eight ways on screen),
 // the jog key at a part tilt, the kick key held (filling as it charges), R1
-// and R2 – named as your own keys are. A key pressed for a tick (a slide, a
-// block, a dive) stays up a moment, so it can be seen.
+// and R2 – named as your own keys are. A key let go stays up a quarter of a
+// second and then fades, so a tap (a keeper's dive, a slide, a block) can be read.
 import { KT, BTN, KICK_MASK, kickTarget, kickHeight } from '../shared/constants.js';
 import { byPerson, CHG_MAX } from '../shared/sim.js';
 
-const LIT = 12; // ticks a key stays lit after it's let go
+const HOLD = 15, FADE = 36; // ticks a key stays up after it's let go, the last of them fading
 const KICK_COL = { [KT.RUN]: 'run', [KT.MATE]: 'mate', [KT.GOAL]: 'goal', [KT.SELF]: 'self' };
 const KICK_ROW = ['G', 'M', 'H']; // KH.GROUND, MID, HIGH (the binding names: mateG, goalH, ...)
 const ARROWS = ['→', '↘', '↓', '↙', '←', '↖', '↑', '↗']; // by the way on screen, from the right clockwise (y down)
@@ -33,22 +33,22 @@ export class AIKeys {
   draw(r, w, p, X, y) {
     const s = this.on && !byPerson(p) && this.seen.get(p.id);
     if (!s) return y;
-    const lit = (t) => w.tick - t >= 0 && w.tick - t <= LIT;
+    const age = (t) => w.tick - t, lit = (t) => age(t) >= 0 && age(t) <= FADE;
     const caps = [];
     if (lit(s.st)) {
       // the stick's way on the ground, turned back into the screen's
       const t = s.a * (Math.PI * 2 / 256), wx = Math.cos(t), wy = Math.sin(t);
       const [rx, ry] = r.cam.screenDirToWorld(1, 0), [dx, dy] = r.cam.screenDirToWorld(0, 1);
       const ux = wx * rx + wy * ry, uy = wx * dx + wy * dy;
-      caps.push({ text: ARROWS[(Math.round(Math.atan2(uy, ux) / (Math.PI / 4)) + 8) % 8] });
-      if (s.m < 15) caps.push({ text: this.keyName('jog') });
+      caps.push({ text: ARROWS[(Math.round(Math.atan2(uy, ux) / (Math.PI / 4)) + 8) % 8], age: age(s.st) });
+      if (s.m < 15) caps.push({ text: this.keyName('jog'), age: age(s.st) });
     }
     if (lit(s.kt)) {
       const held = (p.ib & (KICK_MASK | (3 << 3))) === s.k && p.chgBtn === s.k;
-      caps.push({ text: this.keyName(KICK_COL[kickTarget(s.k)] + KICK_ROW[kickHeight(s.k)]), fill: held ? Math.min(1, p.chg / CHG_MAX) : 0 });
+      caps.push({ text: this.keyName(KICK_COL[kickTarget(s.k)] + KICK_ROW[kickHeight(s.k)]), age: age(s.kt), fill: held ? Math.min(1, p.chg / CHG_MAX) : 0 });
     }
-    if (lit(s.r1)) caps.push({ text: this.keyName('sprint') });
-    if (lit(s.r2)) caps.push({ text: this.keyName('r2') });
+    if (lit(s.r1)) caps.push({ text: this.keyName('sprint'), age: age(s.r1) });
+    if (lit(s.r2)) caps.push({ text: this.keyName('r2'), age: age(s.r2) });
     if (!caps.length) return y;
 
     const g = r.gu, d = r.dpr, k = Math.round(10 * d), gap = Math.max(1, Math.round(1.5 * d));
@@ -57,8 +57,9 @@ export class AIKeys {
     for (const c of caps) c.w = Math.max(k, Math.ceil(g.measureText(c.text).width + 5 * d));
     let x = Math.round(X - (caps.reduce((n, c) => n + c.w, 0) + gap * (caps.length - 1)) / 2);
     const top = Math.round(y) - k;
-    g.globalAlpha = 0.7; // (see-through: the play matters more than the keys)
     for (const c of caps) {
+      // (see-through: the play matters more than the keys)
+      g.globalAlpha = 0.7 * (c.age <= HOLD ? 1 : 1 - (c.age - HOLD) / (FADE - HOLD + 1));
       g.fillStyle = 'rgba(255,255,255,0.92)';
       g.beginPath(); g.roundRect(x, top, c.w, k, 2 * d); g.fill();
       if (c.fill > 0) {
