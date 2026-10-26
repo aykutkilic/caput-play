@@ -23,7 +23,7 @@
 //    (sim BOT_AFTER) until they resume, instead of running on blindly.
 
 import {
-  createWorld, addPlayer, removePlayer, updatePlayerSpec, step, startMatch, stopMatch, startKickoff, pById, GOAL_TICKS_LIVE,
+  createWorld, addPlayer, removePlayer, updatePlayerSpec, step, startMatch, stopMatch, startKickoff, pById, goalTicks,
 } from './sim.js';
 import { SNAP_EVERY, ROLE, PHASE, autoPitch, MAX_PLAYERS, TEAM_NAMES, QUICK_CHAT, GOAL_SIZE_DEFAULT, KIT_NAMES, KITS_DEFAULT } from './constants.js';
 import {
@@ -295,7 +295,7 @@ export class Room {
         if (w.m.phase !== PHASE.GOAL || !w.m.live) break;
         this.skips.add(m.id);
         const players = [...this.members.values()].filter((x) => x.playerId >= 0);
-        if (players.every((x) => this.skips.has(x.id))) w.m.phT = Math.max(w.m.phT, GOAL_TICKS_LIVE - 45);
+        if (players.every((x) => this.skips.has(x.id))) w.m.phT = Math.max(w.m.phT, goalTicks(w.m) - 45);
         break;
       }
       case 'chat': {

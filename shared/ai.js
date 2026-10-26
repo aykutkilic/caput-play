@@ -7,7 +7,7 @@ import {
   rnd, teamDir, pitchOf, pById, stOf, startKick, blockKind, slotOf, slotIndex, shootingPractice,
   inOwnBox, clamp, encodeStick, ballPath, blockPlan, wantsBlock, loftTime,
   groundSpeedFor, passEndSpeed, MU, CF, byPerson, keeperBig, bigReach, exitPoint, keepInReach, footFor, footCurl, offsidePos,
-  tiltFor, CHG_MAX,
+  tiltFor, CHG_MAX, CELEB_TICKS, goalWeight,
 } from './sim.js';
 import { SHAPE, MARK } from './learned.js';
 import { shotHole, aiReact, POST_IN } from './lanes.js';
@@ -1459,24 +1459,26 @@ export function aiThink(w, p) {
   if (b.atk === p.id && b.atT > 0 && p.im > 4) p.im = 4;
 }
 
-// After a goal in a match, for the first few seconds (by the stick, as a
+// After a goal in a match, as long as the goal matters (by the stick, as a
 // person would): the scorer runs off towards the corner flag and pulls up
 // (his knees take him the rest of the way, as drawn), his team-mates run to
-// him; the side that let it in stand where they are. True: done for this tick.
-const CELEBRATE = 170, DEJECTED = 110;
+// him; the side that let it in stand where they are. A goal more on a big
+// lead: he stops where he is, the rest walk back. True: done for this tick.
 function celebrate(w, p) {
   const m = w.m;
-  if (!m.live || m.phT >= CELEBRATE) return false;
-  if (p.team !== m.lastGoalTeam) return m.phT < DEJECTED;
+  if (!m.live) return false;
+  const big = goalWeight(m), T = CELEB_TICKS[big] - 10;
+  if (m.phT >= T) return false;
+  if (p.team !== m.lastGoalTeam) return m.phT < T * 0.65;
   if (p.role === ROLE.GK) return false;
   if (p.id === m.scorer) {
-    if (m.phT > 85) return true;
+    if (!big || m.phT > T * 0.5) return true;
     const pit = pitchOf(w);
     moveTo(p, Math.sign(w.ball.x || 1) * (pit.L / 2 - 2), Math.sign(p.y || 1) * (pit.W / 2 - 2), 0, 1.5);
     return true;
   }
   const s = pById(w, m.scorer);
-  if (!s || s.team !== p.team) return false;
+  if (!big || !s || s.team !== p.team) return false;
   moveTo(p, s.x, s.y, 4, 1.2);
   return true;
 }

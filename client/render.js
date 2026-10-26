@@ -4,7 +4,7 @@
 
 import { GOAL_DEPTH, BALL_R, ST, ROLE, PHASE, KICK, SP, SKILL, KH, PART, GKB, KQ, FOOT } from '../shared/constants.js';
 import { stats } from '../shared/physique.js';
-import { CHG_MAX, pitchOf, DIVE_BASE, DIVE_SPAN, diveReach, SIDEARM_MAX, teamDir, keeperBig } from '../shared/sim.js';
+import { CHG_MAX, pitchOf, DIVE_BASE, DIVE_SPAN, diveReach, SIDEARM_MAX, teamDir, keeperBig, CELEB_TICKS } from '../shared/sim.js';
 import { skeleton, drawFigure } from './figure.js';
 import { Scene3D } from './mesh3d.js';
 import { Effects } from './fx.js';
@@ -1088,7 +1088,8 @@ export class Renderer {
     s3.lamps(clamp(cam.persp ? 90 * this.dpr : 3.2 * cam.scale, 24, 160));
     // the fans: on their feet when their team scores, a murmur as the ball nears a goal
     const ct = info.celebrateTeam ?? -1, gd = pit.L / 2 - Math.abs(ball[0]);
-    s3.crowdMood(this.time, [ct === 0 ? 1 : 0, ct === 1 ? 1 : 0], clamp(1 - gd / 22, 0, 1) * (Math.abs(ball[1]) < pit.W / 2 ? 1 : 0));
+    const jump = [0.4, 0.75, 1][info.goalWeight ?? 2];
+    s3.crowdMood(this.time, [ct === 0 ? jump : 0, ct === 1 ? jump : 0], clamp(1 - gd / 22, 0, 1) * (Math.abs(ball[1]) < pit.W / 2 ? 1 : 0));
     s3.render();
   }
 
@@ -1728,7 +1729,7 @@ export class Renderer {
     // after a goal: the scorer's knee slide (pulling up from his run) and his
     // arms up on his knees, team-mates hugging him, the rest as they like;
     // the side that let it in heads down (see poseFor)
-    if (info.celebrateTeam >= 0 && p.st === ST.IDLE) {
+    if (info.celebrateTeam >= 0 && p.st === ST.IDLE && m.phT < CELEB_TICKS[info.goalWeight ?? 2] + 40) {
       const scorer = w.players.find((q) => q.id === m.scorer);
       if (info.celebrateTeam === p.team) {
         ctx.celebrate = true;

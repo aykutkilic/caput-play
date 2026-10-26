@@ -62,7 +62,7 @@ export class Effects {
         this.kick(0.12);
         break;
       }
-      case 'goal': this.kick(0.2); break;
+      case 'goal': this.kick(0.08 + 0.06 * (e.weight ?? 2)); break;
       case 'tackle': case 'steal': case 'foul': this.bits(e.x, e.y, 0.05, 6, 1.4, 2.2); this.puff(e.x, e.y, 0.15, 1, 0.5); break;
       case 'bounce': if ((e.v || 0) > 5) this.bits(e.x, e.y, 0.03, g === GROUNDS.wet ? 6 : 2, 1, 1.6); break;
     }

@@ -20,7 +20,20 @@ export const CHG_MAX = 40;          // ticks to fill the power gauge
 // press is full power at once (a big first-time clearance). With the ball at
 // your feet a release always kicks at once – no waiting for a second press.
 export const TAP_GAP = 8;           // max ticks between release and the next press
-export const GOAL_TICKS_LIVE = 640;  // goal pause in a match: celebration + replay (can be skipped)
+// After a goal in a match: a celebration as long as the goal matters
+// (goalWeight: [a goal more on a big lead, a goal back or a two-goal lead, one
+// that changes who's winning]), then the replay; the pause is the two (and
+// can be skipped).
+export const CELEB_TICKS = [50, 110, 180];
+const REPLAY_TICKS = 460;
+// How much a goal matters, by what it did to the score: 2 – it changed who's
+// winning (the first goal, an equaliser, going ahead); 1 – a goal back to one
+// behind, or a two-goal lead; 0 – any other (4-0 from 3-0, a late consolation).
+export function goalWeight(m) {
+  const lead = m.lastGoalTeam === 0 ? m.s0 - m.s1 : m.s1 - m.s0; // the scorers', after it
+  return lead === 0 || lead === 1 ? 2 : lead === 2 || lead === -1 ? 1 : 0;
+}
+export const goalTicks = (m) => (m.live ? CELEB_TICKS[goalWeight(m)] + REPLAY_TICKS : 36);
 
 // Aftertouch (Sensible Soccer style): for a short window after a human kicks
 // the ball, a *fresh* stick input bends it (towards the side pushed), lifts it
@@ -3212,7 +3225,7 @@ function checkBall(w) {
       b.owner = -1; b.held = 0;
       if (m.spTaker >= 0) m.spTaker = -1;
       setPhase(w, PHASE.GOAL);
-      w.events.push({ k: 'goal', team, scorer: credit, own: credit === b.last && b.lastTeam !== team });
+      w.events.push({ k: 'goal', team, scorer: credit, own: credit === b.last && b.lastTeam !== team, weight: m.live ? goalWeight(m) : 0 });
       return;
     }
     const defending = teamDir(w, 0) === -side ? 0 : 1;
@@ -3254,7 +3267,7 @@ function rules(w) {
       break;
     case PHASE.GOAL:
       // (a warm-up goal: no celebration – just long enough to see it hit the net)
-      if (m.phT >= (m.live ? GOAL_TICKS_LIVE : 36)) {
+      if (m.phT >= goalTicks(m)) {
         if (m.live && m.clock >= halfTicks * m.half) {
           setPhase(w, m.half === 1 ? PHASE.HALFTIME : PHASE.FULLTIME);
           w.events.push({ k: 'whistle', n: m.half === 1 ? 2 : 3 });

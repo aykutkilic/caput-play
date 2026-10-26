@@ -11,7 +11,7 @@ import { initPwa } from './pwa.js';
 import { DevView } from './devview.js';
 import { AimLine } from './aimline.js';
 import { AIKeys } from './aikeys.js';
-import { encodeStick, pById, wantsBlock, inOwnBox, pitchOf, keeperHands, shootingPractice, teamDir } from '../shared/sim.js';
+import { encodeStick, pById, wantsBlock, inOwnBox, pitchOf, keeperHands, shootingPractice, teamDir, goalWeight, CELEB_TICKS } from '../shared/sim.js';
 import { PHASE, SP, SP_NAME, ROLE, TEAM_NAMES, TICK_RATE, QUICK_CHAT, KICK_MASK, GOAL_SIZE_DEFAULT, KIT_NAMES, KITS_DEFAULT } from '../shared/constants.js';
 import { ratings, stats } from '../shared/physique.js';
 
@@ -850,9 +850,11 @@ function onPhaseChange(prev, m) {
       if (!m.live) { sfx.net(); break; } // a warm-up goal: no celebration
       const scorer = state.names.get(m.scorer) || '';
       banner('GOAL!', `${TEAM_NAMES[m.lastGoalTeam] || ''}${scorer ? ' · ' + scorer : ''}`, teamCol(m.lastGoalTeam));
-      sfx.net(); sfx.roar();
-      // a moment of celebration, then the replay
-      if (m.live && game.auth) { state.replayAt = performance.now() + 3000; state.replayGoal = game.auth.tick - m.phT; }
+      // a celebration as long as the goal matters (see goalWeight), then the replay
+      state.goalWeight = goalWeight(m);
+      sfx.net();
+      if (state.goalWeight) sfx.roar(); else sfx.cheer(0.7);
+      if (m.live && game.auth) { state.replayAt = performance.now() + CELEB_TICKS[state.goalWeight] / 60 * 1000; state.replayGoal = game.auth.tick - m.phT; }
       break;
     }
     case PHASE.KICKOFF:
@@ -963,8 +965,9 @@ function loop(now) {
       if (rp) renderer.frame(rp.world, 1, NO_OFFSETS, { myId: state.myId, looks: looksFor(rp.world), names: state.names, celebrateTeam: -1, replayCam: rp.speed < 1 ? replay.side : 0, replay: true, replaySpeed: rp.speed }, dt * rp.speed);
       else {
         // (after a goal, until the replay: the camera in close on the scorer)
-        const focus = celebrateTeam >= 0 && state.replayAt ? auth.m.scorer : -1;
-        renderer.frame(w, alpha, game.offsets, { myId: state.myId, looks: looksFor(w), names: state.names, celebrateTeam, bubbles, aiKeys, focus }, dt);
+        // (not for a goal more on a big lead: a moment's cheer, straight to the replay)
+        const focus = celebrateTeam >= 0 && state.replayAt && state.goalWeight ? auth.m.scorer : -1;
+        renderer.frame(w, alpha, game.offsets, { myId: state.myId, looks: looksFor(w), names: state.names, celebrateTeam, goalWeight: state.goalWeight ?? 2, bubbles, aiKeys, focus }, dt);
         aimLine.draw(renderer, w, state.myId);
         devView.draw(renderer, w, state.myId);
       }
