@@ -1,4 +1,5 @@
-// The keys the AI players press, over their heads – they play by the same
+// The keys the AI players press, over their heads, in developer mode (see
+// devview.js) – they play by the same
 // keys as people (see the README's "Playing by the keys"): the arrow pushed
 // (the stick as a keyboard has it: the nearest of the eight ways on screen),
 // the jog key at a part tilt, the kick key held (filling as it charges), R1

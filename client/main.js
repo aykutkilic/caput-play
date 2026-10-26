@@ -84,11 +84,12 @@ const game = new NetGame(null);
 const input = new Input();
 const renderer = new Renderer($('game'));
 const aimLine = new AimLine(); // the kick being charged, as it would go
-const aiKeys = new AIKeys((action) => keyName(input.keys[action])); // the keys the AI presses, over their heads
-try { aiKeys.on = localStorage.getItem('caput.aikeys') !== '0'; } catch { /* ignore */ }
+const aiKeys = new AIKeys((action) => keyName(input.keys[action])); // the keys the AI presses, over their heads (developer mode)
+let aiKeysPref = true; // (the View section's AI keys box, for developer mode)
+try { aiKeysPref = localStorage.getItem('caput.aikeys') !== '0'; } catch { /* ignore */ }
 game.onTick = (w) => aiKeys.tick(w);
 // developer mode: Cmd/Ctrl+Shift+D three times (see devview.js)
-const devView = new DevView((on) => toast(on ? 'Developer mode on – lanes, holes, AI' : 'Developer mode off'), (action) => keyName(input.keys[action]));
+const devView = new DevView((on) => { syncAiKeys(); toast(on ? 'Developer mode on – lanes, holes, AI keys' : 'Developer mode off'); }, (action) => keyName(input.keys[action]));
 const sfx = new Sfx();
 try { renderer.setPreset(localStorage.getItem('caput.cam') || 'iso'); renderer.zoom = Number(localStorage.getItem('caput.zoom')) || 1; } catch { renderer.setPreset('iso'); }
 
@@ -506,8 +507,14 @@ document.addEventListener('click', (e) => {
 });
 $('netChk').checked = state.showNet;
 $('netChk').onchange = () => { state.showNet = $('netChk').checked; try { localStorage.setItem('caput.net', state.showNet ? '1' : '0'); } catch { /* ignore */ } };
-$('aiKeysChk').checked = aiKeys.on;
-$('aiKeysChk').onchange = () => { aiKeys.on = $('aiKeysChk').checked; try { localStorage.setItem('caput.aikeys', aiKeys.on ? '1' : '0'); } catch { /* ignore */ } };
+// the AI keys only in developer mode (and there, the box can turn them off)
+function syncAiKeys() {
+  aiKeys.on = devView.on && aiKeysPref;
+  $('aiKeysChk').closest('label').hidden = !devView.on;
+}
+$('aiKeysChk').checked = aiKeysPref;
+$('aiKeysChk').onchange = () => { aiKeysPref = $('aiKeysChk').checked; try { localStorage.setItem('caput.aikeys', aiKeysPref ? '1' : '0'); } catch { /* ignore */ } syncAiKeys(); };
+syncAiKeys();
 
 // ------------------------------------------------------------------ phones & tablets
 
