@@ -8,6 +8,7 @@ import { CHG_MAX, pitchOf, DIVE_BASE, DIVE_SPAN, diveReach, SIDEARM_MAX, teamDir
 import { skeleton, drawFigure } from './figure.js';
 import { Scene3D } from './mesh3d.js';
 import { Effects } from './fx.js';
+import { GAIT } from './gait.js';
 
 export { skeleton, drawFigure };
 
@@ -340,6 +341,80 @@ function handsTo(P, f, r, z, H, e, apart = 0.105) {
   armIK(P, 1, f - 0.04, r + apart, z, H, e);
 }
 
+// ---------------------------------------------------------------- the stride
+
+// Steps a second at a pace (the stride's phase moves pi a step): ~2 walking,
+// ~2.9 at 3.3 m/s (real runners, gait.js), ~4.5 flat out.
+const cadence = (sp) => (1.6 + 0.35 * sp) * Math.min(1, sp / 0.6);
+// The share of a stride a foot is on the grass: as measured at gait.js's pace,
+// more walking (both feet down for a moment), less at a sprint (~0.2).
+const duty = (sp) => Math.min(0.62, 0.18 + (GAIT.duty - 0.18) * Math.exp(-(sp - GAIT.v) / (sp < GAIT.v ? 1.2 : 2.5)));
+
+// one of gait.js's curves at the phase set by stridePhase: 0 at its low, 1
+// at its high; o -1 for the right side (half a stride on)
+const GC = new Float64Array(5), GS = new Float64Array(5);
+const GT = { lh: 0, lk: 0, la: 0, rh: 0, rk: 0, ra: 0 }; // (a leg's angles reaching its foot)
+function stridePhase(ph) {
+  GC[1] = Math.cos(ph); GS[1] = Math.sin(ph);
+  for (let k = 2; k <= 4; k++) { GC[k] = GC[k - 1] * GC[1] - GS[k - 1] * GS[1]; GS[k] = GS[k - 1] * GC[1] + GC[k - 1] * GS[1]; }
+}
+const curve = (f, o = 1) => f[0] + o * (f[1] * GC[1] + f[2] * GS[1]) + f[3] * GC[2] + f[4] * GS[2] + o * (f[5] * GC[3] + f[6] * GS[3]) + f[7] * GC[4] + f[8] * GS[4];
+
+// Running forwards, blended in by w: each leg swings through as real runners'
+// do (motion capture – gait.js: the knee folding high behind, the thigh
+// driving through) and, while its foot is down, reaches it where it landed –
+// planted on the grass as the body goes over it, no skating; the arms swing
+// mostly behind with the elbows well bent, the shoulders twist against the
+// hips and the body rises and falls twice a stride, lowest over the planted
+// foot. Sized by pace from the measured one (gait.js: ~3.3 m/s); faster than
+// that, as sprinters do – knees higher, arms driving further.
+// (gait.js's curves' middles and half-ranges)
+const GM = {}, GH = {};
+for (const k in GAIT.ch) { const c = GAIT.ch[k]; GM[k] = (c.lo + c.hi) / 2; GH[k] = (c.hi - c.lo) / 2; }
+function stride(P, sp, ph, H, w) {
+  const ch = GAIT.ch, r = sp / GAIT.v, r1 = Math.min(1, r), up = Math.max(0, r - 1), e = w * Math.min(1, sp / 0.6);
+  if (e <= 0) return;
+  stridePhase(ph);
+  const hipH = 0.53 * H;
+  P.drop = mix(P.drop, GAIT.drop * hipH * r1, e);
+  P.bob = mix(P.bob, hipH * (ch.bob.lo + 2 * GH.bob * curve(ch.bob.f)) * r1, e);
+  P.tw = mix(P.tw, GH.tw * r1 * (2 * curve(ch.tw.f) - 1), e);
+  P.lean += e * r1 * GH.lean * (2 * curve(ch.lean.f) - 1);
+  const thLo = ch.thigh.lo * r1, thHi = Math.min(1.3, ch.thigh.hi * r);
+  const kLo = ch.knee.lo * r1, kHi = Math.min(2.35, ch.knee.hi * Math.pow(r1, 0.9) + 0.1 * up);
+  const aMid = GM.arm * r1 + 0.15 * up, aHalf = GH.arm * r1 + 0.25 * up;
+  const eMid = Math.max(1.4, 0.25 + (GM.elbow - 0.25) * r1 - 0.15 * up), eHalf = GH.elbow * r1;
+  const beta = duty(sp), cad = cadence(sp), hz = hipH - P.drop + P.bob, foot = 0.13 * H;
+  for (let side = -1; side <= 1; side += 2) {
+    const o = -side, L = side < 0;
+    // the swing
+    const th = thLo + (thHi - thLo) * curve(ch.thigh.f, o), kn = kLo + (kHi - kLo) * curve(ch.knee.f, o);
+    const sh = aMid + aHalf * (2 * curve(ch.arm.f, o) - 1), el = eMid + eHalf * (2 * curve(ch.elbow.f, o) - 1);
+    const ab = mix(0.12, ch.armAbd.lo + 2 * GH.armAbd * curve(ch.armAbd.f, o), r1);
+    if (L) { P.lh = mix(P.lh, th, e); P.lk = mix(P.lk, kn, e); P.lsh = mix(P.lsh, sh, e); P.lel = mix(P.lel, el, e); P.lab = mix(P.lab, ab, e); }
+    else { P.rh = mix(P.rh, th, e); P.rk = mix(P.rk, kn, e); P.rsh = mix(P.rsh, sh, e); P.rel = mix(P.rel, el, e); P.rab = mix(P.rab, ab, e); }
+    // the foot down: from landing to push-off it stays where it landed while
+    // the hip passes over it (under it mid-way), lifting off past either end
+    const d = ((ph - GAIT.stance - (L ? 0 : Math.PI)) % TAU + TAU * 1.5) % TAU - Math.PI, u = Math.abs(d) / (beta * Math.PI);
+    if (u >= 1.35) continue;
+    const k = clamp((1.35 - u) / 0.35, 0, 1), lift = u > 1 ? 0.5 * H * (u - 1) * (u - 1) : 0;
+    const df = -sp * d / (cad * Math.PI), dr = side * 0.01 * H;
+    legIK(GT, side, df, dr, 0.006 * H + lift - hz, H, 1);
+    // pushing off he rolls up onto his toes: the foot tips (legFK's foot
+    // angle follows the shin) about the toe, which stays where it was on the
+    // grass – the ankle rising and edging forward round it
+    // (twice: lifting the ankle tips the foot a little further)
+    for (let it = 0; it < 2; it++) {
+      const fa = clamp(0.7 * (L ? GT.lh - GT.lk : GT.rh - GT.rk), -0.5, 0.9);
+      if (fa >= 0) break;
+      legIK(GT, side, df + foot * (1 - Math.cos(fa)), dr, 0.006 * H - Math.sin(fa) * foot + lift - hz, H, 1);
+    }
+    const q = ease(k) * e;
+    if (L) { P.lh = mix(P.lh, GT.lh, q); P.lk = mix(P.lk, GT.lk, q); P.la = mix(P.la, GT.la, q); }
+    else { P.rh = mix(P.rh, GT.rh, q); P.rk = mix(P.rk, GT.rk, q); P.ra = mix(P.ra, GT.ra, q); }
+  }
+}
+
 export function poseFor(p, ctx) {
   const P = basePose();
   const H = ctx.H;
@@ -368,6 +443,10 @@ export function poseFor(p, ctx) {
   P.lel = P.rel = 0.3 + A * 1.05;
   P.tw = -0.24 * A * s;
   P.lean = 0.04 + A * 0.2 * (1 - 1.3 * back) + (1 - Math.min(1, A * 3)) * 0.015 * Math.sin(t * 2.1);
+  P.bob = A * 0.05 * Math.abs(s);
+  // going forwards: the stride as real runners run it (back-pedalling: the
+  // cycle above, run backwards)
+  stride(P, sp, ph, H, 1 - back);
   if (shuffle > 0) {
     // side-step: the leading leg steps out, the other closes up to it; knees
     // bent, on the toes, no stride
@@ -384,7 +463,6 @@ export function poseFor(p, ctx) {
   P.lean += 0.12 * drive - 0.28 * brake;
   P.lk += 0.25 * brake; P.rk += 0.25 * brake; P.drop += 0.04 * H * brake;
   P.head = -P.lean * 0.55;
-  P.bob = A * 0.05 * Math.abs(s);
   if (A < 0.25) {
     // standing: breathing and a slow weight shift
     const q = 1 - A * 4, ws = Math.sin(t * 0.9 + p.id);
@@ -1639,11 +1717,8 @@ export class Renderer {
     const turn = dt > 0 ? angDiff(a.face, p.face) / dt : 0;
     a.turn += (clamp(turn, -12, 12) - a.turn) * (1 - Math.exp(-dt * 10));
     a.face = p.face;
-    // a real runner's cadence – steps a second 1.6 + 0.35 x speed (~2 walking,
-    // ~2.7 jogging, ~4.5 flat out), each step that much ground: no feet
-    // gliding along in long slow strides; easing to nothing standing
-    const cadence = (1.6 + 0.35 * a.sp) * Math.min(1, a.sp / 0.6);
-    a.ph += cadence * dt * Math.PI;
+    // a real runner's cadence (see cadence), easing to nothing standing
+    a.ph += cadence(a.sp) * dt * Math.PI;
     if (a.ph > 1e4) a.ph -= 1e4 - (1e4 % TAU);
     return a;
   }
