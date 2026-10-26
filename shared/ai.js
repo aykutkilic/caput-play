@@ -1459,6 +1459,28 @@ export function aiThink(w, p) {
   if (b.atk === p.id && b.atT > 0 && p.im > 4) p.im = 4;
 }
 
+// After a goal in a match, for the first few seconds (by the stick, as a
+// person would): the scorer runs off towards the corner flag and pulls up
+// (his knees take him the rest of the way, as drawn), his team-mates run to
+// him; the side that let it in stand where they are. True: done for this tick.
+const CELEBRATE = 170, DEJECTED = 110;
+function celebrate(w, p) {
+  const m = w.m;
+  if (!m.live || m.phT >= CELEBRATE) return false;
+  if (p.team !== m.lastGoalTeam) return m.phT < DEJECTED;
+  if (p.role === ROLE.GK) return false;
+  if (p.id === m.scorer) {
+    if (m.phT > 85) return true;
+    const pit = pitchOf(w);
+    moveTo(p, Math.sign(w.ball.x || 1) * (pit.L / 2 - 2), Math.sign(p.y || 1) * (pit.W / 2 - 2), 0, 1.5);
+    return true;
+  }
+  const s = pById(w, m.scorer);
+  if (!s || s.team !== p.team) return false;
+  moveTo(p, s.x, s.y, 4, 1.2);
+  return true;
+}
+
 function think(w, p) {
   if ((p.st === ST.IDLE || p.st === ST.STUMBLE) && reacting(w, p)) { p.ib &= BTN.R2; return; }
   p.ib = 0; p.im = 0;
@@ -1466,6 +1488,7 @@ function think(w, p) {
   if (m.phase === PHASE.KICKOFF || m.phase === PHASE.HALFTIME) return;
   if (p.st !== ST.IDLE && p.st !== ST.STUMBLE) return;
   if (p.aiT > 0) p.aiT--;
+  if (m.phase === PHASE.GOAL && celebrate(w, p)) return;
   if (m.phase === PHASE.GOAL || m.phase === PHASE.FULLTIME || m.phase === PHASE.SETPIECE) {
     if (p.role === ROLE.GK) {
       const pit = pitchOf(w), dir = teamDir(w, p.team);

@@ -81,7 +81,7 @@ export class Room {
     this.members = new Map(); // clientId -> member
     this.ai = new Map();      // playerId -> ai spec
     this.hostId = null;
-    this.settings = { matchLen: 240, pitch: 'auto', goals: GOAL_SIZE_DEFAULT, ai: 1, aiSex: 0, kits: [...KITS_DEFAULT], offside: 0, movement: 0 };
+    this.settings = { matchLen: 240, pitch: 'auto', goals: GOAL_SIZE_DEFAULT, ai: 1, aiSex: 0, kits: [...KITS_DEFAULT], offside: 0, movement: 0, weather: 0 };
     this.world = createWorld(1, (Math.random() * 2 ** 31) | 0);
     this.world.auth = true; // inputs that don't arrive are missing here (see BOT_AFTER)
     this.world.m.matchLen = this.settings.matchLen;
@@ -229,6 +229,7 @@ export class Room {
     if ([0, 1, 2].includes(Number(s.ai))) this.settings.ai = Number(s.ai);
     if ([0, 1].includes(Number(s.offside))) this.settings.offside = Number(s.offside);
     if ([0, 1].includes(Number(s.movement))) this.settings.movement = Number(s.movement);
+    if ([0, 1, 2, 3].includes(Number(s.weather))) this.settings.weather = Number(s.weather);
     if (Array.isArray(s.kits) && s.kits.length === 2) {
       const k = s.kits.map(Number);
       if (k.every((v) => Number.isInteger(v) && v >= 0 && v < KIT_NAMES.length) && k[0] !== k[1]) this.settings.kits = k;

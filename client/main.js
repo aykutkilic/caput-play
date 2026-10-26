@@ -318,6 +318,7 @@ function onRoom(msg) {
   for (const m of msg.members) if (m.playerId >= 0) { state.names.set(m.playerId, m.name); state.avatars.set(m.playerId, m.avatar); }
   for (const a of msg.ai) { state.names.set(a.playerId, a.name); state.avatars.set(a.playerId, a.avatar); }
   setKits(msg.settings && msg.settings.kits || KITS_DEFAULT);
+  renderer.setWeather(msg.settings && msg.settings.weather || 0);
   state.lookCache.clear();
   renderPanel();
 }
@@ -402,9 +403,10 @@ function renderPanel() {
   $('aiSexSel').value = String(r.settings.aiSex ?? 0);
   $('offsideSel').value = String(r.settings.offside ?? 0);
   $('moveSel').value = String(r.settings.movement ?? 0);
+  $('weatherSel').value = String(r.settings.weather ?? 0);
   const kits = r.settings.kits || KITS_DEFAULT;
   $('kitA').value = String(kits[0]); $('kitB').value = String(kits[1]);
-  $('matchLen').disabled = $('pitchSel').disabled = $('aiSel').disabled = $('aiSexSel').disabled = $('offsideSel').disabled = $('moveSel').disabled = $('kitA').disabled = $('kitB').disabled = !isHost;
+  $('matchLen').disabled = $('pitchSel').disabled = $('aiSel').disabled = $('aiSexSel').disabled = $('offsideSel').disabled = $('moveSel').disabled = $('weatherSel').disabled = $('kitA').disabled = $('kitB').disabled = !isHost;
   // the goals can't be resized during a match
   $('goalSel').disabled = !isHost || !!(game.world && game.world.m.live);
   $('startBtn').disabled = !isHost;
@@ -428,8 +430,9 @@ $('matchLen').onchange = () => send({
   t: 'settings', matchLen: Number($('matchLen').value), pitch: $('pitchSel').value,
   goals: Number($('goalSel').value), ai: Number($('aiSel').value), aiSex: Number($('aiSexSel').value),
   kits: [Number($('kitA').value), Number($('kitB').value)], offside: Number($('offsideSel').value), movement: Number($('moveSel').value),
+  weather: Number($('weatherSel').value),
 });
-$('pitchSel').onchange = $('goalSel').onchange = $('aiSel').onchange = $('aiSexSel').onchange = $('offsideSel').onchange = $('moveSel').onchange = $('matchLen').onchange;
+$('pitchSel').onchange = $('goalSel').onchange = $('aiSel').onchange = $('aiSexSel').onchange = $('offsideSel').onchange = $('moveSel').onchange = $('weatherSel').onchange = $('matchLen').onchange;
 // team kits: picking the other team's colour swaps them over
 for (const id of ['kitA', 'kitB']) $(id).innerHTML = KIT_NAMES.map((n, i) => `<option value="${i}">${n}</option>`).join('');
 const kitChange = (mine, other) => () => {
@@ -465,6 +468,10 @@ $('camSel').value = renderer.preset;
 $('camSel').onchange = () => { renderer.setPreset($('camSel').value); try { localStorage.setItem('caput.cam', renderer.preset); } catch { /* ignore */ } $('camSel').blur(); };
 $('zoom').value = String(renderer.zoom);
 $('zoom').oninput = () => { renderer.zoom = Number($('zoom').value); try { localStorage.setItem('caput.zoom', String(renderer.zoom)); } catch { /* ignore */ } };
+// effects: auto (lighter by itself on a slow device), full or light
+try { renderer.setEffects(localStorage.getItem('caput.fx') || 'auto'); } catch { renderer.setEffects('auto'); }
+$('fxSel').value = renderer.effectsMode;
+$('fxSel').onchange = () => { renderer.setEffects($('fxSel').value); try { localStorage.setItem('caput.fx', $('fxSel').value); } catch { /* ignore */ } };
 // mixer: the same controls in the room panel and on the home screen
 function renderMixers() {
   for (const el of document.querySelectorAll('.mixer')) {
@@ -796,6 +803,7 @@ $('ctrlReset').onclick = () => { input.keys = { ...DEFAULT_KEYS }; input.saveKey
 // ------------------------------------------------------------------ events -> sound
 
 game.onEvent = (e) => {
+  renderer.fx.event(e);
   const cam = renderer.cam;
   const d = e.x !== undefined ? Math.hypot(e.x - cam.cx, e.y - cam.cy) : 0;
   const vol = Math.max(0.15, 1 - d / 45);
@@ -844,7 +852,7 @@ function onPhaseChange(prev, m) {
       banner('GOAL!', `${TEAM_NAMES[m.lastGoalTeam] || ''}${scorer ? ' · ' + scorer : ''}`, teamCol(m.lastGoalTeam));
       sfx.net(); sfx.roar();
       // a moment of celebration, then the replay
-      if (m.live && game.auth) { state.replayAt = performance.now() + 1100; state.replayGoal = game.auth.tick - m.phT; }
+      if (m.live && game.auth) { state.replayAt = performance.now() + 3000; state.replayGoal = game.auth.tick - m.phT; }
       break;
     }
     case PHASE.KICKOFF:
@@ -951,9 +959,12 @@ function loop(now) {
       const rp = replay.active ? replay.next(dt) : null;
       $('replayBadge').hidden = !rp;
       document.body.classList.toggle('replaying', !!rp);
-      if (rp) renderer.frame(rp.world, 1, NO_OFFSETS, { myId: state.myId, looks: looksFor(rp.world), names: state.names, celebrateTeam: -1 }, dt * rp.speed);
+      // (the slow-motion finish from behind the goal)
+      if (rp) renderer.frame(rp.world, 1, NO_OFFSETS, { myId: state.myId, looks: looksFor(rp.world), names: state.names, celebrateTeam: -1, replayCam: rp.speed < 1 ? replay.side : 0, replay: true, replaySpeed: rp.speed }, dt * rp.speed);
       else {
-        renderer.frame(w, alpha, game.offsets, { myId: state.myId, looks: looksFor(w), names: state.names, celebrateTeam, bubbles, aiKeys }, dt);
+        // (after a goal, until the replay: the camera in close on the scorer)
+        const focus = celebrateTeam >= 0 && state.replayAt ? auth.m.scorer : -1;
+        renderer.frame(w, alpha, game.offsets, { myId: state.myId, looks: looksFor(w), names: state.names, celebrateTeam, bubbles, aiKeys, focus }, dt);
         aimLine.draw(renderer, w, state.myId);
         devView.draw(renderer, w, state.myId);
       }

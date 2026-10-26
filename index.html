@@ -141,12 +141,22 @@
           <option value="0">Mixed</option><option value="1">Men</option><option value="2">Women</option>
         </select>
       </label>
+      <label>Weather
+        <select id="weatherSel">
+          <option value="0">Day</option><option value="1">Night</option><option value="2">Rain</option><option value="3">Snow</option>
+        </select>
+      </label>
       <button id="startBtn" class="primary">Start match</button>
     </div>
     <div class="section">
       <h4>View</h4>
       <label>Camera <select id="camSel"></select></label>
       <label>Zoom <input id="zoom" type="range" min="0.55" max="1.8" step="0.05" value="1"></label>
+      <label>Effects
+        <select id="fxSel">
+          <option value="auto">Auto (lighter if slow)</option><option value="full">Full</option><option value="light">Light</option>
+        </select>
+      </label>
       <label class="check"><input id="netChk" type="checkbox"> Net stats</label>
       <label class="check"><input id="aiKeysChk" type="checkbox"> AI keys (over their heads)</label>
       <label class="check"><input id="touchChk" type="checkbox"> Touch controls</label>

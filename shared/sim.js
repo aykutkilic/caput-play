@@ -20,7 +20,7 @@ export const CHG_MAX = 40;          // ticks to fill the power gauge
 // press is full power at once (a big first-time clearance). With the ball at
 // your feet a release always kicks at once – no waiting for a second press.
 export const TAP_GAP = 8;           // max ticks between release and the next press
-export const GOAL_TICKS_LIVE = 520;  // goal pause in a match: celebration + replay (can be skipped)
+export const GOAL_TICKS_LIVE = 640;  // goal pause in a match: celebration + replay (can be skipped)
 
 // Aftertouch (Sensible Soccer style): for a short window after a human kicks
 // the ball, a *fresh* stick input bends it (towards the side pushed), lifts it

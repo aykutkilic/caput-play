@@ -95,6 +95,8 @@ export const TEAM_NAMES = ['TEAM A', 'TEAM B'];
 // kits the host can give each team (room setting; never the same for both)
 export const KIT_NAMES = ['Red', 'Blue', 'Dark blue', 'Yellow', 'White', 'Black'];
 export const KITS_DEFAULT = [0, 1];
+// the weather the host can pick (room setting; only how it looks – the ball plays the same)
+export const WEATHER_NAMES = ['Day', 'Night', 'Rain', 'Snow'];
 
 // The only things players can say: quick-chat lines, sent by number (keys 1-5).
 export const QUICK_CHAT = ['Pass!', 'Shoot!', 'Nice one!', 'Sorry!', 'Good game!'];

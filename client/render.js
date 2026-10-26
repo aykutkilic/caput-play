@@ -7,6 +7,7 @@ import { stats } from '../shared/physique.js';
 import { CHG_MAX, pitchOf, DIVE_BASE, DIVE_SPAN, diveReach, SIDEARM_MAX, teamDir, keeperBig } from '../shared/sim.js';
 import { skeleton, drawFigure } from './figure.js';
 import { Scene3D } from './mesh3d.js';
+import { Effects } from './fx.js';
 
 export { skeleton, drawFigure };
 
@@ -19,6 +20,70 @@ const mix = (a, b, u) => a + (b - a) * u;
 const KICK_LABEL = ['', 'PASS', 'RUN', 'SHOT', 'SELF'];
 const HEIGHT_LABEL = ['feet', 'chest', 'head'];
 const SHOT_HEIGHT = ['low', 'mid', 'top'];
+
+// Shadows: the sun (the 3D layer's: high in the afternoon, from the left as
+// the isometric view sees it) casts a point 1 m up this far along the grass,
+// and how dark (a: the fill's alpha). A floodlight (x, y, h) casts from where
+// it stands.
+const SUN = { dx: 0.75, dy: -0.15, a: 0.27 };
+// The ground by the weather: grass (outside the lines, the two stripes), the
+// markings, the worn patches (r,g,b), the night beyond the boards (bg)
+// (shadow: how dark the sun's shadows are – the sky's cloud; night: the
+// floodlights cast them, four apiece)
+const ENVS = {
+  day: { grass: ['#2c6b3f', '#358048', '#3a8a4f'], lines: 'rgba(242,247,238,0.84)', worn: '150,140,86', bg: '#0e1a14', apron: '#39413b', speck: 0, sky: ['#3d6fa8', '#8fb7dd', '#cfe2ee'], shadow: 0.27 },
+  night: { grass: ['#1c4229', '#245a37', '#28633c'], lines: 'rgba(232,240,234,0.8)', worn: '120,116,80', bg: '#04070a', apron: '#1b211e', speck: 0, sky: ['#02040a', '#08111f', '#152338'], shadow: 0.09 },
+  rain: { grass: ['#21573a', '#296b42', '#2d7347'], lines: 'rgba(232,240,236,0.78)', worn: '92,84,58', bg: '#0b1310', apron: '#2b3330', speck: 'rgba(205,225,255,0.12)', sky: ['#48525d', '#76838f', '#a3aeb8'], shadow: 0.12 },
+  snow: { grass: ['#d6dee4', '#e3e9ee', '#ecf1f4'], lines: 'rgba(52,104,204,0.85)', worn: '72,124,76', bg: '#1a2127', apron: '#c4ccd3', speck: 'rgba(70,120,80,0.1)', sky: ['#8794a1', '#bfc8d1', '#e1e6eb'], shadow: 0.15 },
+};
+const WEATHERS = ['day', 'night', 'rain', 'snow'];
+// the floodlights: on the towers beyond the corners (see the 3D stadium), 25 m up
+const floodlights = (pit) => [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => ({ x: a * (pit.L / 2 + 9.5), y: b * (pit.W / 2 + 8.5), h: 25, a: ENVS.night.shadow }));
+const TILE_M = 4, TILE_PX = 256; // a grass tile: 4 m, at 64 px a metre
+const tileCache = new Map();
+// The grass tiles (outside, stripe, stripe): each its colour with fine
+// speckles and blades of lighter and darker grass in it.
+function grassTiles(E, ctx) {
+  let t = tileCache.get(E);
+  if (t) return t;
+  t = E.grass.map((base, k) => {
+    const c = document.createElement('canvas'); c.width = c.height = TILE_PX;
+    const g = c.getContext('2d');
+    g.fillStyle = base; g.fillRect(0, 0, TILE_PX, TILE_PX);
+    let seed = 7 + k * 101;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    for (let i = 0; i < 1400; i++) {
+      g.fillStyle = rnd() < 0.5 ? 'rgba(255,255,230,0.07)' : 'rgba(0,30,10,0.09)';
+      g.fillRect(rnd() * TILE_PX, rnd() * TILE_PX, 1 + rnd() * 2, 1 + rnd() * 2);
+    }
+    g.lineWidth = 1;
+    for (let i = 0; i < 260; i++) {
+      const x = rnd() * TILE_PX, y = rnd() * TILE_PX, a = rnd() * TAU, l = 2 + rnd() * 4;
+      g.strokeStyle = rnd() < 0.6 ? 'rgba(220,255,200,0.08)' : 'rgba(0,25,5,0.1)';
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); g.stroke();
+    }
+    // (wet: glints of water; snow: grass showing through)
+    if (E.speck) for (let i = 0; i < 300; i++) { g.fillStyle = E.speck; g.fillRect(rnd() * TILE_PX, rnd() * TILE_PX, 1 + rnd() * 2, 1); }
+    return ctx.createPattern(c, 'repeat');
+  });
+  tileCache.set(E, t);
+  return t;
+}
+const lightAt = (l, x, y) => (l.h ? [(x - l.x) / l.h, (y - l.y) / l.h] : [l.dx, l.dy]);
+// a player's shadow in pieces: limbs (joint to joint, half-width x height)
+// and discs at the joints, so the bands join up round
+// (few enough to be cheap: the feet and the small joints don't show at this size)
+const SHADOW_LIMBS = [
+  ['hipL', 'kneeL', 0.058], ['kneeL', 'footL', 0.042], ['hipR', 'kneeR', 0.058], ['kneeR', 'footR', 0.042],
+  ['shL', 'elL', 0.04], ['elL', 'handL', 0.03], ['shR', 'elR', 0.04], ['elR', 'handR', 0.03],
+  ['hc', 'neck', 0.1], ['shL', 'shR', 0.05], ['hipL', 'hipR', 0.06],
+];
+const SHADOW_DISCS = [['kneeL', 0.042], ['kneeR', 0.042], ['hc', 0.1], ['neck', 0.1], ['head', 0.095]];
+// (four floodlights' worth: the legs, the body and the head – faint enough
+// that the arms aren't missed)
+const SHADOW_LIMBS_NIGHT = SHADOW_LIMBS.filter(([a]) => !/^(sh|el)/.test(a));
+const SHADOW_DISCS_NIGHT = [['hc', 0.1], ['head', 0.095]];
+const SHADOW_JOINTS = [...new Set([...SHADOW_LIMBS.flatMap(([a, b]) => [a, b]), ...SHADOW_DISCS.map(([k]) => k)])];
 
 // The kits (KIT_NAMES order); ui: the team's colour in the HUD, light enough
 // to read on the dark panels
@@ -218,7 +283,7 @@ function mirrorLegs(P) {
 
 function basePose() {
   return {
-    lean: 0.04, tw: 0, drop: 0, bob: 0, head: 0,
+    lean: 0.04, tw: 0, drop: 0, bob: 0, head: 0, hy: 0,
     lh: 0, lk: 0.12, la: 0.05, rh: 0, rk: 0.12, ra: 0.05, lfy: 0, rfy: 0,
     lsh: 0.08, lab: 0.12, lel: 0.25, rsh: 0.08, rab: 0.12, rel: 0.25,
     pitch: 0, roll: 0,
@@ -387,12 +452,34 @@ export function poseFor(p, ctx) {
     P.lean = mix(P.lean, 0.02 - 0.1 * big, u);
   }
   if (ctx.throwIn) handsTo(P, -0.02 * H, 0, 1.1 * H, H, 1, 0.1); // both hands on it, above and behind his head
-  if (ctx.celebrate) {
+  if (ctx.celebrate === 'slide' || ctx.celebrate === 'kneel') {
+    // the scorer on his knees – sliding on the grass, leaning back, arms
+    // flung wide; then there, arms up
+    const slide = ctx.celebrate === 'slide';
+    P.drop = 0.22 * H; P.lh = P.rh = 0.05; P.lk = P.rk = 1.75; P.la = P.ra = 0.14; P.bob = 0;
+    P.lean = slide ? -0.55 : -0.15; P.head = slide ? -0.4 : -0.25;
+    P.lsh = P.rsh = slide ? 2.0 : 2.7; P.lab = P.rab = slide ? 1.3 : 0.6; P.lel = P.rel = 0.15;
+  } else if (ctx.celebrate === 'hug') {
+    // round the scorer: arms out round him
+    P.lsh = P.rsh = 1.45; P.lab = P.rab = 0.5; P.lel = P.rel = 1.15; P.lean += 0.12;
+  } else if (ctx.celebrate) {
     const j = Math.abs(Math.sin(t * 7 + p.id));
     const kind = p.id % 3;
     if (kind === 0) { P.lsh = P.rsh = 2.75; P.lab = P.rab = 0.45; P.lel = P.rel = 0.2; P.bob += 0.18 * j * (A < 0.3 ? 1 : 0.3); }
     else if (kind === 1) { P.lsh = P.rsh = 0.25; P.lab = P.rab = 1.45; P.lel = P.rel = 0.1; P.roll += 0.22 * Math.sin(t * 3); } // aeroplane
     else { P.rsh = 2.6 + 0.3 * Math.sin(t * 9); P.rel = 1.2; P.lsh = 0.3; P.lel = 1.3; P.bob += 0.1 * j; } // fist pump
+  }
+  // the side that let it in: hands on heads; standing, some bent over hands
+  // on knees; the keeper down on his knees slapping the grass
+  if (ctx.dejected === 'slap') {
+    P.drop = 0.22 * H; P.lh = P.rh = 0.05; P.lk = P.rk = 1.75; P.la = P.ra = 0.14; P.bob = 0;
+    P.lean = 0.45; P.head = 0.35;
+    P.lsh = 0.5; P.lel = 0.3; P.rsh = 0.3 + 1.6 * Math.max(0, Math.sin(t * 6)); P.rel = 0.25; P.rab = 0.25;
+  } else if (ctx.dejected === 'knees') {
+    P.drop = 0.1 * H; P.lh = P.rh = 0.75; P.lk = P.rk = 0.95; P.lean = 0.75; P.head = -0.35;
+    P.lsh = P.rsh = 0.35; P.lab = P.rab = 0.15; P.lel = P.rel = 0.15;
+  } else if (ctx.dejected === 'head') {
+    P.lsh = P.rsh = 2.45; P.lab = P.rab = 1.05; P.lel = P.rel = 2.3; P.head = 0.3;
   }
 
   if ((p.st === ST.IDLE || p.st === ST.STUMBLE) && p.z > 0.04) {
@@ -773,6 +860,11 @@ export class Renderer {
     this.time = 0;
     this.ballRoll = 0;
     this.dpr = 1;
+    this.lights = [SUN]; // what casts the shadows
+    this.env = ENVS.day; this.weather = 'day';
+    this.effectsMode = 'auto'; this.lite = false;
+    this.fx = new Effects(this);
+    this.fx.lite = false;
     this.resize();
     addEventListener('resize', () => this.resize());
   }
@@ -785,6 +877,36 @@ export class Renderer {
     this.tp = !!c.tp;
     if (!c.tp) this.isoCam.set(c.yaw, c.elev);
     this.tpInit = false;
+  }
+
+  // The weather (room setting, WEATHER_NAMES): the grass, the light and the
+  // shadows, what falls from the sky, what flies off the grass.
+  setWeather(n) {
+    const kind = WEATHERS[n] || 'day';
+    if (kind === this.weather) return;
+    this.weather = kind;
+    this.env = ENVS[kind];
+    this.lights = kind === 'night' ? [] : [{ ...SUN, a: this.env.shadow }]; // (night: by the pitch, each frame)
+    this.fx.setGround(kind === 'rain' ? 'wet' : kind === 'snow' ? 'snow' : 'grass');
+    if (this.s3) this.s3.setWeather(kind);
+    this.drops = null;
+    if (typeof document !== 'undefined') document.body.classList.toggle('snow', kind === 'snow');
+  }
+
+  // Lighter effects (a slow device): fewer particles, fans, drops and night
+  // shadows. 'auto' turns them on by itself if frames come too slowly.
+  setEffects(mode) {
+    this.effectsMode = mode;
+    this.lite = mode === 'light';
+    this.fx.lite = this.lite;
+    this.slow = 0;
+  }
+
+  // (auto: a few seconds of frames under ~40 a second and it stays lighter)
+  watchSpeed(dt) {
+    if (this.effectsMode !== 'auto' || this.lite || dt <= 0) return;
+    this.slow = dt > 1 / 40 ? (this.slow || 0) + dt : Math.max(0, (this.slow || 0) - dt * 0.5);
+    if (this.slow > 4) { this.lite = true; this.fx.lite = true; console.info('[render] slow frames: lighter effects'); }
   }
 
   resize() {
@@ -808,7 +930,13 @@ export class Renderer {
     const g = this.g;
     let cam = this.cam = this.isoCam;
     this.time += dt;
+    this.watchSpeed(dt);
     const pit = pitchOf(w);
+    if (this.weather === 'night') {
+      const fl = floodlights(pit);
+      // (lighter: the two towers on the diagonal)
+      this.lights = this.lite ? [fl[0], fl[2]].map((l) => ({ ...l, a: l.a * 1.4 })) : fl;
+    }
     // landscape: fit ~40 m across; portrait (phones): zoom in so players stay readable
     const base = Math.max(Math.min(cam.w, cam.h * 1.7), Math.min(cam.h, cam.w * 1.7) * 0.75) / 40;
     cam.scale = base * this.zoom;
@@ -853,34 +981,49 @@ export class Renderer {
     let tx = ball[0] + clamp(lv.vx * 0.25, -4, 4), ty = ball[1] + clamp(lv.vy * 0.25, -4, 4);
     const me = ppos.get(info.myId);
     if (me) { tx = tx * 0.72 + me[0] * 0.28; ty = ty * 0.72 + me[1] * 0.28; }
+    // after a goal, before the replay: in close on the scorer
+    const fp = info.focus >= 0 && ppos.get(info.focus);
+    this.focusK = clamp((this.focusK || 0) + (fp ? dt * 1.2 : -dt * 2.5), 0, 1);
+    if (fp) this.focusAt = fp;
+    if (this.focusK > 0 && this.focusAt) {
+      const u = ease(this.focusK);
+      tx += (this.focusAt[0] - tx) * u; ty += (this.focusAt[1] - ty) * u;
+      cam.scale *= 1 + 0.5 * u;
+    }
     tx = clamp(tx, -pit.L / 2 - 2, pit.L / 2 + 2); ty = clamp(ty, -pit.W / 2 - 1, pit.W / 2 + 1);
     const k = 1 - Math.exp(-dt * 3.2);
     if (!this.camInit) { this.camX = tx; this.camY = ty; this.camInit = true; }
     this.camX += (tx - this.camX) * k; this.camY += (ty - this.camY) * k;
-    cam.cx = this.camX; cam.cy = this.camY;
+    const [kx, ky] = this.fx.camOffset(); // (its kick at a hard shot, the woodwork, a goal)
+    cam.cx = this.camX + kx; cam.cy = this.camY + ky;
     // third person: behind my player (back to the isometric view while I'm
     // not on the pitch)
-    const mine = this.tp && w.players.find((p) => p.id === info.myId);
+    const mine = this.tp && !info.replayCam && w.players.find((p) => p.id === info.myId);
     const tpOn = !!mine;
     if (tpOn) cam = this.cam = this.thirdPerson(w, mine, ppos.get(mine.id), ball, dt);
+    // a replay's slow-motion finish: from behind the goal
+    if (info.replayCam) cam = this.cam = this.broadcast(w, ball, info.replayCam, dt);
+    else this.bcInit = false;
     if (this.tpShown !== tpOn) { this.tpShown = tpOn; document.body.classList.toggle('tp', tpOn); }
     // background
-    g.fillStyle = '#0e1a14';
+    g.fillStyle = this.env.bg;
     g.fillRect(0, 0, cam.w, cam.h);
     if (cam.persp) this.stadium(pit);
     this.drawGround(pit);
+    this.fx.drawMarks();
+    if (this.weather === 'rain' && !cam.persp) this.rainRings(dt);
     const far = [], near = [];
     if (!this.s3) this.boards(pit, far, near); // (3D: they're meshes)
     for (const f of far) f();
 
-    // shadows
-    for (const p of w.players) {
-      const [x, y, z] = ppos.get(p.id);
-      this.shadow(x, y, 0.42 * (stats(p.hgt, p.bld).H / 1.8), 0.28 / (1 + z * 0.8), p);
-    }
+    // shadows: a faint one right under each player where he meets the grass,
+    // then his body laid on the grass by each light
+    this.contactShadows(w, ppos);
+    for (const l of this.lights) this.poseShadows(w, Js, l);
     this.ballShadow(ball);
     this.meetMarker(w, info.myId);
 
+    this.fx.step(w, ppos, Js, ball, dt);
     if (this.s3) this.scene3d(w, cam, ppos, Js, ball, info, tpOn, pit, dt);
     // (no WebGL: a depth-sorted 2D scene of players, ball and goal parts)
     const items = [];
@@ -897,11 +1040,20 @@ export class Renderer {
     for (const it of items) it.fn();
     for (const f of near) f();
 
-    // overlays
+    // overlays: rain or snow first, then the name tags laid out so they
+    // don't cover each other
     this.gu.clearRect(0, 0, cam.w, cam.h);
+    if (this.weather === 'rain' || this.weather === 'snow') this.precipitation(dt);
+    const lifts = this.layoutTags(w, ppos, info, ball);
     for (const p of w.players) {
       const [x, y, z] = ppos.get(p.id);
-      this.overlay(w, p, x, y, z, info);
+      this.overlay(w, p, x, y, z, info, lifts.get(p.id) || 0, ball);
+    }
+    // a replay: black bars sliding in top and bottom, like the television's
+    this.barK = clamp((this.barK || 0) + (info.replay ? dt * 4 : -dt * 4) / Math.max(0.2, info.replay ? info.replaySpeed || 1 : 1), 0, 1);
+    if (this.barK > 0) {
+      const bh = Math.round(cam.h * 0.085 * ease(this.barK));
+      this.gu.fillStyle = '#000'; this.gu.fillRect(0, 0, cam.w, bh); this.gu.fillRect(0, cam.h - bh, cam.w, bh);
     }
     // where am I, when the camera can't see me – in third person, where the ball is
     const meAt = ppos.get(info.myId);
@@ -913,7 +1065,7 @@ export class Renderer {
   // and the boards, seen through this frame's camera.
   scene3d(w, cam, ppos, Js, ball, info, tpOn, pit, dt) {
     const s3 = this.s3;
-    s3.setCamera(cam.clipMatrix());
+    s3.setCamera(cam.clipMatrix(), cam.persp ? [cam.ex, cam.ey, cam.ez] : null);
     s3.beginFrame();
     for (const p of w.players) {
       const [x, y, z] = ppos.get(p.id), J = Js.get(p.id);
@@ -926,10 +1078,17 @@ export class Renderer {
     s3.endFrame();
     const b = w.ball;
     s3.ball(ball, [b.vx, b.vy, b.vz], dt, (cam.persp ? 1.15 : 1.75) * (this.ballScale ?? 1),
-      !cam.persp || cam.ahead(ball[0], ball[1], ball[2]), Math.abs(b.spin) > 0.1 && b.owner < 0);
+      !cam.persp || cam.ahead(ball[0], ball[1], ball[2]), Math.abs(b.spin) > 0.1 && b.owner < 0, this.fx.squashNow(w));
     s3.goals(pit);
-    // (the boards between the camera and the pitch are see-through, as in 2D)
-    s3.boards(pit, (mx, my) => !cam.persp && cam.depth(mx, my) >= 0, [TEAM_COLORS[0].shirt, TEAM_COLORS[1].shirt]);
+    // (the boards between the camera and the pitch are see-through, as in 2D;
+    // the stands and towers there aren't drawn)
+    const isNear = (mx, my) => !cam.persp && cam.depth(mx, my) >= 0, kits = [TEAM_COLORS[0].shirt, TEAM_COLORS[1].shirt];
+    s3.boards(pit, isNear, kits);
+    s3.stadium(pit, isNear, kits, this.lite ? 0.3 : 0.65);
+    s3.lamps(clamp(cam.persp ? 90 * this.dpr : 3.2 * cam.scale, 24, 160));
+    // the fans: on their feet when their team scores, a murmur as the ball nears a goal
+    const ct = info.celebrateTeam ?? -1, gd = pit.L / 2 - Math.abs(ball[0]);
+    s3.crowdMood(this.time, [ct === 0 ? 1 : 0, ct === 1 ? 1 : 0], clamp(1 - gd / 22, 0, 1) * (Math.abs(ball[1]) < pit.W / 2 ? 1 : 0));
     s3.render();
   }
 
@@ -971,6 +1130,23 @@ export class Renderer {
     this.tpPitch = init ? this.tpPitch + (pick.pitch - this.tpPitch) * ke : pick.pitch;
     c.yaw = this.tpYaw; c.pitch = this.tpPitch;
     this.tpInit = true;
+    c.update();
+    return c;
+  }
+
+  // The replay's camera for the finish: behind the goal it went into (side),
+  // up above the net, turning to follow the ball as it comes.
+  broadcast(w, ball, side, dt) {
+    const c = this.bcCam || (this.bcCam = new PerspCam()), pit = pitchOf(w);
+    if (c.w !== this.isoCam.w || c.h !== this.isoCam.h) { c.w = this.isoCam.w; c.h = this.isoCam.h; }
+    const ex = side * (pit.L / 2 + 8.5), ey = clamp(ball[1] * 0.35, -pit.goalW, pit.goalW), ez = 4.2;
+    const yaw = Math.atan2(ball[1] - ey, ball[0] - ex), pitch = Math.atan2(ball[2] + 0.6 - ez, Math.hypot(ball[0] - ex, ball[1] - ey));
+    const k = this.bcInit ? 1 - Math.exp(-dt * 4) : 1;
+    c.ex = ex; c.ey = this.bcInit ? c.ey + (ey - c.ey) * k : ey; c.ez = ez;
+    this.bcYaw = this.bcInit ? this.bcYaw + angDiff(this.bcYaw, yaw) * k : yaw;
+    this.bcPitch = this.bcInit ? this.bcPitch + (pitch - this.bcPitch) * k : pitch;
+    c.yaw = this.bcYaw; c.pitch = clamp(this.bcPitch, -0.5, 0.1);
+    this.bcInit = true;
     c.update();
     return c;
   }
@@ -1091,15 +1267,41 @@ export class Renderer {
     g.ellipse(X, Y, r * cam.scale, r * cam.scale * cam.se, 0, a0 + yaw, a1 + yaw);
   }
 
+  // The grass: each mown stripe a fine-grained tile pinned to the ground (in
+  // perspective, where a tile can't be pinned, plain colours), worn patches in
+  // the goalmouths and the centre, then the markings.
   drawGround(pit) {
-    const g = this.g, hx = pit.L / 2, hy = pit.W / 2;
-    this.poly([[-hx - 6, -hy - 5], [hx + 6, -hy - 5], [hx + 6, hy + 5], [-hx - 6, hy + 5]], '#2c6b3f');
+    const g = this.g, hx = pit.L / 2, hy = pit.W / 2, E = this.env, cam = this.cam;
+    const tiles = !cam.persp && grassTiles(E, g);
+    if (tiles) {
+      // world metres -> screen (the isometric view is affine), a tile every TILE_M
+      const { c, s: sn, se, scale: k } = cam, m = new DOMMatrix([c * k, sn * se * k, -sn * k, c * se * k, cam.w / 2 - (cam.cx * c - cam.cy * sn) * k, cam.h / 2 - (cam.cx * sn + cam.cy * c) * se * k]);
+      this.groundM = m;
+      const t = m.scale(TILE_M / TILE_PX);
+      for (const p of tiles) p.setTransform(t);
+    }
+    // (round it, under the front of the stands: the concourse)
+    this.poly([[-hx - 7.3, -hy - 6.3], [hx + 7.3, -hy - 6.3], [hx + 7.3, hy + 6.3], [-hx - 7.3, hy + 6.3]], E.apron);
+    this.poly([[-hx - 6, -hy - 5], [hx + 6, -hy - 5], [hx + 6, hy + 5], [-hx - 6, hy + 5]], tiles ? tiles[0] : E.grass[0]);
     const n = 14;
     for (let i = 0; i < n; i++) {
       const x0 = -hx - 1 + (pit.L + 2) * i / n, x1 = -hx - 1 + (pit.L + 2) * (i + 1) / n;
-      this.poly([[x0, -hy - 1], [x1, -hy - 1], [x1, hy + 1], [x0, hy + 1]], i % 2 ? '#3a8a4f' : '#358048');
+      this.poly([[x0, -hy - 1], [x1, -hy - 1], [x1, hy + 1], [x0, hy + 1]], tiles ? tiles[1 + (i % 2)] : E.grass[1 + (i % 2)]);
     }
-    g.strokeStyle = g.fillStyle = 'rgba(245,250,245,0.85)';
+    // worn where the play is thickest: in front of each goal, round the centre spot
+    if (tiles) {
+      g.save();
+      g.setTransform(this.groundM);
+      for (const [x, y, rx, ry, a] of [[-hx + 2.6, 0, 4.2, 3.2, 1], [hx - 2.6, 0, 4.2, 3.2, 1], [0, 0, 3, 3, 0.7]]) {
+        const gr = g.createRadialGradient(0, 0, 0, 0, 0, 1);
+        gr.addColorStop(0, `rgba(${E.worn},${0.2 * a})`); gr.addColorStop(0.6, `rgba(${E.worn},${0.09 * a})`); gr.addColorStop(1, `rgba(${E.worn},0)`);
+        g.save(); g.translate(x, y); g.scale(rx, ry);
+        g.fillStyle = gr; g.beginPath(); g.arc(0, 0, 1, 0, TAU); g.fill();
+        g.restore();
+      }
+      g.restore();
+    }
+    g.strokeStyle = g.fillStyle = E.lines;
     g.lineWidth = Math.max(1, 0.12 * this.cam.scale);
     g.lineJoin = 'round';
     g.beginPath();
@@ -1141,21 +1343,22 @@ export class Renderer {
         g.stroke();
       }
     }
-    g.fillStyle = 'rgba(245,250,245,0.9)';
+    g.fillStyle = E.lines;
     for (const [x, y] of [[0, 0], [hx - pit.penSpot, 0], [-hx + pit.penSpot, 0]]) {
       g.beginPath();
       if (this.groundEllipse(x, y, this.cam.persp ? 0.11 : 0.18)) g.fill(); // (up close: its real size)
     }
   }
 
-  // Third person: a night sky over the stadium and the stands all round,
-  // rising behind the boards.
+  // Perspective: the sky over the stadium, and (without the 3D layer, which
+  // has stands of its own) the stands all round, rising behind the boards.
   stadium(pit) {
-    const g = this.g, cam = this.cam;
+    const g = this.g, cam = this.cam, E = this.env;
     const hy = clamp(cam.h / 2 + cam.f * Math.tan(cam.pitch), -cam.h, 2 * cam.h); // the horizon
     const sky = g.createLinearGradient(0, hy - cam.h * 0.9, 0, hy);
-    sky.addColorStop(0, '#050b14'); sky.addColorStop(0.7, '#14243a'); sky.addColorStop(1, '#2a3d55');
+    sky.addColorStop(0, E.sky[0]); sky.addColorStop(0.7, E.sky[1]); sky.addColorStop(1, E.sky[2]);
     g.fillStyle = sky; g.fillRect(0, 0, cam.w, Math.max(0, hy + 2));
+    if (this.s3) return;
     // four stands, each widening outwards so they meet at the corners
     const hx = pit.L / 2 + 5.4, hw = pit.W / 2 + 4.4, back = 16, top = 10;
     const corners = [[-hx, -hw], [hx, -hw], [hx, hw], [-hx, hw]];
@@ -1278,9 +1481,98 @@ export class Renderer {
     g.beginPath(); if (this.groundEllipse(as.x, as.y, r * 0.18)) g.fill();
   }
 
+  // Every player's shadow by light l: his limbs laid along the grass the way
+  // the light falls – a dive, a slide or a jump each casts its own shape. One
+  // fill for them all (every piece wound the same way), so where pieces
+  // overlap it isn't darker.
+  poseShadows(w, Js, l) {
+    const g = this.g, cam = this.cam, persp = cam.persp;
+    // (the isometric view is affine: the grass at world (x, y) is on screen at
+    // A x + C y + E, B x + D y + F)
+    const { c, s: sn, se, scale: k } = cam;
+    const A = c * k, B = sn * se * k, C = -sn * k, D = c * se * k;
+    const E = cam.w / 2 - (cam.cx * c - cam.cy * sn) * k, F = cam.h / 2 - (cam.cx * sn + cam.cy * c) * se * k;
+    const m = 3 * k, M = persp ? null : [A, B, C, D], S = this.shS || (this.shS = {});
+    g.beginPath();
+    for (const p of w.players) {
+      const J = Js.get(p.id);
+      if (!J) continue;
+      const [lx, ly] = lightAt(l, J.hc[0], J.hc[1]);
+      // (off the screen: nothing to see)
+      if (persp) { if (!cam.ahead(J.hc[0], J.hc[1], 0, 1.5)) continue; }
+      else {
+        const x = J.hc[0] + lx, y = J.hc[1] + ly, X = A * x + C * y + E, Y = B * x + D * y + F;
+        if (X < -m || X > cam.w + m || Y < -m || Y > cam.h + m) continue;
+      }
+      const H = stats(p.hgt, p.bld).H;
+      // each joint laid on the grass (world x, y) and on screen (X, Y)
+      for (const key of SHADOW_JOINTS) {
+        const j = J[key], x = j[0] + lx * j[2], y = j[1] + ly * j[2], q = S[key] || (S[key] = [0, 0, 0, 0]);
+        q[0] = x; q[1] = y;
+        if (persp) { q[2] = cam.px(x, y, 0); q[3] = cam.py(x, y, 0); } else { q[2] = A * x + C * y + E; q[3] = B * x + D * y + F; }
+      }
+      const night = l.h > 0;
+      for (const [a, b, r] of night ? SHADOW_LIMBS_NIGHT : SHADOW_LIMBS) this.shadowLimb(S[a], S[b], r * H, M);
+      for (const [key, r] of night ? SHADOW_DISCS_NIGHT : SHADOW_DISCS) this.shadowDisc(S[key], r * H);
+    }
+    g.fillStyle = `rgba(0,25,10,${l.a})`;
+    g.fill();
+  }
+
+  // (the pieces: a band along a limb on the grass, a disc at a joint; each
+  // point [world x, y, screen X, Y]; M: the isometric view's linear part)
+  shadowLimb(a, b, r, M) {
+    const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy);
+    if (L < 1e-3) return;
+    const nx = -dy / L * r, ny = dx / L * r, g = this.g, X = this.shX || (this.shX = [0, 0, 0, 0]), Y = this.shY || (this.shY = [0, 0, 0, 0]);
+    if (M) {
+      const NX = M[0] * nx + M[2] * ny, NY = M[1] * nx + M[3] * ny;
+      X[0] = a[2] + NX; Y[0] = a[3] + NY; X[1] = b[2] + NX; Y[1] = b[3] + NY; X[2] = b[2] - NX; Y[2] = b[3] - NY; X[3] = a[2] - NX; Y[3] = a[3] - NY;
+    } else {
+      const cam = this.cam, xs = [a[0] + nx, b[0] + nx, b[0] - nx, a[0] - nx], ys = [a[1] + ny, b[1] + ny, b[1] - ny, a[1] - ny];
+      for (let i = 0; i < 4; i++) { X[i] = cam.px(xs[i], ys[i], 0); Y[i] = cam.py(xs[i], ys[i], 0); }
+    }
+    // clockwise on screen, as the discs are
+    if ((X[1] - X[0]) * (Y[2] - Y[0]) - (X[2] - X[0]) * (Y[1] - Y[0]) >= 0) { g.moveTo(X[0], Y[0]); g.lineTo(X[1], Y[1]); g.lineTo(X[2], Y[2]); g.lineTo(X[3], Y[3]); }
+    else { g.moveTo(X[0], Y[0]); g.lineTo(X[3], Y[3]); g.lineTo(X[2], Y[2]); g.lineTo(X[1], Y[1]); }
+    g.closePath();
+  }
+
+  shadowDisc(q, r) {
+    const cam = this.cam, X = q[2], Y = q[3];
+    let R = r * cam.scale, se = cam.se;
+    if (cam.persp) { R = r * cam.sc(q[0], q[1], 0); se = Math.max(0.03, Math.sin(Math.atan2(cam.ez, Math.hypot(q[0] - cam.ex, q[1] - cam.ey)))); }
+    this.g.moveTo(X + R, Y);
+    this.g.ellipse(X, Y, R, R * se, 0, 0, TAU);
+  }
+
+  // A faint shadow right under each player, where he meets the grass – all
+  // of them in one go (soft-edged: a wide faint ring under a tighter one).
+  contactShadows(w, ppos) {
+    const g = this.g, cam = this.cam, m = 3 * cam.scale;
+    for (const [k, a] of [[1.25, 0.45], [0.85, 0.75]]) {
+      g.beginPath();
+      for (const p of w.players) {
+        const [x, y, z] = ppos.get(p.id);
+        if (z > 0.6) continue;
+        const X = cam.px(x, y, 0), Y = cam.py(x, y, 0);
+        if (X < -m || X > cam.w + m || Y < -m || Y > cam.h + m) continue;
+        const r = 0.36 * (stats(p.hgt, p.bld).H / 1.8) * k;
+        g.moveTo(X + r * cam.scale, Y);
+        this.groundEllipse(x, y, r);
+      }
+      g.fillStyle = `rgba(0,25,10,${0.13 * a})`;
+      g.fill();
+    }
+  }
+
+  // the ball's, cast the same way: the higher it is, the further off its
+  // shadow falls (where a header meets it: his head's shadow on the ball's)
   ballShadow([x, y, z]) {
-    const r = BALL_R * 1.7 * (1 + z * 0.12);
-    this.shadow(x, y, r, 0.38 / (1 + z * 0.5));
+    for (const l of this.lights) {
+      const [lx, ly] = lightAt(l, x, y), h = Math.max(0, z - BALL_R);
+      this.shadow(x + lx * h, y + ly * h, BALL_R * 1.3, l.a * 1.5 / (1 + z * 0.08));
+    }
   }
 
   drawBall(w, [x, y, z], dt) {
@@ -1428,11 +1720,24 @@ export class Renderer {
       sidearm: p.st === ST.THROW && p.kh === KH.MID && m.spTaker !== p.id && Math.hypot(p.kx - x, p.ky - y) <= SIDEARM_MAX,
       vf: a.vf, vl: a.vl,
       diveHold: p.st === ST.DIVE && holding,
-      celebrate: info.celebrateTeam === p.team && p.st === ST.IDLE,
+      celebrate: false, dejected: null,
       diveRel: angDiff(p.face, p.stA),
       diveEl: p.st === ST.DIVE && !p.spr ? diveReach(p, s)[1] : 0, // a high dive: body on a diagonal
       block: null, reach: null, windup: null, gkSet: 0, contact: null,
     };
+    // after a goal: the scorer's knee slide (pulling up from his run) and his
+    // arms up on his knees, team-mates hugging him, the rest as they like;
+    // the side that let it in heads down (see poseFor)
+    if (info.celebrateTeam >= 0 && p.st === ST.IDLE) {
+      const scorer = w.players.find((q) => q.id === m.scorer);
+      if (info.celebrateTeam === p.team) {
+        ctx.celebrate = true;
+        if (scorer === p && a.sp > 0.9 && a.acc < -1 && m.phT > 30) ctx.celebrate = 'slide';
+        else if (scorer === p && a.sp <= 0.9 && m.phT > 60) ctx.celebrate = 'kneel';
+        else if (scorer && scorer !== p && scorer.team === p.team && Math.hypot(scorer.x - p.x, scorer.y - p.y) < 1.7) ctx.celebrate = 'hug';
+      } else ctx.dejected = p.role === ROLE.GK && a.sp < 0.6 ? 'slap' : a.sp < 0.6 && p.id % 2 ? 'knees' : 'head';
+      ctx.gkStance = 0;
+    }
     if (ctx.gkStance) {
       // set: hands up a little while an opponent has the ball within shooting range
       const o = b.owner >= 0 ? w.players.find((q) => q.id === b.owner) : null;
@@ -1478,7 +1783,20 @@ export class Renderer {
       }
     }
     const target = poseFor(p, ctx);
-    if (p.st === ST.IDLE || p.st === ST.STUMBLE) target.roll += clamp(a.turn * a.sp * 0.012, -0.28, 0.28);
+    if (p.st === ST.IDLE || p.st === ST.STUMBLE) {
+      target.roll += clamp(a.turn * a.sp * 0.012, -0.28, 0.28);
+      // eyes on the ball: the head turns to it (as far as a neck goes), the
+      // shoulders a little with it, and it tips down to one at his feet or
+      // up to one in the air (not with it in his hands, or celebrating)
+      if (!holding && !ctx.celebrate && !ctx.dejected && this.ballPos) {
+        const [bx, by, bz] = this.ballPos, [df, dr] = local(bx, by), d = Math.hypot(df, dr);
+        if (d > 0.3) {
+          const yaw = clamp(Math.atan2(dr, df), -1.3, 1.3);
+          target.hy += yaw * 0.85; target.tw += yaw * 0.18;
+          target.head += clamp(-Math.atan2(bz - 0.9 * s.H, d) * 0.55 - 0.05, -0.45, 0.4);
+        }
+      }
+    }
     // blend towards the target pose so every transition flows (a keeper's
     // hands quicker: they follow the ball)
     if (!a.P || dt <= 0) a.P = { ...target };
@@ -1491,15 +1809,88 @@ export class Renderer {
     return skeleton(p, a.P, s.H, s.width, x, y, z, p.face, look && look.female);
   }
 
-  overlay(w, p, x, y, z, info) {
+  // Rain or snow falling across the screen (one path for all of it), and
+  // rain's rings on the grass.
+  precipitation(dt) {
+    const g = this.gu, cam = this.cam, d = this.dpr, rain = this.weather === 'rain', n = (rain ? 110 : 140) >> (this.lite ? 1 : 0);
+    if (!this.drops || this.drops.length !== n) {
+      this.drops = Array.from({ length: n }, () => ({ x: Math.random(), y: Math.random(), v: 0.7 + Math.random() * 0.6, s: 0.5 + Math.random() }));
+    }
+    const W = cam.w, H = cam.h;
+    g.beginPath();
+    for (const p of this.drops) {
+      p.y += dt * (rain ? 1.6 : 0.16) * p.v;
+      p.x += dt * (rain ? 0.12 : 0.03 * Math.sin(this.time * 0.9 + p.s * 9));
+      if (p.y > 1) { p.y -= 1; p.x = Math.random(); }
+      if (p.x > 1) p.x -= 1; else if (p.x < 0) p.x += 1;
+      const X = p.x * W, Y = p.y * H;
+      if (rain) { const l = (10 + 8 * p.s) * d; g.moveTo(X, Y); g.lineTo(X - l * 0.18, Y - l); }
+      else { const r = (1 + 1.4 * p.s) * d; g.rect(X - r, Y - r, 2 * r, 2 * r); }
+    }
+    if (rain) { g.strokeStyle = 'rgba(205,220,240,0.32)'; g.lineWidth = d; g.stroke(); }
+    else { g.fillStyle = 'rgba(255,255,255,0.85)'; g.fill(); }
+  }
+
+  // rain: rings spreading where drops hit the grass round the play (on the pitch layer)
+  rainRings(dt) {
+    const rings = this.rings || (this.rings = []), cam = this.cam, g = this.g;
+    for (let k = this.lite ? 1 : 3; k > 0; k--) if (Math.random() < dt * 20) rings.push({ x: cam.cx + (Math.random() - 0.5) * 30, y: cam.cy + (Math.random() - 0.5) * 22, t: 0 });
+    g.beginPath();
+    for (const r of rings) { r.t += dt; const R = 0.04 + r.t * 0.6; g.moveTo(cam.px(r.x + R, r.y, 0), cam.py(r.x + R, r.y, 0)); this.groundEllipse(r.x, r.y, R); }
+    g.strokeStyle = 'rgba(220,235,255,0.22)'; g.lineWidth = this.dpr; g.stroke();
+    this.rings = rings.filter((r) => r.t < 0.35);
+  }
+
+  // Where each player's tag goes: over his head, lifted clear of the tags
+  // already placed – mine first (it never moves), then people, then the
+  // nearest the viewer. Returns how far up (px) each one goes.
+  layoutTags(w, ppos, info, ball) {
+    const cam = this.cam, g = this.gu, d = this.dpr, out = new Map(), tags = [];
+    for (const p of w.players) {
+      const [x, y, z] = ppos.get(p.id), mine = p.id === info.myId;
+      const top = Math.max((p._headZ || stats(p.hgt, p.bld).H) + 0.35, z + 0.6);
+      if (cam.persp && !cam.ahead(x, y, top, 0.3)) continue;
+      const S = cam.persp ? cam.sc(x, y, z) : cam.scale, fs = Math.round(clamp(S * 0.3, 9, 12) * d);
+      const name = info.names.get(p.id) || '';
+      g.font = `600 ${fs}px system-ui, sans-serif`;
+      const keys = info.aiKeys && info.aiKeys.on && !p.human ? 12 * d : 0;
+      const wd = Math.max(name ? g.measureText(name).width : 0, keys ? 40 * d : 0) + 6 * d;
+      const ht = (name ? fs + 3 * d : 0) + keys + (mine ? (p.chgBtn ? 40 : 18) * d : 0);
+      if (!ht) continue;
+      const X = cam.px(x, y, top), Y = cam.py(x, y, top);
+      tags.push({ id: p.id, X, Y, wd, ht, rank: mine ? 0 : p.human ? 1 : 2 });
+    }
+    tags.sort((a, b) => a.rank - b.rank || b.Y - a.Y);
+    const placed = [];
+    for (const t of tags) {
+      let bottom = t.Y, moved = true;
+      // (up past whatever it would cover, again until it's clear)
+      for (let n = 0; moved && n < 8; n++) {
+        moved = false;
+        for (const o of placed) {
+          if (Math.abs(o.X - t.X) * 2 < o.wd + t.wd && bottom > o.top && bottom - t.ht < o.bottom) { bottom = o.top - 1 * d; moved = true; }
+        }
+      }
+      placed.push({ X: t.X, wd: t.wd, top: bottom - t.ht, bottom });
+      out.set(t.id, t.Y - bottom);
+    }
+    return out;
+  }
+
+  overlay(w, p, x, y, z, info, lift = 0, ball = null) {
     const g = this.gu, cam = this.cam, S = cam.persp ? cam.sc(x, y, z) : cam.scale;
     const s = stats(p.hgt, p.bld);
     const top = Math.max((p._headZ || s.H) + 0.35, z + 0.6);
     const mine = p.id === info.myId;
     if (cam.persp && !cam.ahead(x, y, top, 0.3)) return;
-    const X = cam.px(x, y, top), Y = cam.py(x, y, top);
+    const X = cam.px(x, y, top), Y = cam.py(x, y, top) - lift;
     const fs = Math.round(clamp(S * 0.3, 9, 12) * this.dpr);
     let nameY = Y - 2;
+    // lifted clear of another tag: a faint line down to his head
+    if (lift > 4 * this.dpr) {
+      g.strokeStyle = 'rgba(255,255,255,0.3)'; g.lineWidth = this.dpr;
+      g.beginPath(); g.moveTo(X, Y + 2 * this.dpr); g.lineTo(X, Y + lift); g.stroke();
+    }
     if (mine) {
       // PES-style cursor
       const tc = TEAM_COLORS[p.team].ui;
@@ -1536,14 +1927,15 @@ export class Renderer {
       }
       nameY = (p.chgBtn ? by - 24 * this.dpr : by - 4 * this.dpr);
     }
-    // small name tag for everyone (AI players dimmed)
+    // small name tag for everyone (AI players dimmed, more so away from the ball)
     // a lagging player's stand-in: the AI plays him until his inputs come back
     const name = (info.names.get(p.id) || '') + (p.human && p.bot && info.names.get(p.id) ? ' · AI' : '');
     if (name) {
       g.font = `600 ${fs}px system-ui, sans-serif`;
       g.textAlign = 'center';
-      g.globalAlpha = p.human ? 0.95 : 0.6;
-      g.lineWidth = Math.max(2, 2.5 * this.dpr); g.strokeStyle = 'rgba(0,0,0,0.6)';
+      const nearBall = !ball || w.ball.owner === p.id || Math.hypot(ball[0] - x, ball[1] - y) < 12;
+      g.globalAlpha = p.human ? 0.95 : (nearBall ? 0.62 : 0.42) * (this.weather === 'snow' ? 1.45 : 1);
+      g.lineWidth = Math.max(2, 2.5 * this.dpr); g.strokeStyle = this.weather === 'snow' ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.6)';
       g.strokeText(name, X, nameY);
       g.fillStyle = mine ? '#ffffff' : p.human ? '#f2f6f3' : '#dfe7e2';
       g.fillText(name, X, nameY);

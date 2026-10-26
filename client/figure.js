@@ -69,10 +69,12 @@ export function skeleton(p, P, H, wd, x, y, z, face, female = false) {
   const hl = 0.1 * H, ha = P.lean + P.head;
   const sha = Math.sin(ha), cha = Math.cos(ha);
   const head = [neck[0] + sha * hl, 0, neck[2] + cha * hl];
-  // head frame markers (forward / up / right), transformed with the body below
-  const nose = [head[0] + cha * 0.1, 0, head[2] - sha * 0.1];
+  // head frame markers (forward / up / right), transformed with the body
+  // below; hy turns the head (towards his R side)
+  const hy = P.hy || 0, chy = Math.cos(hy), shy = Math.sin(hy);
+  const nose = [head[0] + cha * chy * 0.1, shy * 0.1, head[2] - sha * chy * 0.1];
   const headUp = [head[0] + sha * 0.1, 0, head[2] + cha * 0.1];
-  const headR = [head[0], 0.1, head[2]];
+  const headR = [head[0] - cha * shy * 0.1, chy * 0.1, head[2] + sha * shy * 0.1];
   const L = [], R = [], AL = [], AR = [];
   legFK(L, hipL, P.lh, P.lk, P.la, -1, thigh, shin, foot, P.lfy || 0);
   legFK(R, hipR, P.rh, P.rk, P.ra, 1, thigh, shin, foot, P.rfy || 0);

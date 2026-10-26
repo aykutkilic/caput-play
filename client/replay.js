@@ -19,6 +19,8 @@ export class Replay {
     if (frames.length < 8) return false;
     this.frames = frames;
     this.goalTick = goalTick;
+    // the goal it went into (for the replay camera behind it)
+    this.side = Math.sign(frames[frames.length - 1].ball.x) || 1;
     this.t = frames[0].tick;
     this.end = frames[frames.length - 1].tick;
     this.i = 0;

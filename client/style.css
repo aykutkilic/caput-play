@@ -112,6 +112,8 @@ label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--t
 #chatlog .sys { color: var(--accent); }
 #chatlog b { color: #fff; }
 #hint { position: absolute; right: 14px; bottom: 14px; font-size: 12px; color: var(--muted); }
+/* (on a snowy pitch: on a dark backing, to read) */
+body.snow #hint { background: rgba(10,18,14,0.72); padding: 3px 8px; border-radius: 8px; }
 #ctxHint { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); font-size: 13px; color: #e9f3ec;
   background: rgba(10,18,14,.55); border: 1px solid rgba(255,255,255,.12); padding: 4px 10px; border-radius: 8px; white-space: nowrap; }
 #ctxHint b { color: #ffd36b; font-weight: 700; }
