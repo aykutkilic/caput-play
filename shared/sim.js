@@ -92,9 +92,22 @@ export function stOf(p) {
 }
 // Realistic movement (room setting m.real), for everyone: nearer real
 // players' limits – top speed 0.9x (8.6-9.9 m/s), a jog 0.85x, acceleration
-// 0.55x (4.4-7.2 m/s²: real peaks are 4-6), turning 0.6x and falling away
-// faster with pace (wider turns at speed)
-const realStats = (s) => ({ ...s, sprint: s.sprint * 0.9, jog: s.jog * 0.85, accel: s.accel * 0.55, turn: s.turn * 0.6, turnK: 0.25 });
+// 0.55x (4.4-7.2 m/s² from still), turning 0.6x and falling away faster
+// with pace (wider turns at speed). As real players move in SkillCorner's
+// tracking (scripts/learn/learn-running.mjs – the hardest 1 in 1000 moments,
+// smoothed): speeding up ~4.5-5 m/s² and less the faster they go (the
+// acceleration-speed profile: falling in a line to nothing a little past top
+// speed – aV0), braking ~5-6 (brake: as hard as they speed up from still, not
+// half as hard again), and at most ~6 m/s² sideways turning at pace (side:
+// 7 for an average player, more or less with agility) – so a sharp cut at
+// pace means slowing down first (cut: the pace kept into a right-angle turn).
+const realStats = (s) => ({
+  ...s, sprint: s.sprint * 0.9, jog: s.jog * 0.85, accel: s.accel * 0.55, turn: s.turn * 0.6, turnK: 0.25,
+  aV0: s.sprint * 0.9 * 1.08, brake: 1, side: 7 * s.turn / 11, cut: 0.5,
+});
+// How hard he can speed up at pace v (realistic movement: less the faster he
+// goes – see realStats)
+const accelAt = (s, v) => (s.aV0 ? s.accel * Math.max(0.06, 1 - v / s.aV0) : s.accel);
 export function stickOf(p) {
   const mag = p.im / 15;
   if (mag < 0.05) return [0, 0, 0];
@@ -2238,15 +2251,17 @@ function movement(w, p, s) {
     // braking before pushing off the other way – curved, flowing runs instead
     // of sliding sideways the instant the stick moves.
     const cur = Math.atan2(p.vy, p.vx), d = angDiff(cur, Math.atan2(tvy, tvx));
-    const omega = s.turn * 1.1 / (1 + (s.turnK ?? 0.1) * v) * (own ? 0.85 : 1) * DT;
+    // (realistic movement: no more than so much sideways – see realStats)
+    const omega = Math.min(s.turn * 1.1 / (1 + (s.turnK ?? 0.1) * v), s.side ? s.side / v : Infinity) * (own ? 0.85 : 1) * DT;
+    const brake = s.accel * (s.brake ?? 1.5);
     let ang, sp;
     if (Math.abs(d) > 2.3) {
-      sp = Math.max(0, v - s.accel * 1.9 * DT);
+      sp = Math.max(0, v - s.accel * (s.brake ? s.brake * 1.27 : 1.9) * DT);
       ang = cur + Math.sign(d) * omega * 0.4;
     } else {
       ang = cur + clamp(d, -omega, omega);
-      const want = vt * (1 - 0.3 * Math.min(1, Math.abs(d) / 1.5)); // a tight turn costs some pace
-      sp = want > v ? Math.min(want, v + s.accel * (own ? 0.9 : 1) * DT) : Math.max(want, v - s.accel * 1.5 * DT);
+      const want = vt * (1 - (s.cut ? 1 - s.cut : 0.3) * Math.min(1, Math.abs(d) / 1.5)); // a tight turn costs some pace
+      sp = want > v ? Math.min(want, v + accelAt(s, v) * (own ? 0.9 : 1) * DT) : Math.max(want, v - brake * DT);
     }
     p.vx = Math.cos(ang) * sp; p.vy = Math.sin(ang) * sp;
   } else {
@@ -2255,7 +2270,7 @@ function movement(w, p, s) {
     // (a keeper's footwork staying on the angle while a man has the ball – the
     // quick push-off – is trained: half as quick again; not the reaction to a
     // shot once it's struck)
-    const acc = s.accel * (own ? 0.9 : 1) * (prec ? 1.3 : 1) * (slowing ? 1.5 : 1) * (p.role === ROLE.GK && oppHas ? 1.5 : 1) * DT;
+    const acc = (slowing ? s.accel * (s.brake ?? 1.5) : accelAt(s, v)) * (own ? 0.9 : 1) * (prec ? 1.3 : 1) * (p.role === ROLE.GK && oppHas ? 1.5 : 1) * DT;
     if (e > acc) { p.vx += ex / e * acc; p.vy += ey / e * acc; } else { p.vx = tvx; p.vy = tvy; }
   }
 
