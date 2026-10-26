@@ -13,6 +13,7 @@ export { skeleton, drawFigure };
 
 const D2R = Math.PI / 180;
 const TAU = Math.PI * 2;
+const BALL_MIN_PX = 2.5; // the ball's smallest radius on screen (CSS px)
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const ease = (u) => u * u * (3 - 2 * u);
 const mix = (a, b, u) => a + (b - a) * u;
@@ -973,6 +974,7 @@ export class Renderer {
     }
     this.wasHeld = heldNow;
     this.lastBall = ball; // where it was drawn: a catch next frame starts from here
+    this.ballR = this.ballRadius(ball);
 
     // camera: follow the ball with a little look-ahead, biased towards me
     // (a dribbler's steady run, not the ball's touch-by-touch pulsing)
@@ -1078,7 +1080,7 @@ export class Renderer {
     }
     s3.endFrame();
     const b = w.ball;
-    s3.ball(ball, [b.vx, b.vy, b.vz], dt, (cam.persp ? 1.15 : 1.75) * (this.ballScale ?? 1),
+    s3.ball(this.ballDrawn(ball), [b.vx, b.vy, b.vz], dt, this.ballR / BALL_R * (this.ballScale ?? 1),
       !cam.persp || cam.ahead(ball[0], ball[1], ball[2]), Math.abs(b.spin) > 0.1 && b.owner < 0, this.fx.squashNow(w));
     s3.goals(pit);
     // (the boards between the camera and the pitch are see-through, as in 2D;
@@ -1348,7 +1350,8 @@ export class Renderer {
     g.fillStyle = E.lines;
     for (const [x, y] of [[0, 0], [hx - pit.penSpot, 0], [-hx + pit.penSpot, 0]]) {
       g.beginPath();
-      if (this.groundEllipse(x, y, this.cam.persp ? 0.11 : 0.18)) g.fill(); // (up close: its real size)
+      // (its real size, but never less than a few pixels across)
+      if (this.groundEllipse(x, y, this.cam.persp ? 0.11 : Math.max(0.11, 1.5 * this.dpr / this.cam.scale))) g.fill();
     }
   }
 
@@ -1573,16 +1576,25 @@ export class Renderer {
   ballShadow([x, y, z]) {
     for (const l of this.lights) {
       const [lx, ly] = lightAt(l, x, y), h = Math.max(0, z - BALL_R);
-      this.shadow(x + lx * h, y + ly * h, BALL_R * 1.3, l.a * 1.5 / (1 + z * 0.08));
+      this.shadow(x + lx * h, y + ly * h, this.ballR * 1.3, l.a * 1.5 / (1 + z * 0.08));
     }
   }
 
-  drawBall(w, [x, y, z], dt) {
-    const g = this.g, cam = this.cam;
+  // The ball's size as drawn (m): its real size, but never less than a few
+  // pixels across, so it's still easy to follow zoomed out on a phone.
+  ballRadius([x, y, z]) {
+    const cam = this.cam, px = cam.persp ? cam.sc(x, y, z) : cam.scale;
+    return px > 0 ? Math.max(BALL_R, BALL_MIN_PX * this.dpr / px) : BALL_R;
+  }
+
+  // where it's drawn: drawn bigger, it's lifted to still sit on the grass
+  ballDrawn([x, y, z]) { return [x, y, Math.max(z, this.ballR)]; }
+
+  drawBall(w, ball, dt) {
+    const g = this.g, cam = this.cam, [x, y, z] = this.ballDrawn(ball);
     const sp = Math.hypot(w.ball.vx, w.ball.vy, w.ball.vz);
     const X = cam.px(x, y, z), Y = cam.py(x, y, z);
-    // (perspective: its real size where it is – a little bigger, to read)
-    const r = (cam.persp ? Math.max(2, BALL_R * 1.15 * cam.sc(x, y, z)) : Math.max(3, BALL_R * 1.75 * cam.scale)) * (this.ballScale ?? 1);
+    const r = this.ballR * (cam.persp ? cam.sc(x, y, z) : cam.scale) * (this.ballScale ?? 1);
     // trail: shows speed, and the bend of a ball with spin (aftertouch / finesse)
     const curving = Math.abs(w.ball.spin) > 0.1 && w.ball.owner < 0;
     const len = curving ? 16 : 7;

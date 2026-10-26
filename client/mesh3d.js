@@ -24,6 +24,7 @@ import { BALL_R, GOAL_DEPTH } from '../shared/constants.js';
 const V = (j) => new THREE.Vector3(j[0], -j[1], j[2]); // world -> scene space
 const UP = new THREE.Vector3(0, 1, 0);
 const lerpV = (a, b, u) => a.clone().lerp(b, u);
+const GHOST = 1; // the layer of the see-through player's parts (and the lights)
 
 function shadeHex(hex, k) {
   const c = new THREE.Color(hex);
@@ -54,6 +55,7 @@ export class Scene3D {
     const sun = new THREE.DirectionalLight(0xffffff, 1.9);
     sun.position.set(-0.75, -0.15, 1);
     this.scene.add(hemi, sun);
+    hemi.layers.enable(GHOST); sun.layers.enable(GHOST);
     this.hemi = hemi; this.sun = sun;
     this.geo = {
       sphere: new THREE.SphereGeometry(1, 18, 12),
@@ -65,8 +67,8 @@ export class Scene3D {
     this.mats = new Map();  // colour|opacity -> material
     // the way to the viewer (isometric) or where he is (perspective), for the edges
     this.uView = { value: new THREE.Vector3(0, 0, 1) }; this.uEye = { value: new THREE.Vector3() }; this.uPersp = { value: 0 };
-    this.batch = new Batch(this, 1);
-    this.ghost = null; // (see-through players: third person's own man)
+    this.batch = new Batch(this);
+    this.ghost = null; // (see-through: third person's own man, see Ghost)
     this.ballMesh = null;
     this.goalKey = '';
     this.boardMeshes = [];
@@ -88,7 +90,10 @@ export class Scene3D {
     this.uPersp.value = 0; this.uView.value.copy(d);
   }
 
-  render() { this.r.render(this.scene, this.cam); }
+  render() {
+    if (this.ghost) this.ghost.draw();
+    this.r.render(this.scene, this.cam);
+  }
 
   // ------------------------------------------------------------ shared parts
 
@@ -105,12 +110,15 @@ export class Scene3D {
   // ------------------------------------------------------------ players
 
   beginFrame() { this.batch.begin(); if (this.ghost) this.ghost.begin(); }
-  endFrame() { this.batch.end(); if (this.ghost) this.ghost.end(); }
+  endFrame() { this.batch.end(); if (this.ghost) this.ghost.batch.end(); }
 
-  // A player in the pose J (world joints from skeleton()), looking like look.
+  // A player in the pose J (world joints from skeleton()), looking like look;
+  // alpha < 1: see-through.
   player(id, J, look, H, wd, alpha = 1) {
-    if (alpha < 1 && !this.ghost) this.ghost = new Batch(this, 0.6);
-    emitPlayer(alpha < 1 ? this.ghost : this.batch, J, look, H, wd);
+    if (alpha >= 1) { emitPlayer(this.batch, J, look, H, wd); return; }
+    if (!this.ghost) this.ghost = new Ghost(this);
+    this.ghost.add(J, alpha);
+    emitPlayer(this.ghost.batch, J, look, H, wd);
   }
 
   // ------------------------------------------------------------ ball
@@ -526,8 +534,8 @@ const clampN = (v, a, b) => (v < a ? a : v > b ? b : v);
 
 // Lambert, coloured per part, edges darkened towards the silhouette; on the
 // tapered cylinder the taper (top radius / bottom) comes per part too.
-function partMaterial(s3, opacity, tapered) {
-  const m = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: opacity < 1, opacity });
+function partMaterial(s3, tapered) {
+  const m = new THREE.MeshLambertMaterial({ color: 0xffffff });
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uView = s3.uView; sh.uniforms.uEye = s3.uEye; sh.uniforms.uPersp = s3.uPersp;
     if (tapered) {
@@ -542,20 +550,6 @@ function partMaterial(s3, opacity, tapered) {
   #include <opaque_fragment>`);
   };
   m.customProgramCacheKey = () => `part|${tapered ? 1 : 0}`;
-  return m;
-}
-
-// Depth only, a hair behind the parts (so they pass where they're nearest);
-// tapered like them on the cylinder. Drawn with the transparent things, after
-// what's solid.
-function depthOnly(tapered) {
-  const m = new THREE.MeshBasicMaterial({ colorWrite: false, transparent: true, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
-  if (tapered) {
-    m.onBeforeCompile = (sh) => {
-      sh.vertexShader = 'attribute float taper;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  transformed.xz *= mix(1.0, taper, position.y);');
-    };
-  }
-  m.customProgramCacheKey = () => `depth|${tapered ? 1 : 0}`;
   return m;
 }
 
@@ -580,15 +574,16 @@ const col = (c) => { let v = colors.get(c); if (!v) { v = new THREE.Color(c); co
 const tint = (c, k) => { const key = `${c}|${k}`; let v = colors.get(key); if (!v) { v = shadeHex(c, k); colors.set(key, v); } return v; };
 const tintMix = (c, k, other, u) => { const key = `${c}|${k}|${other}|${u}`; let v = colors.get(key); if (!v) { v = shadeHex(c, k).lerp(new THREE.Color(other), u); colors.set(key, v); } return v; };
 
-// Every player's parts for one frame, as instances of four shapes.
+// Every player's parts for one frame, as instances of four shapes (on the
+// scene's layer: 0, or GHOST for the see-through player's).
 class Batch {
-  constructor(s3, opacity) {
+  constructor(s3, layer = 0) {
     const tap = new THREE.CylinderGeometry(1, 1, 1, 12, 1, false).translate(0, 0.5, 0);
     tap.setAttribute('taper', new THREE.InstancedBufferAttribute(new Float32Array(CAP.tap), 1).setUsage(THREE.DynamicDrawUsage));
     const num = s3.geo.plane.clone();
     num.setAttribute('cell', new THREE.InstancedBufferAttribute(new Float32Array(CAP.num * 2), 2).setUsage(THREE.DynamicDrawUsage));
     if (!s3.numbers) s3.numbers = numberAtlas();
-    const numMat = new THREE.MeshBasicMaterial({ map: s3.numbers, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+    const numMat = new THREE.MeshBasicMaterial({ map: s3.numbers, transparent: true, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
     numMat.onBeforeCompile = (sh) => {
       sh.vertexShader = 'attribute vec2 cell;\n' + sh.vertexShader.replace('#include <uv_vertex>', '#include <uv_vertex>\n  vMapUv = vMapUv * 0.1 + cell;');
     };
@@ -598,28 +593,15 @@ class Batch {
       m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3).setUsage(THREE.DynamicDrawUsage);
       m.frustumCulled = false; m.count = 0;
+      m.layers.set(layer);
       s3.scene.add(m);
       return { m, n: 0, cap: n };
     };
-    const solid = partMaterial(s3, opacity, false);
+    const solid = partMaterial(s3, false);
     this.k = {
       hi: make(s3.geo.sphere, solid, CAP.hi), lo: make(s3.geo.lowSphere, solid, CAP.lo),
-      tap: make(tap, partMaterial(s3, opacity, true), CAP.tap), num: make(num, numMat, CAP.num),
+      tap: make(tap, partMaterial(s3, true), CAP.tap), num: make(num, numMat, CAP.num),
     };
-    // See-through: the parts' depth first (no colour), then the parts only
-    // where they're nearest – one see-through figure, not the face through the
-    // back of the head and the shoulders through the shirt.
-    this.pre = [];
-    if (opacity < 1) {
-      for (const name of ['hi', 'lo', 'tap']) {
-        const k = this.k[name], m = new THREE.InstancedMesh(k.m.geometry, depthOnly(name === 'tap'), k.cap);
-        m.instanceMatrix = k.m.instanceMatrix;
-        m.frustumCulled = false; m.count = 0; m.renderOrder = 10;
-        s3.scene.add(m);
-        this.pre.push([m, k]);
-      }
-      for (const name in this.k) this.k[name].m.renderOrder = 11;
-    }
   }
 
   begin() { for (const k in this.k) this.k[k].n = 0; }
@@ -633,7 +615,6 @@ class Batch {
       if (name === 'tap') up(m.geometry.attributes.taper, 1);
       if (name === 'num') up(m.geometry.attributes.cell, 2);
     }
-    for (const [m, k] of this.pre) m.count = k.n;
   }
 
   // the next instance of a shape, placed by _m (false when the pool is full)
@@ -677,6 +658,99 @@ class Batch {
     if (i >= 0) { const a = this.k.num.m.geometry.attributes.cell.array; a[i * 2] = (n % 10) * 0.1; a[i * 2 + 1] = 1 - (Math.floor(n / 10) + 1) * 0.1; }
   }
 }
+
+// The see-through player (third person: my own man, right in front of the
+// camera). He's drawn solid, alone, into a picture of his own, which is then
+// laid over the scene at his opacity: one see-through figure that looks just
+// like the solid one, rather than every part see-through over the others
+// (the face through the back of the head, the arms through the body). The
+// picture keeps his depth, so what's between him and the camera – a ball
+// coming from behind, another player – still covers him. The picture is only
+// the patch of screen round him (a camera cropped to it), so it's small to
+// keep, draw and lay over.
+class Ghost {
+  constructor(s3) {
+    this.s3 = s3;
+    this.batch = new Batch(s3, GHOST);
+    this.box = [0, 0, 0, 0]; // his patch of screen: min x, min y, max x, max y (clip space)
+    this.alpha = 1;
+    this.rt = null;
+    this.cam = new THREE.Camera(); this.cam.matrixAutoUpdate = false; this.cam.layers.set(GHOST);
+    this.u = { tCol: { value: null }, tDepth: { value: null }, uFrom: { value: new THREE.Vector2() }, uSize: { value: new THREE.Vector2(1, 1) }, uRect: { value: new THREE.Vector4() }, uAlpha: { value: 1 } };
+    const mat = new THREE.ShaderMaterial({
+      uniforms: this.u, transparent: true, depthWrite: false,
+      vertexShader: `uniform vec4 uRect;
+void main() { gl_Position = vec4(mix(uRect.xy, uRect.zw, position.xy * 0.5 + 0.5), 0.0, 1.0); }`,
+      fragmentShader: `uniform sampler2D tCol;
+uniform sampler2D tDepth;
+uniform vec2 uFrom;
+uniform vec2 uSize;
+uniform float uAlpha;
+void main() {
+  vec2 uv = (gl_FragCoord.xy - uFrom) / uSize;
+  vec4 c = texture2D(tCol, uv);
+  if (c.a < 0.004) discard;
+  gl_FragDepth = texture2D(tDepth, uv).r;
+  gl_FragColor = vec4(c.rgb / c.a, c.a * uAlpha);
+  #include <colorspace_fragment>
+}`,
+    });
+    this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+    this.quad.frustumCulled = false; this.quad.renderOrder = 99; this.quad.visible = false;
+    s3.scene.add(this.quad);
+  }
+
+  begin() { this.batch.begin(); this.box.fill(0); this.n = 0; }
+
+  // his joints (world), and how see-through he is
+  add(J, alpha) {
+    this.alpha = alpha;
+    const P = this.s3.cam.projectionMatrix, b = this.box, at = (x, y, z) => _v4.set(x, -y, z, 1).applyMatrix4(P);
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const k in J) {
+      const j = J[k];
+      if (at(j[0], j[1], j[2]).w < 0.05) { b[0] = b[1] = -1; b[2] = b[3] = 1; this.n++; return; } // (beside the camera: all of it)
+      const x = _v4.x / _v4.w, y = _v4.y / _v4.w;
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+    }
+    // round the joints: his head, hair, hands and boots – 0.35 m at his head
+    const h = J.head, hy = at(h[0], h[1], h[2]).y / _v4.w, py = Math.abs(at(h[0], h[1], h[2] + 0.35).y / _v4.w - hy);
+    const sz = this.s3.r.getDrawingBufferSize(_v2), px = py * sz.y / sz.x;
+    if (this.n++ === 0) b.splice(0, 4, x0 - px, y0 - py, x1 + px, y1 + py);
+    else b.splice(0, 4, Math.min(b[0], x0 - px), Math.min(b[1], y0 - py), Math.max(b[2], x1 + px), Math.max(b[3], y1 + py));
+  }
+
+  // before the scene: him into his picture
+  draw() {
+    const q = this.quad, b = this.box, r = this.s3.r, sz = r.getDrawingBufferSize(_v2), W = sz.x, H = sz.y;
+    const X0 = Math.max(0, Math.floor((b[0] + 1) / 2 * W)), Y0 = Math.max(0, Math.floor((b[1] + 1) / 2 * H));
+    const X1 = Math.min(W, Math.ceil((b[2] + 1) / 2 * W)), Y1 = Math.min(H, Math.ceil((b[3] + 1) / 2 * H));
+    q.visible = this.n > 0 && X1 > X0 && Y1 > Y0;
+    if (!q.visible) return;
+    const w = X1 - X0, h = Y1 - Y0;
+    // (grown in steps, not remade every frame as he moves)
+    if (!this.rt || this.rt.width < w || this.rt.height < h) {
+      const cw = Math.min(W, Math.ceil(Math.max(w, this.rt ? this.rt.width : 0) / 64) * 64), ch = Math.min(H, Math.ceil(Math.max(h, this.rt ? this.rt.height : 0) / 64) * 64);
+      if (this.rt) this.rt.dispose();
+      // (antialiased like the screen; sRGB, so 8 bits are enough for the darks)
+      this.rt = new THREE.WebGLRenderTarget(cw, ch, { samples: 4, colorSpace: THREE.SRGBColorSpace, depthTexture: new THREE.DepthTexture(cw, ch) });
+      this.u.tCol.value = this.rt.texture; this.u.tDepth.value = this.rt.depthTexture;
+    }
+    this.rt.viewport.set(0, 0, w, h);
+    // the camera cropped to the patch: its x, y stretched onto the picture,
+    // depth as on screen
+    const nx0 = X0 / W * 2 - 1, ny0 = Y0 / H * 2 - 1, nx1 = X1 / W * 2 - 1, ny1 = Y1 / H * 2 - 1;
+    const sx = 2 / (nx1 - nx0), sy = 2 / (ny1 - ny0);
+    this.cam.projectionMatrix.set(sx, 0, 0, -sx * (nx0 + nx1) / 2, 0, sy, 0, -sy * (ny0 + ny1) / 2, 0, 0, 1, 0, 0, 0, 0, 1).multiply(this.s3.cam.projectionMatrix);
+    this.cam.projectionMatrixInverse.copy(this.cam.projectionMatrix).invert();
+    this.u.uRect.value.set(nx0, ny0, nx1, ny1);
+    this.u.uFrom.value.set(X0, Y0); this.u.uSize.value.set(this.rt.width, this.rt.height); this.u.uAlpha.value = this.alpha;
+    r.setRenderTarget(this.rt);
+    r.render(this.s3.scene, this.cam);
+    r.setRenderTarget(null);
+  }
+}
+const _v4 = new THREE.Vector4(), _v2 = new THREE.Vector2();
 
 // One player's parts on his skeleton (world joints Jw), into batch B.
 function emitPlayer(B, Jw, look, H, wd) {
