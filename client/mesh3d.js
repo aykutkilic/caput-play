@@ -569,6 +569,11 @@ function numberAtlas() {
 
 const CAP = { hi: 640, lo: 640, tap: 720, num: 32 };
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _v = new THREE.Vector3(), _d = new THREE.Vector3();
+// -1 for a mirrored basis: its X turned round, so the part isn't drawn inside
+// out (three.js picks which side of the triangles to draw per mesh, not per
+// instance; the shapes are symmetric, so they look the same either way)
+const _h = new THREE.Vector3();
+const hand = (X, Y, Z) => (_h.crossVectors(Y, Z).dot(X) < 0 ? -1 : 1);
 const colors = new Map();
 const col = (c) => { let v = colors.get(c); if (!v) { v = new THREE.Color(c); colors.set(c, v); } return v; };
 const tint = (c, k) => { const key = `${c}|${k}`; let v = colors.get(key); if (!v) { v = shadeHex(c, k); colors.set(key, v); } return v; };
@@ -639,14 +644,14 @@ class Batch {
 
   // an elliptic tapered section with its own axes (X across, Y along, Z depth)
   section(base, X, Y, Z, r0, len, depth, ratio, color) {
-    _m.makeBasis(X, Y, Z).scale(_v.set(r0, len, r0 * depth)).setPosition(base);
+    _m.makeBasis(X, Y, Z).scale(_v.set(hand(X, Y, Z) * r0, len, r0 * depth)).setPosition(base);
     const i = this.push('tap', color);
     if (i >= 0) this.k.tap.m.geometry.attributes.taper.array[i] = clampN(ratio, 0.3, 2);
   }
 
   // an ellipsoid at c with radii (rx, ry, rz) along the axes of basis (X, Y, Z)
   blob(c, X, Y, Z, rx, ry, rz, color, name = 'hi') {
-    _m.makeBasis(X, Y, Z).scale(_v.set(rx, ry, rz)).setPosition(c);
+    _m.makeBasis(X, Y, Z).scale(_v.set(hand(X, Y, Z) * rx, ry, rz)).setPosition(c);
     this.push(name, color);
   }
 
