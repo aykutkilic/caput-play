@@ -545,6 +545,20 @@ function partMaterial(s3, opacity, tapered) {
   return m;
 }
 
+// Depth only, a hair behind the parts (so they pass where they're nearest);
+// tapered like them on the cylinder. Drawn with the transparent things, after
+// what's solid.
+function depthOnly(tapered) {
+  const m = new THREE.MeshBasicMaterial({ colorWrite: false, transparent: true, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+  if (tapered) {
+    m.onBeforeCompile = (sh) => {
+      sh.vertexShader = 'attribute float taper;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  transformed.xz *= mix(1.0, taper, position.y);');
+    };
+  }
+  m.customProgramCacheKey = () => `depth|${tapered ? 1 : 0}`;
+  return m;
+}
+
 // The shirt numbers 0-99 in one texture, white (tinted per player).
 function numberAtlas() {
   const c = document.createElement('canvas'); c.width = c.height = 640;
@@ -592,6 +606,20 @@ class Batch {
       hi: make(s3.geo.sphere, solid, CAP.hi), lo: make(s3.geo.lowSphere, solid, CAP.lo),
       tap: make(tap, partMaterial(s3, opacity, true), CAP.tap), num: make(num, numMat, CAP.num),
     };
+    // See-through: the parts' depth first (no colour), then the parts only
+    // where they're nearest – one see-through figure, not the face through the
+    // back of the head and the shoulders through the shirt.
+    this.pre = [];
+    if (opacity < 1) {
+      for (const name of ['hi', 'lo', 'tap']) {
+        const k = this.k[name], m = new THREE.InstancedMesh(k.m.geometry, depthOnly(name === 'tap'), k.cap);
+        m.instanceMatrix = k.m.instanceMatrix;
+        m.frustumCulled = false; m.count = 0; m.renderOrder = 10;
+        s3.scene.add(m);
+        this.pre.push([m, k]);
+      }
+      for (const name in this.k) this.k[name].m.renderOrder = 11;
+    }
   }
 
   begin() { for (const k in this.k) this.k[k].n = 0; }
@@ -605,6 +633,7 @@ class Batch {
       if (name === 'tap') up(m.geometry.attributes.taper, 1);
       if (name === 'num') up(m.geometry.attributes.cell, 2);
     }
+    for (const [m, k] of this.pre) m.count = k.n;
   }
 
   // the next instance of a shape, placed by _m (false when the pool is full)

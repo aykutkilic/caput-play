@@ -1017,9 +1017,10 @@ export class Renderer {
     for (const f of far) f();
 
     // shadows: a faint one right under each player where he meets the grass,
-    // then his body laid on the grass by each light
+    // then his body laid on the grass by each light (not yours in third
+    // person: it would show through you, as dark patches on your body)
     this.contactShadows(w, ppos);
-    for (const l of this.lights) this.poseShadows(w, Js, l);
+    for (const l of this.lights) this.poseShadows(w, Js, l, tpOn ? info.myId : -1);
     this.ballShadow(ball);
     this.meetMarker(w, info.myId);
 
@@ -1486,7 +1487,7 @@ export class Renderer {
   // the light falls – a dive, a slide or a jump each casts its own shape. One
   // fill for them all (every piece wound the same way), so where pieces
   // overlap it isn't darker.
-  poseShadows(w, Js, l) {
+  poseShadows(w, Js, l, skip = -1) {
     const g = this.g, cam = this.cam, persp = cam.persp;
     // (the isometric view is affine: the grass at world (x, y) is on screen at
     // A x + C y + E, B x + D y + F)
@@ -1497,7 +1498,7 @@ export class Renderer {
     g.beginPath();
     for (const p of w.players) {
       const J = Js.get(p.id);
-      if (!J) continue;
+      if (!J || p.id === skip) continue;
       const [lx, ly] = lightAt(l, J.hc[0], J.hc[1]);
       // (off the screen: nothing to see)
       if (persp) { if (!cam.ahead(J.hc[0], J.hc[1], 0, 1.5)) continue; }
