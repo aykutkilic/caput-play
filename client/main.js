@@ -394,6 +394,9 @@ function renderPanel() {
       rows.push(`<li><span class="muted">${esc(a.name)}</span> <span class="tagx${a.role === ROLE.GK ? ' gk' : ''}">${a.role === ROLE.GK ? 'GK' : 'AI'}</span><button class="x" data-rm="${a.playerId}" title="Remove">×</button></li>`);
     }
     col.querySelector('ul').innerHTML = rows.join('') || '<li class="muted">empty</li>';
+    // which you've joined as (if this team): play or keep goal
+    const meHere = r.members.find((m) => m.id === state.clientId && m.team === team);
+    for (const b of col.querySelectorAll('.seg button')) b.setAttribute('aria-checked', String(!!meHere && meHere.role === Number(b.dataset.role)));
   }
   const specs = r.members.filter((m) => m.team === -1).map((m) => esc(m.name));
   $('specList').innerHTML = specs.length ? specs.join(', ') : '–';

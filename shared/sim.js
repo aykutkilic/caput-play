@@ -1435,28 +1435,58 @@ export function tryQueued(w, p) {
 }
 
 // A queued kick at a ball on the grass that he'd lose running for it – one
-// of theirs (their keeper too) gets a foot to it first, or it's running past
-// him (a ball across the goal: on his feet he'd only catch it well after,
-// far off) – where a slide gets his foot there first: the way to slide
-// (null: no slide). The slide's foot is 0.85 m ahead of him and he goes down
-// at up to 9.5 m/s, slowing (see beginSlide and the SLIDE state).
+// of theirs (their keeper too) gets a foot to it first, it goes out of play
+// (or into his own goal) before he gets there, or it's running past him (a
+// ball across the goal: on his feet he'd only catch it well after, far off) –
+// where a slide gets his foot there first: the way to slide (null: no slide).
+// The slide's foot is 0.85 m ahead of him and he goes down at up to 9.5 m/s,
+// slowing (see beginSlide and the SLIDE state).
 const SLIDE_REACH_T = 0.4;
 function slideKickPlan(w, p) {
   const b = w.ball, s = stOf(p), v = Math.hypot(p.vx, p.vy);
   if (v < s.jog || b.z > 0.45 || b.vz > 1.5) return null;
-  const me = meetBall(w, p), threat = w._meet.threat[p.team];
+  const me = meetBall(w, p), threat = w._meet.threat[p.team], gone = goneAt(w, p.team);
   const pts = ballPath(w), v0 = Math.min(Math.max(v, 5) + 2.2, 9.5), ux = p.vx / v, uy = p.vy / v;
   for (let k = 2; k * PATH_H <= SLIDE_REACH_T; k++) {
     const q = pts[k], t = k * PATH_H;
-    if (t >= threat - 0.03) return null; // theirs first all the same
+    if (t >= Math.min(threat, gone) - 0.03) return null; // theirs first, or gone, all the same
     if (q.z > 0.4) continue;
     const dx = q.x - p.x, dy = q.y - p.y, d = Math.hypot(dx, dy);
     const slid = v0 * DT * (1 - Math.pow(0.955, t / DT)) / 0.045;
     if (Math.abs(d - 0.85 - slid) > 0.45 || dx * ux + dy * uy < 0.75 * d) continue;
-    if (me && me.t < threat - 0.1 && me.t < t + 0.4) return null; // his on his feet, soon enough
+    // his on his feet, soon enough (and struck before it's gone)
+    if (me && me.t < threat - 0.1 && me.t < t + 0.4 && (gone === Infinity || kickOnFootAt(p, pts) < gone)) return null;
     return { a: Math.atan2(dy, dx), t };
   }
   return null;
+}
+
+// When his kick on the run would strike the ball if he ran on as he is: the
+// first moment it's in reach as tryQueued sees it (99: not on its path)
+function kickOnFootAt(p, pts) {
+  const tc = T_CONTACT[ST.KICK] * DT;
+  for (let k = 0; k * PATH_H + tc < (pts.length - 1) * PATH_H; k++) {
+    const t = k * PATH_H, q = pts[Math.round((t + tc) / PATH_H)];
+    const ax = p.x + p.vx * (t + 0.6 * tc), ay = p.y + p.vy * (t + 0.6 * tc);
+    if (q.z < 0.45 && Math.hypot(q.x - ax, q.y - ay) < 1.0) return t + tc;
+  }
+  return 99;
+}
+
+// When the ball on its way is gone for a team: over a line, or into its own
+// goal (into the one it attacks is a goal, not a loss); Infinity: not on its
+// predicted path.
+function goneAt(w, team) {
+  const pts = ballPath(w), pit = pitchOf(w), hx = pit.L / 2 + BALL_R, hy = pit.W / 2 + BALL_R;
+  for (let k = 1; k < pts.length; k++) {
+    const q = pts[k];
+    if (Math.abs(q.y) > hy) return k * PATH_H;
+    if (Math.abs(q.x) > hx) {
+      const inGoal = Math.abs(q.y) < pit.goalW / 2 && q.z < pit.goalH;
+      return inGoal && Math.sign(q.x) === teamDir(w, team) ? Infinity : k * PATH_H;
+    }
+  }
+  return Infinity;
 }
 
 // The slide that strikes it (stA 2): the kick planned as he goes down (aimed
@@ -1633,7 +1663,10 @@ function cushion(w, p, s) {
 
 // ---------------------------------------------------------------- ball launch
 
-const SLIDE_TURN = 1.0; // how far off the way he's sliding his foot can send it (rad)
+// how far off the way he's sliding his foot can send it (rad): past HOOK it's
+// hooked round with the side of the foot, softer – up to nearly square (a
+// ball into his own goal turned round the post)
+const SLIDE_TURN = 1.45, SLIDE_HOOK = 1.0;
 function launch(w, p, tech) {
   const b = w.ball, s = stOf(p), pit = pitchOf(w);
   const kind = p.kk, pw = p.kp;
@@ -1774,6 +1807,7 @@ function launch(w, p, tech) {
     ux = nux; uy = nuy;
   }
   if (zErr > 0) vz += gauss(w) * zErr * 0.6;
+  if (tech === ST.SLIDE && misalign > SLIDE_HOOK) { const k = 1 - 0.3 * Math.min(1, (misalign - SLIDE_HOOK) / (SLIDE_TURN - SLIDE_HOOK)); vh *= k; vz *= k; }
   // overhead and headers inherit a bit of the player's own momentum
   b.vx = ux * vh + (aerial ? p.vx * 0.15 : 0);
   b.vy = uy * vh + (aerial ? p.vy * 0.15 : 0);

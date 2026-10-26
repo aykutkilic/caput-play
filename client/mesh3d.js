@@ -67,6 +67,8 @@ export class Scene3D {
     this.mats = new Map();  // colour|opacity -> material
     // the way to the viewer (isometric) or where he is (perspective), for the edges
     this.uView = { value: new THREE.Vector3(0, 0, 1) }; this.uEye = { value: new THREE.Vector3() }; this.uPersp = { value: 0 };
+    // the players' own share of light (so a white kit reads white, not grey)
+    this.uSelf = { value: 0.2 };
     this.batch = new Batch(this);
     this.ghost = null; // (see-through: third person's own man, see Ghost)
     this.ballMesh = null;
@@ -195,7 +197,13 @@ export class Scene3D {
     if (!this.glow) {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(12), 3).setUsage(THREE.DynamicDrawUsage));
-      this.glow = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xfff6dc, size: 64, sizeAttenuation: false, map: softDot(), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+      // (added light – with its alpha added too: this canvas is laid over the
+      // 2D sky, and colour without alpha there shows as coloured specks on
+      // some screens)
+      this.glow = new THREE.Points(geo, new THREE.PointsMaterial({
+        color: 0xfff6dc, size: 64, sizeAttenuation: false, map: softDot(), transparent: true, depthWrite: false,
+        blending: THREE.CustomBlending, blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneFactor, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneFactor,
+      }));
       this.glow.frustumCulled = false;
       this.scene.add(this.glow);
     }
@@ -537,14 +545,15 @@ const clampN = (v, a, b) => (v < a ? a : v > b ? b : v);
 function partMaterial(s3, tapered) {
   const m = new THREE.MeshLambertMaterial({ color: 0xffffff });
   m.onBeforeCompile = (sh) => {
-    sh.uniforms.uView = s3.uView; sh.uniforms.uEye = s3.uEye; sh.uniforms.uPersp = s3.uPersp;
+    sh.uniforms.uView = s3.uView; sh.uniforms.uEye = s3.uEye; sh.uniforms.uPersp = s3.uPersp; sh.uniforms.uSelf = s3.uSelf;
     if (tapered) {
       sh.vertexShader = 'attribute float taper;\n' + sh.vertexShader
         .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\n  if (abs(objectNormal.y) < 0.5) objectNormal = normalize(vec3(objectNormal.x, 1.0 - taper, objectNormal.z));')
         .replace('#include <begin_vertex>', '#include <begin_vertex>\n  transformed.xz *= mix(1.0, taper, position.y);');
     }
-    sh.fragmentShader = 'uniform vec3 uView;\nuniform vec3 uEye;\nuniform float uPersp;\n' + sh.fragmentShader.replace('#include <opaque_fragment>', `{
+    sh.fragmentShader = 'uniform vec3 uView;\nuniform vec3 uEye;\nuniform float uPersp;\nuniform float uSelf;\n' + sh.fragmentShader.replace('#include <opaque_fragment>', `{
     vec3 V = uPersp > 0.5 ? normalize(uEye + vViewPosition) : uView;
+    outgoingLight += diffuseColor.rgb * uSelf;
     outgoingLight *= 1.0 - 0.38 * smoothstep(0.72, 1.0, 1.0 - abs(dot(normal, V)));
   }
   #include <opaque_fragment>`);

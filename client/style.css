@@ -158,6 +158,13 @@ button.icon { width: 34px; padding: 6px 0; font-size: 18px; line-height: 1; font
 .teamcol li .host { color: var(--accent); font-size: 11px; }
 .teamcol .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
 .teamcol .btns button { padding: 5px 6px; font-size: 12px; }
+/* joining the team: one choice of two (play or keep goal), yours lit in the team's colour */
+.teamcol .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 9px; background: rgba(0,0,0,.22); }
+.teamcol .seg button { border: none; border-radius: 7px; background: transparent; padding: 5px 6px; font-size: 12px; }
+.teamcol .seg button:hover { background: rgba(255,255,255,.1); }
+.teamcol .seg button[aria-checked="true"] { background: var(--team); color: #10140f; font-weight: 700; cursor: default; }
+.teamcol[data-team="0"] { --team: var(--a); }
+.teamcol[data-team="1"] { --team: var(--b); }
 .spec { font-size: 12px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .spec button { margin-left: auto; }
 .section { border-top: 1px solid var(--line); padding-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: end; }
@@ -270,7 +277,8 @@ body.tp.touchui #radar { top: auto; bottom: calc(10px + env(safe-area-inset-bott
   #panelPill { top: calc(8px + env(safe-area-inset-top)); right: calc(8px + env(safe-area-inset-right)); padding: 6px 10px; }
   #panelPill .pillName, #panelPill #pillName { max-width: 120px; }
   #panel { width: 380px; padding: 12px; gap: 10px; }
-  .teamcol .btns button { padding: 6px 4px; }
+  .teamcol .btns button, .teamcol .seg button { padding: 6px 4px; }
+  .teamcol .btns button { padding: 6px 2px; font-size: 11px; white-space: nowrap; }
   #netstats { top: 48px; font-size: 10px; }
   .sheet { padding: 16px; }
 }
