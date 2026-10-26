@@ -1426,7 +1426,48 @@ export function tryQueued(w, p) {
     }
     if (ok) { beginTechnique(w, p, tech, kind, power, bx, by, bz, kh); return true; }
   }
+  // a ball on the grass he'd lose on his feet: slide in and strike it first
+  if (kind !== KICK.SELF && p.role !== ROLE.GK) {
+    const sk = slideKickPlan(w, p);
+    if (sk) { beginSlideKick(w, p, sk.a, kind, power, kh); return true; }
+  }
   return false;
+}
+
+// A queued kick at a ball on the grass that he'd lose running for it – one
+// of theirs (their keeper too) gets a foot to it first, or it's running past
+// him (a ball across the goal: on his feet he'd only catch it well after,
+// far off) – where a slide gets his foot there first: the way to slide
+// (null: no slide). The slide's foot is 0.85 m ahead of him and he goes down
+// at up to 9.5 m/s, slowing (see beginSlide and the SLIDE state).
+const SLIDE_REACH_T = 0.4;
+function slideKickPlan(w, p) {
+  const b = w.ball, s = stOf(p), v = Math.hypot(p.vx, p.vy);
+  if (v < s.jog || b.z > 0.45 || b.vz > 1.5) return null;
+  const me = meetBall(w, p), threat = w._meet.threat[p.team];
+  const pts = ballPath(w), v0 = Math.min(Math.max(v, 5) + 2.2, 9.5), ux = p.vx / v, uy = p.vy / v;
+  for (let k = 2; k * PATH_H <= SLIDE_REACH_T; k++) {
+    const q = pts[k], t = k * PATH_H;
+    if (t >= threat - 0.03) return null; // theirs first all the same
+    if (q.z > 0.4) continue;
+    const dx = q.x - p.x, dy = q.y - p.y, d = Math.hypot(dx, dy);
+    const slid = v0 * DT * (1 - Math.pow(0.955, t / DT)) / 0.045;
+    if (Math.abs(d - 0.85 - slid) > 0.45 || dx * ux + dy * uy < 0.75 * d) continue;
+    if (me && me.t < threat - 0.1 && me.t < t + 0.4) return null; // his on his feet, soon enough
+    return { a: Math.atan2(dy, dx), t };
+  }
+  return null;
+}
+
+// The slide that strikes it (stA 2): the kick planned as he goes down (aimed
+// before he turns, as beginTechnique does), struck when his foot gets to the
+// ball (see slideContacts)
+function beginSlideKick(w, p, ang, kind, power, kh) {
+  planKick(w, p, kind, power, undefined, undefined, -1, kh);
+  p.kq = KQ.PLAIN;
+  p.face = ang;
+  beginSlide(w, p);
+  p.stA = 2;
 }
 
 function beginTechnique(w, p, tech, kind, power, bx, by, bz, kh) {
@@ -1592,6 +1633,7 @@ function cushion(w, p, s) {
 
 // ---------------------------------------------------------------- ball launch
 
+const SLIDE_TURN = 1.0; // how far off the way he's sliding his foot can send it (rad)
 function launch(w, p, tech) {
   const b = w.ball, s = stOf(p), pit = pitchOf(w);
   const kind = p.kk, pw = p.kp;
@@ -1620,6 +1662,11 @@ function launch(w, p, tech) {
   const pressure = near < 1.6 ? 0.025 : 0;
   // body orientation vs kick direction
   const misalign = Math.abs(angDiff(p.face, Math.atan2(uy, ux)));
+  if (tech === ST.SLIDE && misalign > SLIDE_TURN) {
+    // off a slide the foot only turns it so far from the way he's going
+    const a = p.face + Math.sign(angDiff(p.face, Math.atan2(uy, ux))) * SLIDE_TURN;
+    ux = Math.cos(a); uy = Math.sin(a);
+  }
 
   // top or back spin, as the kick puts it on (see topspinFor)
   let ts = heel ? 0 : topspinFor(kind, p.kh, pw, tech, p.kc, fromHands);
@@ -1627,7 +1674,7 @@ function launch(w, p, tech) {
     case KICK.PASS: case KICK.THROUGH: case KICK.THROW:
     case KICK.LONG: case KICK.PUNT: case KICK.CLEAR: case KICK.DROP: {
       const kh = p.kh;
-      const footOnly = tech === ST.KICK || tech === ST.THROW;
+      const footOnly = tech === ST.KICK || tech === ST.THROW || tech === ST.SLIDE;
       if (kh === KH.GROUND && footOnly && kind !== KICK.LONG && kind !== KICK.PUNT && kind !== KICK.CLEAR && kind !== KICK.DROP) {
         // along the ground, arriving at a pace the receiver can control
         const vEnd = p.kv > 0 ? p.kv : passEndSpeed(kind, d, pw);
@@ -1667,7 +1714,7 @@ function launch(w, p, tech) {
         break;
       }
       // pace from the hold, height from the key row (low / mid / top corner)
-      const techF = { [ST.KICK]: 1, [ST.VOLLEY]: 1.06, [ST.HEADER]: 0.62, [ST.OVERHEAD]: 0.95, [ST.DIVEHEAD]: 0.7, [ST.THROW]: 0.5 }[tech] || 1;
+      const techF = { [ST.KICK]: 1, [ST.VOLLEY]: 1.06, [ST.HEADER]: 0.62, [ST.OVERHEAD]: 0.95, [ST.DIVEHEAD]: 0.7, [ST.THROW]: 0.5, [ST.SLIDE]: 0.8 }[tech] || 1;
       let speed = (12 + 13 * pw) * s.shot * techF;
       // struck along the grass it's quicker still; in the air a little quicker
       // too – but not a soft one meant to loop up (a chip stays a chip)
@@ -1682,7 +1729,7 @@ function launch(w, p, tech) {
       let tz = targetHeight(w, p, kind, p.kh);
       if (pw > 0.9) tz += (pw - 0.9) * 3; // a blasted shot climbs
       vh = speed;
-      if (p.kh === KH.GROUND && tech === ST.KICK) vz = 0.4 + 2.5 * Math.max(0, pw - 0.75); // skims the grass
+      if (p.kh === KH.GROUND && (tech === ST.KICK || tech === ST.SLIDE)) vz = 0.4 + 2.5 * Math.max(0, pw - 0.75); // skims the grass
       else vz = Math.min(14, vzToReach(speed, b.z, d, tz, ts)); // low pace + high target = a chip
       const techErr = { [ST.KICK]: 0, [ST.VOLLEY]: 0.035, [ST.HEADER]: 0.03, [ST.OVERHEAD]: 0.06, [ST.DIVEHEAD]: 0.04 }[tech] || 0;
       const mis = tech === ST.KICK ? (misalign > 1.0 ? (misalign - 1.0) * 0.07 : 0) : 0;
@@ -1718,6 +1765,7 @@ function launch(w, p, tech) {
     const ca = Math.cos(a), sa = Math.sin(a), nux = ux * ca - uy * sa, nuy = ux * sa + uy * ca;
     ux = nux; uy = nuy;
   }
+  if (tech === ST.SLIDE) err += 0.03 + 0.03 * Math.min(misalign, SLIDE_TURN); // (a stab at it, going down)
   if (kind === KICK.SHOT || kind === KICK.FINESSE) err *= SHOT_ERR; // (the same for everyone: the AI's skill is how it presses the keys)
   if (err > 0) {
     const a = gauss(w) * err;
@@ -3010,6 +3058,9 @@ function slideContacts(w) {
         p.stB = 1;
         invalidatePath(w);
         w.events.push({ k: 'keepin', x: b.x, y: b.y, id: p.id });
+      } else if (p.stA === 2 && !prev) {
+        // slid in to get there first: struck as he planned it (see slideKickPlan)
+        if (!struckByOther(b, p)) { launch(w, p, ST.SLIDE); p.stB = 1; }
       } else if (!prev || prev.team !== p.team) {
         const sp = Math.hypot(p.vx, p.vy), lat = (rnd(w) - 0.5) * 3;
         b.owner = -1; b.held = 0;
@@ -3023,10 +3074,12 @@ function slideContacts(w) {
     for (const o of w.players) {
       if (o.team === p.team || o.st === ST.FALLEN || o.st === ST.DIVE || o.z > 0.6) continue;
       if (Math.hypot(o.x - Fx, o.y - Fy) < 0.6 || Math.hypot(o.x - p.x, o.y - p.y) < 0.55) {
-        // man before ball is a foul if the ball wasn't playable or it came from behind
+        // man before ball is a foul if the ball wasn't playable or it came
+        // from behind – and into a keeper with it in his hands, always
         const ballNear = Math.hypot(Fx - b.x, Fy - b.y) < 0.8;
         const fromBehind = Math.cos(angDiff(o.face, p.face)) > 0.5;
-        if (p.stB === 0 && (!ballNear || fromBehind)) { p.stB = 2; foul(w, p, o); }
+        const inHands = b.held && b.owner === o.id;
+        if (p.stB !== 2 && (inHands || (p.stB === 0 && (!ballNear || fromBehind)))) { p.stB = 2; foul(w, p, o); }
         else {
           o.st = ST.FALLEN; o.stT = 0; o.stDur = 50;
           if (b.owner === o.id) { b.owner = -1; b.held = 0; }
