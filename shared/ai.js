@@ -68,7 +68,7 @@ function tapKey(p, target, kh = KH.GROUND) {
 // cover behind the presser, support for the man on the ball in their third, a
 // loose ball he'll get to first anyway. (Real players sprint 1-4% of the
 // time; ours, with shorter distances than these, were flat out a quarter of it.)
-const PACE = { shapeOurs: 16, shape: 22, markOurs: 10, mark: 16, cover: 8, support: 9, loose: 6 };
+const PACE = { shapeOurs: 16, shape: 22, markOurs: 10, mark: 16, cover: 6, support: 9, loose: 6 };
 
 // tau: no hurry – he goes at the pace that gets him there in about tau
 // seconds (a walk when it's near, a jog when it's moved on a way), and only
@@ -559,6 +559,7 @@ function aiKick(w, p, kind, power, tx, ty, tid = -1, kh) {
     else { target = KT.MATE; if (kh === undefined) kh = KH.GROUND; }
   } else if (kind === KICK.SHOT || kind === KICK.FINESSE) { target = KT.GOAL; r2 = kind === KICK.FINESSE; }
   else if (kind === KICK.THROUGH) target = KT.RUN;
+  else if ((kind === KICK.LONG || kind === KICK.CLEAR) && tid >= 0 && tid !== p.id && Math.hypot(pById(w, tid).x - b.x, pById(w, tid).y - b.y) <= 44) { target = KT.MATE; kh = KH.HIGH; } // (a long ball to a man: the team-mate key, lofted to his head – the game's targeting leads him)
   else if (kind === KICK.LONG || kind === KICK.CLEAR || kind === KICK.PUNT) { target = KT.GOAL; kh = KH.HIGH; power = Math.max(power, 0.85); } // (a hoof upfield: the shot key)
   else if (kind === KICK.SELF) target = KT.SELF;
   else target = KT.MATE;
@@ -888,7 +889,11 @@ function defendThink(w, p, c, owner) {
       // ours to lose (we touched it last) and on its way out: keep it in – a
       // slide to hook it back when it's just going, flat out to it before
       const out = b.lastTeam === p.team && p.role === ROLE.OUT ? exitPoint(w) : null;
-      if (out && keepInReach(w, p) && Math.hypot(b.x - p.x, b.y - p.y) > 1.2) { tapKey(p, KT.GOAL); return; } // (the slide key at a ball going out: kept in)
+      // (the slide key at a ball going out: kept in – where it's worth going to
+      // ground for, as real players judge it: in the half we attack, or over
+      // our own goal line for a corner – and not every time)
+      const worth = out && (out.x * dir > 0 || (Math.abs(out.x) > pit.L / 2 - 0.5 && out.x * dir < 0));
+      if (worth && keepInReach(w, p) && Math.hypot(b.x - p.x, b.y - p.y) > 1.2 && rnd(w) < 0.25) { tapKey(p, KT.GOAL); return; }
       if (out && (go.t >= out.t - 0.05 || go.t >= 9)) {
         if (out.t < 2.5) {
           setMove(p, out.x - p.x, out.y - p.y, sprintTilt(p));
@@ -957,9 +962,34 @@ function defendThink(w, p, c, owner) {
   const dGoalB = Math.hypot(owner.x - ogx, owner.y);
   const mk = c.mark.get(p.id);
   p.ai = c.presser[p.team] === p.id ? AI_PRESS : c.cover[p.team] === p.id ? AI_COVER : mk !== undefined ? AI_MARK : 0;
+  // the man on the ball winding up a shot at our goal from in range (his
+  // wind-up seen as a person sees it – once he has reacted to it): the men
+  // within a few metres of him throw themselves into its line, between the
+  // ball and the goal a step or two off it – where a shot gets blocked
+  if ((owner.chgBtn & KICK_MASK) === KT.GOAL && dGoalB < 28 && !owner.held && owner.tapH / 60 > aiReact(w, p, owner.x, owner.y)) {
+    const d = Math.hypot(owner.x - p.x, owner.y - p.y);
+    if (d < 6) {
+      const [kx, ky] = bisector(w, p.team, b.x, b.y), r = clamp(d * 0.6, 1.2, 3);
+      guardTo(p, b.x + kx * r, b.y + ky * r, 0.5, 0.05);
+      return;
+    }
+  }
   if (p.ai === AI_COVER) { const [tx, ty] = c.coverAt[p.team]; guardTo(p, tx, ty, PACE.cover, 0.3, SHARP); return; }
   if (mk !== undefined) p.aiY = mk;
   if (c.presser[p.team] === p.id) {
+    // a slide only as a last resort, as defenders are taught: he's got past
+    // – the man running on at our goal and the presser no longer goal-side
+    // of him – with the ball a touch ahead of the man (off his foot) where a
+    // slide gets to it, coming from the side (from behind is a foul), never
+    // in our box (a penalty)
+    if (p.tcd === 0 && !owner.held && w.m.spTaker !== owner.id && !inOwnBox(w, p.team, p.x, p.y, 1)) {
+      const [kx, ky] = bisector(w, p.team, owner.x, owner.y);
+      const run = owner.vx * kx + owner.vy * ky, ahead = (p.x - owner.x) * kx + (p.y - owner.y) * ky;
+      const fx = b.x + b.vx * 0.25 - p.x, fy = b.y + b.vy * 0.25 - p.y, fd = Math.hypot(fx, fy) || 1;
+      const facing = (Math.cos(p.face) * fx + Math.sin(p.face) * fy) / fd;
+      const touch = Math.hypot(b.x - owner.x, b.y - owner.y) > 0.6, behind = Math.cos(angDiffAI(owner.face, p.face)) > 0.5;
+      if (run > 3 && ahead < 0.5 && touch && !behind && fd > 1 && fd < 2.6 && facing > 0.85 && rnd(w) < 0.25) { tapKey(p, KT.GOAL); return; } // (the slide key)
+    }
     // near our goal and not goal-side of him (beaten, or off his shooting
     // line): no chasing him from behind – back onto the line ahead of him
     if (dGoalB < 28) {
@@ -977,12 +1007,7 @@ function defendThink(w, p, c, owner) {
     const d = Math.hypot(owner.x - p.x, owner.y - p.y);
     // closing him down: the last few metres facing him, side-on, goal-side
     if (d < 6) guardTo(p, tx, ty, 2.5, 0.05); else moveTo(p, tx, ty, 2.5, 0.05);
-    if (d < 1.7 && !owner.held) p.ib |= KT.MATE; // press = hold a team-mate key
-    if (d > 1.3 && d < 3.0 && p.tcd === 0 && !owner.held && w.m.spTaker !== owner.id) {
-      const bx = b.x - p.x, by = b.y - p.y, bd = Math.hypot(bx, by) || 1;
-      const facing = (Math.cos(p.face) * bx + Math.sin(p.face) * by) / bd;
-      if (facing > 0.9 && rnd(w) < (inOwnBox(w, p.team, p.x, p.y, 2) ? 0.004 : 0.018)) tapKey(p, KT.GOAL); // (the slide key)
-    }
+    if (d < 1.7 && !owner.held) p.ib |= KT.MATE; // press = hold a team-mate key (the tackle comes when it comes – see the sim's movement)
     return;
   }
   // an attacker on the ball near our goal: besides the man pressing him, the
@@ -1047,6 +1072,9 @@ function defendThink(w, p, c, owner) {
 // as real keepers do (SkillCorner) – 2.3 m with it within a fifth of the
 // pitch, stepping up as it goes away: 2.7 m a third of the way out, 4.5 m at
 // halfway, 7.2 m beyond (on a 105 m pitch; the steps up scale with ours)
+// (the furthest off his line a keeper stands against a man on the ball 14 m
+// or more out – any further and a chip over him goes in, see aimShot)
+const CHIP_SAFE = 3.2;
 function keeperDepth(pit, dGoal) {
   const f = dGoal / pit.L;
   const extra = f < 0.19 ? 0 : f < 0.33 ? 0.4 * (f - 0.19) / 0.14 : f < 0.5 ? 0.4 + 1.8 * (f - 0.33) / 0.17 : f < 0.6 ? 2.2 + 2.7 * (f - 0.5) / 0.1 : 4.9;
@@ -1156,9 +1184,26 @@ function gkThink(w, p, c) {
     // on him (in his box too), unless there's a safe pass to a free man, it's
     // cleared, long and wide: he doesn't hand it on to be pressed
     const rushed = !b.held && openness(w, p.team, p.x, p.y) < 8;
+    // long: the team-mate (or the wide space) a high ball is most likely to
+    // reach – raced against everyone who could head it on the way
+    // (getting it away safely first: odds count more than where it lands)
+    const longBall = () => {
+      let best = null;
+      const tryTarget = (tx, ty, q) => {
+        const odds = passOdds(w, p.team, b.x, b.y, tx, ty, KICK.LONG, KH.HIGH, 0.8, q);
+        const v = odds * (0.3 + spotValue(w, p.team, tx, ty) + (q && byPerson(q) ? 0.25 : 0));
+        if (!best || v > best.v) best = { tx, ty, tid: q ? q.id : -1, v };
+      };
+      for (const q of w.players) if (q.team === p.team && q !== p && (q.x - p.x) * dir > 12) tryTarget(q.x, q.y, q);
+      for (const side of [-1, 1]) for (const fx of [-0.15, 0.1]) tryTarget(dir * pit.L * fx, side * pit.W * 0.4, null);
+      return best;
+    };
     if (rushed && openness(w, p.team, p.x, p.y) < 4.5 && !(clear && bp.odds > 0.92) && m.spTaker !== p.id) {
-      const side = p.y >= 0 ? 1 : -1;
-      aiKick(w, p, KICK.CLEAR, 0.95, p.x + dir * 32, side * pit.W * 0.38, -1, KH.HIGH);
+      // no time: cleared long – to the man most likely to win it (lofted to
+      // him on the team-mate key), or failing one, wide
+      const lb = longBall(), side = p.y >= 0 ? 1 : -1;
+      if (lb && lb.tid >= 0) aiKick(w, p, KICK.CLEAR, 0.95, lb.tx, lb.ty, lb.tid, KH.HIGH);
+      else aiKick(w, p, KICK.CLEAR, 0.95, p.x + dir * 32, side * pit.W * 0.38, -1, KH.HIGH);
       return;
     }
     if (p.aiT > 0 && m.spTaker !== p.id && !rushed && !(clear && bp.odds > 0.95 && p.aiT < lv.hold - 15)) {
@@ -1168,17 +1213,7 @@ function gkThink(w, p, c) {
     if (clear) aiKick(w, p, bp.kind, bp.pw, bp.tx, bp.ty, bp.t.id, KH.GROUND);
     else if (bp && bp.odds > 0.65 && freeAt > 4) aiKick(w, p, bp.kind, bp.pw, bp.tx, bp.ty, bp.t.id, bp.kh);
     else {
-      // long: the team-mate (or the wide space) a high ball is most likely to
-      // reach – raced against everyone who could head it on the way
-      // (getting it away safely first: odds count more than where it lands)
-      let best = null;
-      const tryTarget = (tx, ty, q) => {
-        const odds = passOdds(w, p.team, b.x, b.y, tx, ty, KICK.LONG, KH.HIGH, 0.8, q);
-        const v = odds * (0.3 + spotValue(w, p.team, tx, ty) + (q && byPerson(q) ? 0.25 : 0));
-        if (!best || v > best.v) best = { tx, ty, tid: q ? q.id : -1, v };
-      };
-      for (const q of w.players) if (q.team === p.team && q !== p && (q.x - p.x) * dir > 12) tryTarget(q.x, q.y, q);
-      for (const side of [-1, 1]) for (const fx of [-0.15, 0.1]) tryTarget(dir * pit.L * fx, side * pit.W * 0.4, null);
+      const best = longBall();
       // from his hands: a drop kick to a man within range, else punted
       const far = Math.hypot(best.tx - p.x, best.ty - p.y) > 50 || best.tid < 0;
       aiKick(w, p, b.held && far ? KICK.PUNT : KICK.LONG, 0.75 + rnd(w) * 0.2, best.tx, best.ty, best.tid, KH.HIGH);
@@ -1370,9 +1405,13 @@ function gkThink(w, p, c) {
     const gl = Math.hypot(ogx - owner.x, owner.y) || 1, across = Math.abs(owner.vx * -owner.y - owner.vy * (ogx - owner.x)) / gl;
     const still = 1 - clamp(across / 6, 0, 1), closeIn = clamp((8 - fx) / 3, 0, 1);
     const share = (0.4 + 0.22 * still) * (1 - closeIn) + 0.62 * closeIn;
+    // ...but respecting the chip: with the man still a way out he stays near
+    // enough his line to get back under one (no more than CHIP_SAFE off it
+    // against a man 14 m+ out), only going right out to him as he closes in
+    const chipSafe = CHIP_SAFE + (6 - CHIP_SAFE) * clamp((14 - fx) / 6, 0, 1);
     const depth = attackMan ? Math.max(1.0, fx - 0.9)
-      : alone || charge || close ? clamp(fx * share, 1.0, Math.max(1.0, Math.min(fx - clamp(0.3 * fx, 1.0, 2.2), 6)))
-        : keeperDepth(pit, dGoal);
+      : alone || charge || close ? clamp(fx * share, 1.0, Math.max(1.0, Math.min(fx - clamp(0.3 * fx, 1.0, 2.2), 6, chipSafe)))
+        : Math.min(keeperDepth(pit, dGoal), dGoal < 30 ? chipSafe : Infinity);
     [tx, ty] = anglePoint(w, p.team, ax, ay, depth);
     // how that spot moves across with his run: the keeper moves with it (in
     // and out is left to the pull below – backing off fast he can't do, and
@@ -1429,7 +1468,9 @@ function gkThink(w, p, c) {
     // jog – but no rushing in or out (closing a man down close in, he gets
     // out there first, then sets).
     let ex = tx - p.x, ey = ty - p.y;
-    const setNow = set && !(rush && d > 1);
+    // (once the man winds up he's set wherever he's got to – planted feet
+    // save more than the perfect spot reached running)
+    const setNow = set;
     if (setNow) {
       const lx = tx - b.x, ly = ty - b.y, ll = Math.hypot(lx, ly) || 1, al = (ex * lx + ey * ly) / ll;
       ex -= al * lx / ll; ey -= al * ly / ll;

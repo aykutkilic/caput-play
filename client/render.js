@@ -2,7 +2,7 @@
 // skeletal animation: every pose is computed from simulation state each frame,
 // so animations stay fluid and always agree with what the physics is doing.
 
-import { GOAL_DEPTH, BALL_R, ST, ROLE, PHASE, KICK, SP, SKILL, KH, PART, GKB, KQ, FOOT } from '../shared/constants.js';
+import { GOAL_DEPTH, BALL_R, ST, ROLE, PHASE, KICK, SP, SKILL, KH, KT, BTN, PART, GKB, KQ, FOOT } from '../shared/constants.js';
 import { stats } from '../shared/physique.js';
 import { CHG_MAX, pitchOf, DIVE_BASE, DIVE_SPAN, diveReach, SIDEARM_MAX, teamDir, keeperBig, CELEB_TICKS } from '../shared/sim.js';
 import { skeleton, drawFigure } from './figure.js';
@@ -540,6 +540,14 @@ export function poseFor(p, ctx) {
     const h = ctx.holdAt;
     handsTo(P, h.f, h.r, h.z, H, 1, 0.1);
   }
+  if (ctx.defStance) {
+    // defending up close: low on bent knees, weight forward on the balls of
+    // the feet, arms a little out for balance – ready to go either way
+    const u = ctx.defStance;
+    P.lk += 0.4 * u; P.rk += 0.4 * u; P.lh += 0.22 * u; P.rh += 0.22 * u;
+    P.lean = mix(P.lean, 0.3, u); P.drop += 0.06 * H * u;
+    P.lab = mix(P.lab, 0.5, u); P.rab = mix(P.rab, 0.5, u); P.lel = mix(P.lel, 0.7, u); P.rel = mix(P.rel, 0.7, u);
+  }
   if (ctx.windup) {
     // holding a pass / shot: the kicking leg draws back as the gauge fills –
     // the backswing of the kick (kickPose) – so on release the foot comes
@@ -889,9 +897,10 @@ export function poseFor(p, ctx) {
         const side = B.dr >= 0 ? 1 : -1;
         P.drop = 0.14 * H * e; P.lean = mix(P.lean, -0.1, e); P.roll = mix(P.roll, -0.22 * side, e);
         legIK(P, side, B.df, B.dr - side * 0.062 * H, B.z - (hipH - P.drop), H, e);
-        // standing leg bent, arms out for balance
+        // standing leg bent, arms tucked in behind him (no handball – as
+        // defenders block now)
         if (side > 0) { P.lh = mix(P.lh, 0.45, e); P.lk = mix(P.lk, 0.95, e); } else { P.rh = mix(P.rh, 0.45, e); P.rk = mix(P.rk, 0.95, e); }
-        P.lsh = mix(P.lsh, 0.5, e); P.rsh = mix(P.rsh, 0.5, e); P.lab = P.rab = mix(P.lab, 0.85, e);
+        P.lsh = mix(P.lsh, -0.4, e); P.rsh = mix(P.rsh, -0.4, e); P.lab = P.rab = mix(P.lab, 0.2, e); P.lel = P.rel = mix(P.lel, 1.2, e);
       } else if (p.stB < H * 0.85) {
         // body: square up and lean into it, arms tucked behind (no handball)
         const rel = Math.atan2(B.dr, B.df);
@@ -1876,7 +1885,7 @@ export class Renderer {
       celebrate: false, dejected: null,
       diveRel: angDiff(p.face, p.stA),
       diveEl: p.st === ST.DIVE && !p.spr ? diveReach(p, s)[1] : 0, // a high dive: body on a diagonal
-      block: null, reach: null, windup: null, gkSet: 0, contact: null,
+      block: null, reach: null, windup: null, gkSet: 0, contact: null, defStance: 0,
     };
     // after a goal: the scorer's knee slide (pulling up from his run) and his
     // arms up on his knees, team-mates hugging him, the rest as they like;
@@ -1898,6 +1907,15 @@ export class Renderer {
       // big: eased in and out over a few frames
       a.big = clamp((a.big || 0) + (keeperBig(w, p) ? dt : -dt) * 6, 0, 1);
       ctx.gkBig = ease(a.big);
+    }
+    // defending up close – pressing him, jockeying, guarding: the stance,
+    // eased in and out (see poseFor)
+    {
+      const o = b.owner >= 0 ? w.players.find((q) => q.id === b.owner) : null, k = p.ib & 7;
+      const on = !!o && o.team !== p.team && p.role === ROLE.OUT && (p.st === ST.IDLE || p.st === ST.STUMBLE) && Math.hypot(o.x - p.x, o.y - p.y) < 3
+        && (k === KT.MATE || k === KT.SELF || (p.ib & BTN.R2) || p.eng > 0);
+      a.def = clamp((a.def || 0) + (on ? dt : -dt) * 5, 0, 1);
+      ctx.defStance = ease(a.def);
     }
     // winding up a kick with the ball at the feet (not the lift / skill key)
     const kicking = p.chgBtn & 7;

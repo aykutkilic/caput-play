@@ -331,7 +331,7 @@ export function makePlayer(id, team, role, human, hgt = 180, bld = 50, ft = 0) {
     st: 0, stT: 0, stDur: 0, stA: 0, stB: 0, hit: 0,
     kk: 0, kp: 0, kx: 0, ky: 0, kt: -1, kv: 0, kh: 0, kq: 0, kc: 0, kf: 0,
     akK: 0, akN: 0, akA: 0, akM: 0, akR: 0, // (an AI player's keys for a kick under way – ai.js driveKey)
-    chg: 0, chgBtn: 0, stam: 1, pb: 0, kcd: 0, tcd: 0, tap: 0, tapT: 255, tapK: 0, tapH: 0, spr: 0,
+    chg: 0, chgBtn: 0, stam: 1, pb: 0, kcd: 0, tcd: 0, eng: 0, tap: 0, tapT: 255, tapK: 0, tapH: 0, spr: 0, // (eng: ticks pressing up close – see movement)
     bot: 0, miss: 0, tm: 0, qk: 0,
     qa: 0, qt: 0, qp: 0, dph: 0, hold: 0,
     ai: 0, aiT: 0, aiX: 0, aiY: 0,
@@ -2379,6 +2379,9 @@ function receiveAssist(w, p, sx, sy, sm) {
   return { x: at.x, y: at.y, z: at.z, t: at.t, d, ux: d > 1e-3 ? dx / d : 0, uy: d > 1e-3 ? dy / d : 0, dive: at.dive || 0 };
 }
 
+// Pressing (see movement): how far off the man a presser gets set (m), and
+// how long up close before he goes in for a ball kept tight (ticks)
+const ENGAGE = 1.0, ENGAGE_T = 30;
 function movement(w, p, s) {
   const m = w.m, b = w.ball;
   const [sx, sy, sm0] = stickOf(p);
@@ -2415,16 +2418,51 @@ function movement(w, p, s) {
     close = Math.hypot(p.x - ogx, p.y) < Math.hypot(owner.x - ogx, owner.y) + 0.5;
   }
   const guard = oppHas && !own && ((p.ib & BTN.R2) || close) && !pressing && !jockey && !charging;
-  if (pressing || charging) {
+  let engaged = false;
+  // (a keeper in his box with his hands goes right on to it and gathers it
+  // at the man's feet – see below)
+  const gather = p.role === ROLE.GK && keeperHands(w, p) && inOwnBox(w, p.team, b.x, b.y, 0.3);
+  if (pressing && !gather) {
+    // Closing him down as defenders are taught: flat out while there's ground
+    // to make up, braking in time to arrive a step off him (ENGAGE) going no
+    // faster than he is – not running on past into a touch round him – on
+    // the goal side if he's coming at our goal (alongside the ball if he's
+    // already past); there, side-on and facing the ball, he matches his
+    // moves (the tackle when the moment comes – see below)
+    const gx = -teamDir(w, p.team) * pitchOf(w).L / 2;
+    let ux = gx - owner.x, uy = -owner.y;
+    const ul = Math.hypot(ux, uy) || 1; ux /= ul; uy /= ul;
+    const rx = p.x - owner.x, ry = p.y - owner.y, rl = Math.hypot(rx, ry) || 1;
+    let tx, ty;
+    if ((rx * ux + ry * uy) / rl > -0.3) { tx = owner.x + ux * ENGAGE; ty = owner.y + uy * ENGAGE; }
+    else { const side = -uy * rx + ux * ry >= 0 ? 1 : -1; tx = b.x - uy * side * 0.7; ty = b.y + ux * side * 0.7; }
+    tx += owner.vx * 0.15; ty += owner.vy * 0.15;
+    const ddx = tx - p.x, ddy = ty - p.y, dd = Math.hypot(ddx, ddy);
+    const ov = Math.hypot(owner.vx, owner.vy), brake = s.accel * (s.brake ?? 1.5) * 0.8;
+    engaged = rl < ENGAGE + 1;
+    if (engaged) {
+      // up close: his own pace plus what closes the last bit
+      const vx = owner.vx + ddx * 4, vy = owner.vy + ddy * 4, v = Math.hypot(vx, vy);
+      if (v > 0.05) { dx = vx / v; dy = vy / v; }
+      speed = Math.min(s.sprint * tiredPace(p), v); sm = v > 0.05 ? 1 : 0;
+    } else {
+      if (dd > 0.01) { dx = ddx / dd; dy = ddy / dd; }
+      speed = Math.min(s.sprint * 0.95 * tiredPace(p), ov + Math.sqrt(2 * brake * Math.max(0, dd - 0.3)) + 1);
+      sm = 1;
+    }
+  } else if (pressing || charging) {
     const tx = b.x + b.vx * 0.15, ty = b.y + b.vy * 0.15;
     const ddx = tx - p.x, ddy = ty - p.y, dd = Math.hypot(ddx, ddy) || 1;
     dx = ddx / dd; dy = ddy / dd; sm = dd < 0.6 ? 0.3 : 1;
     speed = s.sprint * 0.95 * tiredPace(p);
   } else if (jockey) {
+    // a little over a step off him, goal-side – and with him out wide, a
+    // little inside him: showing him down the line, away from goal
     const gx = -teamDir(w, p.team) * pitchOf(w).L / 2;
     let ux = gx - owner.x, uy = -owner.y;
     const ul = Math.hypot(ux, uy) || 1; ux /= ul; uy /= ul;
-    const tx = owner.x + owner.vx * 0.2 + ux * 1.6, ty = owner.y + owner.vy * 0.2 + uy * 1.6;
+    const [lx, ly] = ux * owner.y < 0 ? [-uy, ux] : [uy, -ux], ins = 0.35 * clamp((Math.abs(owner.y) - 2) / 6, 0, 1); // (l: across, towards the middle)
+    const tx = owner.x + owner.vx * 0.2 + ux * 1.3 + lx * ins, ty = owner.y + owner.vy * 0.2 + uy * 1.3 + ly * ins;
     const ddx = tx - p.x, ddy = ty - p.y, dd = Math.hypot(ddx, ddy) || 1;
     dx = ddx / dd; dy = ddy / dd; sm = dd < 0.15 ? 0 : Math.min(1, dd / 0.8);
     speed = s.sprint * 0.9 * tiredPace(p);
@@ -2501,7 +2539,7 @@ function movement(w, p, s) {
   }
   const tvx = dx * sm * speed, tvy = dy * sm * speed;
   const v = Math.hypot(p.vx, p.vy), vt = Math.hypot(tvx, tvy);
-  if (v > 1.5 && vt > 0.5 && !assist && !jockey && !guard && !prec && p.role !== ROLE.GK) {
+  if (v > 1.5 && vt > 0.5 && !assist && !jockey && !guard && !engaged && !prec && p.role !== ROLE.GK) {
     // Running: momentum carries. The run bends towards the new direction along
     // an arc (wider the faster you go, tighter for agile players), speed is
     // gained or shed on its own, and a reversal means planting a foot and
@@ -2534,7 +2572,13 @@ function movement(w, p, s) {
   // facing
   const sp = Math.hypot(p.vx, p.vy);
   const rate = s.turn * (own ? (prec ? 1.5 : 0.85) : 1) / (1 + 0.09 * sp) * DT;
-  if (pressing || jockey || guard || (p.role === ROLE.GK && !own)) {
+  // (a keeper caught well off his line, heading back to it: he turns and
+  // runs, then faces the play again – back-pedalling it he'd never make it)
+  const ogx = -teamDir(w, p.team) * pitchOf(w).L / 2, gkBack = p.role === ROLE.GK && !own && sm > 0.6
+    && Math.abs(p.x - ogx) > 6 && dx * (ogx - p.x) > 0 && Math.abs(dx) > 0.6;
+  if (gkBack) {
+    turnToward(p, Math.atan2(dy, dx), rate * 1.4);
+  } else if (pressing || jockey || guard || (p.role === ROLE.GK && !own)) {
     turnToward(p, Math.atan2(b.y - p.y, b.x - p.x), rate * 1.4);
   } else if (assist && assist.d < 1.6 && p.tm === MEET.WITH && Math.hypot(b.vx, b.vy) > 1) {
     turnToward(p, Math.atan2(b.vy, b.vx), rate * 1.2); // running with it: face where it's going
@@ -2559,11 +2603,19 @@ function movement(w, p, s) {
   // (a keeper in his box doesn't poke it away – it would only run loose: he
   // gets to it and gathers it at the man's feet, going round to the side of
   // it when he's shielding it – see possession and the AI)
-  const gather = p.role === ROLE.GK && keeperHands(w, p) && inOwnBox(w, p.team, b.x, b.y, 0.3);
+  // The tackle, pressing: not a lunge the moment he's near – the ball off
+  // the man's foot (a touch that's left it nearer the presser than a step
+  // from the man), or, kept tight, once he's stood the man up a moment
+  // (ENGAGE_T) and the man isn't between him and the ball (shielded, he
+  // waits) – and only with it within a tackle's reach. The same for anyone
+  // holding the press key.
+  p.eng = engaged ? Math.min(255, p.eng + 1) : 0;
   if (pressing && p.tcd === 0 && !gather) {
-    const bd = Math.hypot(b.x - p.x, b.y - p.y);
+    const bd = Math.hypot(b.x - p.x, b.y - p.y), od = Math.hypot(owner.x - p.x, owner.y - p.y);
     const fd = (Math.cos(p.face) * (b.x - p.x) + Math.sin(p.face) * (b.y - p.y)) / (bd || 1);
-    if (bd < 1.3 && fd > 0.5) beginTackle(w, p);
+    const off = Math.hypot(b.x - owner.x, b.y - owner.y) > 0.62 || bd + 0.15 < Math.hypot(b.x - owner.x, b.y - owner.y);
+    const shielded = bd > od && ((b.x - p.x) * (owner.x - p.x) + (b.y - p.y) * (owner.y - p.y)) / ((bd * od) || 1) > 0.9;
+    if (bd < 1.15 && fd > 0.6 && (off || (p.eng >= ENGAGE_T && !shielded))) beginTackle(w, p);
   }
   // Stamina (p.stam, 0..1), for everyone: sprinting spends it – a fit man has
   // 5-6 s flat out in him – easing off brings it back, quickest at a walk;
@@ -2886,8 +2938,12 @@ function tackleContact(w, p, ps) {
       if (behind && rnd(w) < 0.3) foul(w, p, o);
       else if (isFree(o)) { o.st = ST.STUMBLE; o.stT = 0; o.stDur = 18; }
     } else {
+      // missed it: off balance – and through the man rather than the ball
+      // (his foot where the man's legs are), now and then a foul, more often
+      // from behind
       p.st = ST.STUMBLE; p.stT = 0; p.stDur = 20;
       w.events.push({ k: 'miss', x: p.x, y: p.y });
+      if (Math.hypot(fx - o.x, fy - o.y) < 0.55 && rnd(w) < (behind ? 0.45 : 0.15)) foul(w, p, o);
     }
   } else {
     b.vx = cf * 6; b.vy = sf * 6; b.vz = 0.3;
