@@ -1281,7 +1281,7 @@ function gkThink(w, p, c) {
         if (keeperBig(w, p) && zk >= 0.45 && Math.abs(dy) < bigReach(s, zk)) { moveTo(p, p.x + dir * 0.05, yk, 99, 0.05); return; }
         // low and just wide, too quick to dive for: a leg slid out along the grass
         // (when there's really no time – otherwise it's a dive, which can hold it)
-        if (zk < 0.45 && Math.abs(dy) > 0.5 && Math.abs(dy) < 1.5 && p.tcd === 0 && (tt < 0.18 || (tt < 0.24 && rnd(w) < 0.4))) {
+        if (zk < 0.45 && Math.abs(dy) > 0.45 && Math.abs(dy) < 1.6 && p.tcd === 0 && (tt < 0.26 || (tt < 0.32 && rnd(w) < 0.5))) {
           tapKey(p, KT.RUN); // (a dive key: low, just wide and on him – the splits, see keeperDive)
           return;
         }

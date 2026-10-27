@@ -801,15 +801,24 @@ export function poseFor(p, ctx) {
       // on the ground lying on his side the hips are down at the grass; while
       // getting up he is on one knee for a moment
       P.drop = (air ? hipH * 0.2 * lie : hipH * 0.8 * lie) + (up > 0 && up < 0.8 ? hipH * 0.25 * Math.sin(up / 0.8 * Math.PI) : 0);
-      // arms at full stretch towards the ball, gloves together; once he has
-      // it, it's pulled in to his chest
+      // arms towards the ball: diving to one near him, both gloves together
+      // (once he has it, pulled in to his chest); at full stretch – into a
+      // corner, by a post – the top arm thrown out straight at it, the other
+      // lower along his body, the legs out straight behind him: the longest
+      // line he can make (one hand to it – see the sim's fullDive)
+      const one = clamp((big - 0.45) / 0.2, 0, 1) * (ctx.diveHold ? 0 : 1), e1 = env * one;
       P.lsh = mix(P.lsh, 2.8, env); P.rsh = mix(P.rsh, 2.95, env); P.lab = P.rab = mix(P.lab, -0.06, env); P.lel = P.rel = 0.1;
+      if (e1 > 0) {
+        const topR = Math.sin(rel) >= 0;
+        if (topR) { P.rsh = mix(P.rsh, 3.12, e1); P.rel = 0.02; P.lsh = mix(P.lsh, 1.6, e1); P.lab = mix(P.lab, 0.3, e1); P.lel = mix(P.lel, 0.65, e1); }
+        else { P.lsh = mix(P.lsh, 3.12, e1); P.lel = 0.02; P.rsh = mix(P.rsh, 1.6, e1); P.rab = mix(P.rab, 0.3, e1); P.rel = mix(P.rel, 0.65, e1); }
+      }
       if (ctx.diveHold) {
         // caught it: hands on the ball in the air, hugged into the chest once down
         const hug = p.z <= 0.02 && k > 12 ? clamp((k - 12) / 10, 0, 1) * env : 0;
         P.lsh = P.rsh = mix(mix(P.lsh, 2.2, env), 0.85, hug); P.lel = P.rel = mix(0.5 * env, 2.1, hug); P.lab = P.rab = mix(-0.1, 0.15, hug);
       }
-      P.lk = 0.25; P.rk = mix(P.rk, 0.9, env); P.rh = 0.5 * env;
+      P.lk = mix(0.25, 0.08, e1); P.rk = mix(mix(P.rk, 0.9, env), 0.3, e1); P.rh = mix(0.5 * env, 0.12, e1); P.lh = mix(P.lh, -0.05, e1);
       if (collapse) { const f = clamp(1 - k / 8, 0, 1) * env; P.lk = mix(P.lk, 1.3, f); P.rk = mix(P.rk, 1.5, f); P.lh = mix(P.lh, 0.6, f); }
       if (p.hit === 2 && !ctx.diveHold) {
         // tipped it: the top hand stays up where it flicked the ball, the other comes in
