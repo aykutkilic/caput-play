@@ -1872,6 +1872,13 @@ export class Renderer {
       }
     }
     const target = poseFor(p, ctx);
+    if (p.st === ST.HEADER) {
+      // heading it on: the head turned towards where it's going, as far as a
+      // neck goes, the shoulders a little with it (the body turns in the air
+      // too – see the sim)
+      const [df, dr] = local(p.kx, p.ky), e = clamp(1 - Math.abs(p.stT - p.stA) / 8, 0, 1);
+      if (Math.hypot(df, dr) > 0.5) { const yaw = clamp(Math.atan2(dr, df), -1.2, 1.2); target.hy += yaw * e; target.tw += yaw * 0.25 * e; }
+    }
     if (p.st === ST.IDLE || p.st === ST.STUMBLE) {
       target.roll += clamp(a.turn * a.sp * 0.012, -0.28, 0.28);
       // eyes on the ball: the head turns to it (as far as a neck goes), the

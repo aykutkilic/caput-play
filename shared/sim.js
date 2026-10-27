@@ -814,9 +814,27 @@ export function planKick(w, p, kind, power, tx, ty, tid = -1, kh) {
     p.kx = b.x + dir * (22 + 12 * power); p.ky = clamp(b.y * 1.3 + ay * 8, -pit.W / 2 + 3, pit.W / 2 - 3);
     return;
   }
-  // receiver selection
+  // a lofted pass towards team-mates in their box: a cross – to one of them
+  // (roughly the way the stick points), met at head height; held long, to the
+  // one further on, behind the first
   let best = null, bestScore = 1e9;
+  if (kind === KICK.PASS && kh !== KH.GROUND) {
+    const box = [];
+    for (const q of w.players) {
+      if (q === p || q.team !== p.team || q.role === ROLE.GK || !inOwnBox(w, 1 - p.team, q.x, q.y, 1)) continue;
+      const dx = q.x - b.x, dy = q.y - b.y, d = Math.hypot(dx, dy);
+      if (d > 5 && d < 45 && (dx * ax + dy * ay) / d > 0.3) box.push([d, q]);
+    }
+    if (box.length) {
+      box.sort((u, v) => u[0] - v[0]);
+      best = box[power > 0.65 ? box.length - 1 : 0][1];
+      kh = KH.HIGH; p.kh = kh;
+    }
+  }
+  // receiver selection (unless it's a cross)
+  const cross = best;
   for (const q of w.players) {
+    if (cross) break;
     if (q === p || q.team !== p.team) continue;
     const dx = q.x - b.x, dy = q.y - b.y, d = Math.hypot(dx, dy);
     if (d < 2 || d > (kind === KICK.LONG || kind === KICK.PUNT ? 70 : 45)) continue;
@@ -1020,12 +1038,15 @@ export function beginLift(w, p, power, kh = KH.HIGH) {
     p.vx = ux * burst; p.vy = uy * burst;
     w.events.push({ k: 'kick', x: b.x, y: b.y, z: b.z, v: 6, id: p.id });
   } else {
-    // lift: straight up (keepy-up) or scooped ahead over a challenge
+    // lift: straight up (keepy-up) or scooped ahead over a challenge – from
+    // where the ball is (no jump to his foot): it comes down just in front of
+    // where he'll be, pushed on with the stick
     p.stA = SKILL.LIFT; p.stDur = 16;
-    b.x = p.x + fx * 0.35; b.y = p.y + fy * 0.35; b.z = BALL_R + 0.05;
-    b.vz = kh === KH.HIGH ? 4.2 + 3.5 * power : 2.8 + 1.6 * power;
-    const push = forward ? 1.5 + 4 * power : 1.0;
-    b.vx = p.vx * (forward ? 0.9 : 1) + ux * push; b.vy = p.vy * (forward ? 0.9 : 1) + uy * push;
+    b.z = Math.max(b.z, BALL_R + 0.02);
+    const vz = kh === KH.HIGH ? 4.2 + 3.5 * power : 2.8 + 1.6 * power, T = 2 * vz / G;
+    const push = forward ? 1.5 + 4 * power : sm > 0.3 ? 1.0 : 0;
+    b.vz = vz;
+    b.vx = (p.x + p.vx * T + fx * 0.45 - b.x) / T + ux * push; b.vy = (p.y + p.vy * T + fy * 0.45 - b.y) / T + uy * push;
     p.kcd = 10;
     w.events.push({ k: 'kick', x: b.x, y: b.y, z: b.z, v: 2 + 4 * power, id: p.id });
   }
@@ -1412,8 +1433,9 @@ export function tryQueued(w, p) {
   const fx = Math.cos(p.face), fy = Math.sin(p.face);
   const awayFromGoal = (fx * gdx + fy * gdy) / gd < -0.35;
   const techs = [];
-  if (kind === KICK.SELF) techs.push(ST.KICK); // pass to self off the ground; in the air it's brought down (tryControl)
-  else if (p.tm === MEET.AT) {
+  // pass to self off the ground; in the air it's brought down (tryControl) –
+  // and the lift key at a ball off the grass keeps it up (a keepy-up, see tryControl)
+  if (kind === KICK.SELF) { if (!(kh === KH.HIGH && (b.z > 0.3 || b.vz > 0.5))) techs.push(ST.KICK); } else if (p.tm === MEET.AT) {
     // running at the ball: head it, jumping as high as it takes – volley or
     // kick it only if it comes in lower; with his back to goal, an overhead
     // kick if it's up there
@@ -1595,6 +1617,10 @@ export function tryControl(w, p) {
   if (b.owner >= 0 || m.spTaker >= 0 || p.kcd > 0 || !isFree(p) || p.z > 0) return false;
   const self = !!p.qa && (p.qa & KICK_MASK) === KT.SELF;
   const dead = !!p.qa && (p.qa & KICK_MASK) === KT.CTRL; // (the control key: taken dead)
+  // the lift key at his own ball in the air: a keepy-up, on what its height
+  // calls for – a little pop on the foot, then the knee / thigh, the chest,
+  // and a big one on the head
+  const juggle = self && ((p.qa >> 3) & 3) === KH.HIGH && b.last === p.id && b.kt < 90;
   if (p.qa && !self && !dead) return false;             // a first-time kick is queued
   if (b.z < 0.45 && b.vz > -1) return false;           // on the ground: an ordinary trap
   if (b.last === p.id && b.kt < 20 && b.tgt !== p.id) return false;
@@ -1604,8 +1630,10 @@ export function tryControl(w, p) {
   // [part, how far up he'd go for it]: letting it come, a little jump to take
   // it on the chest comes before the head, a big one only after
   const J = s.jump;
-  const order = b.last === p.id && b.kt < 60 ? [[PART.FOOT, 0]] // his own cushion coming down: onto the foot
-    : dead ? [[PART.CHEST, J], [PART.THIGH, J], [PART.FOOT, 0]] // (the control key: chest, thigh or foot – not headed down)
+  const top = b.z + b.vz * b.vz / (2 * G); // (how high it gets – or got, on its way down)
+  const order = juggle ? [[top > s.H * 0.93 + 0.2 ? PART.HEAD : top > s.H * 0.72 + 0.15 ? PART.CHEST : top > 0.75 ? PART.THIGH : PART.FOOT, 0], [PART.THIGH, 0], [PART.FOOT, 0]]
+    : b.last === p.id && b.kt < 60 ? [[PART.FOOT, 0]] // his own cushion coming down: onto the foot
+    : dead ? [[PART.CHEST, J], [PART.THIGH, J], [PART.FOOT, 0], [PART.HEAD, J]] // (the control key: chest, thigh, foot – or a jump to head it down)
     : p.tm === MEET.AT ? [[PART.HEAD, J], [PART.CHEST, J], [PART.THIGH, J], [PART.FOOT, 0]]
       : p.tm === MEET.WITH ? [[PART.THIGH, J], [PART.FOOT, 0], [PART.CHEST, J], [PART.HEAD, J]]
         : [[PART.CHEST, 0.25], [PART.THIGH, J], [PART.FOOT, 0], [PART.HEAD, J], [PART.CHEST, J]];
@@ -1664,6 +1692,7 @@ function beginControl(w, p, part, bx, by, bz, self, tk = C_CONTACT[part]) {
 function cushion(w, p, s) {
   const b = w.ball, part = p.stB;
   const rs = Math.hypot(b.vx - p.vx, b.vy - p.vy);
+  const juggle = p.kk === KICK.SELF && p.kh === KH.HIGH && b.last === p.id && b.kt < 90; // (a keepy-up: the lift key at his own ball)
   b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.kt = 0; b.sh = -1; b.spin = 0; b.ts = 0;
   b.atk = -1; b.atT = 0;
   if (rs > (part === PART.HEAD ? 17 : 20)) {
@@ -1681,7 +1710,13 @@ function cushion(w, p, s) {
   const fx = Math.cos(p.face), fy = Math.sin(p.face);
   const run = Math.hypot(p.vx, p.vy);
   let vx, vy, lift = 0;
-  if (p.kk === KICK.SELF) {
+  if (juggle) {
+    // a keepy-up: back up, staying with him – on the way the stick points if
+    // it's held – higher with the hold
+    const [sx, sy, sm] = stickOf(p), push = sm > 0.3 ? 1.0 + 2.5 * p.kp : 0;
+    vx = p.vx * 0.9 + fx * 0.15 + sx * push; vy = p.vy * 0.9 + fy * 0.15 + sy * push;
+    lift = 2.2 + 2.2 * p.kp;
+  } else if (p.kk === KICK.SELF) {
     // a touch into space (see beginControl), further and higher with the hold
     const push = 1.5 + 4 * p.kp;
     vx = p.vx * 0.5 + p.kx * push; vy = p.vy * 0.5 + p.ky * push;
@@ -1725,8 +1760,13 @@ function cushion(w, p, s) {
 // hooked round with the side of the foot, softer – up to nearly square (a
 // ball into his own goal turned round the post)
 const SLIDE_TURN = 1.45, SLIDE_HOOK = 1.0;
+// a header: how fast he turns in the air towards where it's going (rad/s),
+// and how far off the way he faces his neck can still send it (rad) –
+// softer and less true the further it's turned
+const HEAD_SPIN = 6, HEAD_TURN = 1.2;
 function launch(w, p, tech) {
   const b = w.ball, s = stOf(p), pit = pitchOf(w);
+  if (tech === ST.SLIDE && p.kh === KH.HIGH) p.kh = KH.MID; // (off a slide it's along the grass or mid-height, never high)
   const kind = p.kk, pw = p.kp;
   const fromHands = b.held === 1;
   if (fromHands) {
@@ -1760,6 +1800,10 @@ function launch(w, p, tech) {
   const pressure = near < 1.6 ? 0.025 : 0;
   // body orientation vs kick direction
   const misalign = Math.abs(angDiff(p.face, Math.atan2(uy, ux)));
+  if (tech === ST.HEADER && misalign > HEAD_TURN) {
+    const a = p.face + Math.sign(angDiff(p.face, Math.atan2(uy, ux))) * HEAD_TURN;
+    ux = Math.cos(a); uy = Math.sin(a);
+  }
   if (tech === ST.SLIDE && misalign > SLIDE_TURN) {
     // off a slide the foot only turns it so far from the way he's going
     const a = p.face + Math.sign(angDiff(p.face, Math.atan2(uy, ux))) * SLIDE_TURN;
@@ -1864,6 +1908,7 @@ function launch(w, p, tech) {
     ux = nux; uy = nuy;
   }
   if (tech === ST.SLIDE) err += 0.03 + 0.03 * Math.min(misalign, SLIDE_TURN); // (a stab at it, going down)
+  if (tech === ST.HEADER) err += 0.04 * Math.min(misalign, HEAD_TURN) / HEAD_TURN; // (glanced, the neck turned)
   if (kind === KICK.SHOT || kind === KICK.FINESSE) err *= SHOT_ERR; // (the same for everyone: the AI's skill is how it presses the keys)
   if (err > 0) {
     const a = gauss(w) * err;
@@ -1880,6 +1925,7 @@ function launch(w, p, tech) {
     if (fwd > 0.05 && reach > room) vh *= Math.max(0, room) / reach;
   }
   if (tech === ST.SLIDE && misalign > SLIDE_HOOK) { const k = 1 - 0.3 * Math.min(1, (misalign - SLIDE_HOOK) / (SLIDE_TURN - SLIDE_HOOK)); vh *= k; vz *= k; }
+  if (tech === ST.HEADER && misalign > 0.35) { const k = 1 - 0.35 * Math.min(1, (misalign - 0.35) / (HEAD_TURN - 0.35)); vh *= k; vz *= k; }
   // overhead and headers inherit a bit of the player's own momentum
   b.vx = ux * vh + (aerial ? p.vx * 0.15 : 0);
   b.vy = uy * vh + (aerial ? p.vy * 0.15 : 0);
@@ -1941,10 +1987,16 @@ function handleButtons(w, p) {
   if ((p.qa & KICK_MASK) === KT.CTRL && p.qt === 255) p.qt = 24;
   const pressed = code && code !== (p.pb & KICK_MASK) ? code : 0;
   if (p.tapT < 255) p.tapT++;
+  // (a lift waits for the ball to be at his foot – out ahead in his dribble,
+  // until the next touch brings it back)
+  const lift = (k) => (k & KICK_MASK) === KT.SELF && ((k >> 3) & 3) === KH.HIGH;
+  const atFoot = () => Math.hypot(b.x - p.x, b.y - p.y) < 0.6;
   const fire = (k, power) => {
+    if (lift(k) && mine && !b.held && !atFoot()) { p.qa = k; p.qp = power; p.qt = 40; return; }
     if ((k & KICK_MASK) === KT.SELF && !b.held && m.spTaker !== p.id) beginLift(w, p, power, (k >> 3) & 3);
     else beginOwnKick(w, p, k, power, false);
   };
+  if (mine && free && !b.held && lift(p.qa) && atFoot()) { beginLift(w, p, p.qp, KH.HIGH); return; }
 
   // calling for the ball: CALL, or a team-mate key while a team-mate has it
   if (teamHas && (pressed === KT.MATE || pressed === KT.RUN || ((btn & BTN.CALL) && !(p.pb & BTN.CALL)))) requestPass(w, p);
@@ -1961,8 +2013,10 @@ function handleButtons(w, p) {
       p.chgBtn = packed;
       if (p.qa) p.qa = packed;
       if (p.tapH < 255) p.tapH++;
-      // (a shot winds up half as fast again)
-      p.chg = Math.min(CHG_MAX, p.chg + (p.tap >= 2 ? 2 : 1) + (code === KT.GOAL && p.tapH & 1 ? 1 : 0));
+      // (a shot winds up half as fast again; a knock into his own run four
+      // times as fast – a tap knocks it on at once, a hold sends it on further)
+      const knock = code === KT.SELF && ((packed >> 3) & 3) === KH.GROUND;
+      p.chg = Math.min(CHG_MAX, p.chg + (p.tap >= 2 ? 2 : 1) + (code === KT.GOAL && p.tapH & 1 ? 1 : 0) + (knock ? 3 : 0));
       if (p.chg >= CHG_MAX && mine && free && (code === KT.GOAL || code === KT.SELF || p.tap >= 2)) fire(p.chgBtn, 1);
     } else {
       p.tapT = 0; p.tapK = p.chgBtn & KICK_MASK;
@@ -2457,6 +2511,9 @@ function stateUpdate(w, p, s) {
         p.vx *= f; p.vy *= f;
       }
       if (p.st === ST.VOLLEY) { p.vx *= 0.94; p.vy *= 0.94; }
+      // a header: he turns in the air towards where it's going (it can't go
+      // out of the back of his head – see launch)
+      if (p.st === ST.HEADER && !p.hit && p.stT <= p.stA + 4) turnToward(p, Math.atan2(p.ky - b.y, p.kx - b.x), HEAD_SPIN * DT);
       if (!p.hit && p.stT >= p.stA - 1 && p.stT <= p.stA + 4 && b.owner < 0 && !struckByOther(b, p)) {
         if (near3(p, p.st, b) < T_TOL[p.st] && winsAerialDuel(w, p, s)) launch(w, p, p.st);
       }
@@ -2515,7 +2572,7 @@ function winsAerialDuel(w, p, s) {
   const b = w.ball;
   for (const q of w.players) {
     if (q.team === p.team || q.hit || !AERIAL.has(q.st) || q.stT < q.stA - 2 || q.stT > q.stA + 4) continue;
-    if (near3(q, q.st, b) > T_TOL[q.st] * 1.25) continue;
+    if (near3(q, q.st, b) > T_TOL[q.st] * 1.4) continue; // (both up for it – turning in the air too)
     const sq = stOf(q);
     const chance = clamp(0.5 + (s.reach - sq.reach) * 2 + (s.strength - sq.strength) * 0.6, 0.15, 0.85);
     if (rnd(w) < chance) { q.hit = 2; w.events.push({ k: 'duel', x: b.x, y: b.y }); return true; }
@@ -3292,6 +3349,9 @@ function possession(w) {
     const settling = p.st === ST.CONTROL && p.hit === 1; // brought it down: collects it at his feet
     if (!canControl(p) && !(settling && b.z < 0.55)) continue;
     if (p.role === ROLE.GK && keeperHands(w, p) && inOwnBox(w, p.team, b.x, b.y, 0.3) && inOwnBox(w, p.team, p.x, p.y, 0.6)) continue;
+    // (his own flick or keepy-up in the air isn't snatched off its flight:
+    // it comes down to him – see tryControl)
+    if (b.last === p.id && b.kt < 60 && b.z >= 0.45 && !settling) continue;
     const h = Math.hypot(b.x - p.x, b.y - p.y);
     const s = stOf(p);
     let reach, z;
