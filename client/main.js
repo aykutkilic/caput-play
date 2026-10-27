@@ -386,13 +386,15 @@ function renderPanel() {
   $('leaveBtn').title = state.host ? 'Sends everyone else back to their own warm-up – you play on' : '';
   for (const col of document.querySelectorAll('.teamcol')) {
     const team = Number(col.dataset.team);
+    // the keeper first (a person or an AI), then the AI players in one row,
+    // then the people
+    const people = r.members.filter((x) => x.team === team), ais = r.ai.filter((x) => x.team === team), aiOut = ais.filter((a) => a.role !== ROLE.GK);
+    const person = (m) => `<li class="${m.id === state.clientId ? 'me' : ''}">${esc(m.name)}${m.role === ROLE.GK ? ' <span class="tagx gk">GK</span>' : ''}${m.id === r.hostId ? ' <span class="host">★</span>' : ''}${m.id === state.clientId ? ' <span class="muted">(you)</span>' : ''}</li>`;
     const rows = [];
-    for (const m of r.members.filter((x) => x.team === team)) {
-      rows.push(`<li class="${m.id === state.clientId ? 'me' : ''}">${esc(m.name)}${m.role === ROLE.GK ? ' <span class="tagx gk">GK</span>' : ''}${m.id === r.hostId ? ' <span class="host">★</span>' : ''}${m.id === state.clientId ? ' <span class="muted">(you)</span>' : ''}</li>`);
-    }
-    for (const a of r.ai.filter((x) => x.team === team)) {
-      rows.push(`<li><span class="muted">${esc(a.name)}</span> <span class="tagx${a.role === ROLE.GK ? ' gk' : ''}">${a.role === ROLE.GK ? 'GK' : 'AI'}</span><button class="x" data-rm="${a.playerId}" title="Remove">×</button></li>`);
-    }
+    for (const m of people) if (m.role === ROLE.GK) rows.push(person(m));
+    for (const a of ais) if (a.role === ROLE.GK) rows.push(`<li class="ai"><span class="muted">${esc(a.name)}</span> <span class="tagx gk">GK</span><button class="x" data-rm="${a.playerId}" title="Remove">×</button></li>`);
+    if (aiOut.length) rows.push(`<li class="ai"><span class="muted">AI player${aiOut.length > 1 ? ` ×${aiOut.length}` : ''}</span> <span class="tagx">AI</span><button class="x" data-rm="${aiOut[aiOut.length - 1].playerId}" title="Remove one">×</button></li>`);
+    for (const m of people) if (m.role !== ROLE.GK) rows.push(person(m));
     col.querySelector('ul').innerHTML = rows.join('') || '<li class="muted">empty</li>';
     // which you've joined as (if this team): play or keep goal
     const meHere = r.members.find((m) => m.id === state.clientId && m.team === team);
@@ -783,7 +785,7 @@ function showControlMode(w) {
 
 const PAD = {
   up: 'L-stick / D-pad', down: 'L-stick / D-pad', left: 'L-stick / D-pad', right: 'L-stick / D-pad', sprint: 'R1 / RB', r2: 'R2 / RT', jog: 'part tilt',
-  through: '△ / Y (+ L1: high)', lob: '✕ / A + L2', pass: '✕ / A', shoot: '□ / X', knock: '○ / B', control: '–', lift: '○ / B + L1',
+  through: '△ / Y (+ L1: high)', lob: '✕ / A + L2', pass: '✕ / A', shoot: '□ / X', knock: '○ / B', control: 'L3', lift: '○ / B + L1', trick: 'R3',
 };
 let rebinding = null;
 function renderControls() {
@@ -820,6 +822,12 @@ game.onEvent = (e) => {
     case 'head': sfx.head(vol); break;
     case 'control': sfx.cushion(vol); break;
     case 'nutmeg': sfx.oooh(); break;
+    case 'trick': {
+      // how well it was timed, over his head (a perfect one gets an oooh)
+      state.bubbles.set(e.id, { text: `${e.name} · ${e.q >= 0.7 ? 'perfect' : e.q > 0.2 ? 'good' : 'mistimed'}`, until: performance.now() + 1300 });
+      if (e.q >= 0.7 && e.id === state.myId) sfx.oooh();
+      break;
+    }
     case 'slide': sfx.slide(vol); break;
     case 'dive': sfx.dive(vol); break;
     case 'shot':

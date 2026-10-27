@@ -81,7 +81,7 @@ export class Room {
     this.members = new Map(); // clientId -> member
     this.ai = new Map();      // playerId -> ai spec
     this.hostId = null;
-    this.settings = { matchLen: 240, pitch: 'auto', goals: GOAL_SIZE_DEFAULT, ai: 1, aiSex: 0, kits: [...KITS_DEFAULT], offside: 0, movement: 0, weather: 0 };
+    this.settings = { matchLen: 240, pitch: 'auto', goals: GOAL_SIZE_DEFAULT, ai: 1, aiSex: 0, kits: [...KITS_DEFAULT], offside: 0, movement: 0, weather: 1 }; // (a night match)
     this.world = createWorld(1, (Math.random() * 2 ** 31) | 0);
     this.world.auth = true; // inputs that don't arrive are missing here (see BOT_AFTER)
     this.world.m.matchLen = this.settings.matchLen;

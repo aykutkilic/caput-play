@@ -18,7 +18,7 @@ export const MAX_PLAYERS = 16;
 //             top corner)
 // On defence the same keys mean: MATE held = press, GOAL = slide tackle (keeper:
 // dive), RUN = send the keeper out.
-export const KT = { NONE: 0, MATE: 1, RUN: 2, GOAL: 3, SELF: 4, CTRL: 5 }; // (CTRL: no kick – a ball coming is taken dead, see tryControl)
+export const KT = { NONE: 0, MATE: 1, RUN: 2, GOAL: 3, SELF: 4, CTRL: 5, TRICK: 6 }; // (CTRL: no kick – a ball coming is taken dead, see tryControl; TRICK: see beginTrick)
 export const KH = { GROUND: 0, MID: 1, HIGH: 2 };
 export const KICK_MASK = 7;
 export const BTN = {
@@ -52,7 +52,7 @@ export const PART = { FOOT: 0, THIGH: 1, CHEST: 2, HEAD: 3 };
 export const MEET = { NONE: 0, AT: 1, WITH: 2 };
 
 // Technique moves (ST.SKILL, kind stored in the player's stA)
-export const SKILL = { LIFT: 1, KNOCK: 2, FEINT_L: 3, FEINT_R: 4, DRAGBACK: 5 };
+export const SKILL = { LIFT: 1, KNOCK: 2, FEINT_L: 3, FEINT_R: 4, DRAGBACK: 5, ELASTICO: 6, RAINBOW: 7, AROUND: 8, NECK: 9 };
 
 export const ROLE = { OUT: 0, GK: 1 };
 
@@ -94,7 +94,7 @@ export function autoPitch(maxTeamSize) {
 export const TEAM_NAMES = ['TEAM A', 'TEAM B'];
 // kits the host can give each team (room setting; never the same for both)
 export const KIT_NAMES = ['Red', 'Blue', 'Dark blue', 'Yellow', 'White', 'Black'];
-export const KITS_DEFAULT = [0, 1];
+export const KITS_DEFAULT = [4, 5]; // (White against Black)
 // the weather the host can pick (room setting; only how it looks – the ball plays the same)
 export const WEATHER_NAMES = ['Day', 'Night', 'Rain', 'Snow'];
 

@@ -9,6 +9,8 @@
 //   D shoot – or head / volley it, when it's in the air
 //   W knock it into your own run (self, along the grass)   F lift it (self, high)
 //   E control it – a ball coming taken dead on the chest, thigh or foot
+//   R a trick – elastico / rainbow flick at your feet, around the world / neck
+//     stall while juggling (timed – see beginTrick in the sim)
 //   Arrows move, Shift = R1 sprint / knock-on dribble, Space = R2 precision dribble / finesse.
 // Pad (standard mapping): ✕/A team-mate, △/Y run path, □/X goal, ○/B self;
 //   hold L1 for high, L2 for mid (neither = ground); R1 sprint, R2 precision.
@@ -21,13 +23,14 @@ const KICK_BITS = KICK_MASK | (3 << 3); // target + height
 // kick actions: binding name -> [target, height] (through: high with Shift held)
 export const KICK_KEYS = {
   through: [KT.RUN, KH.GROUND], lob: [KT.MATE, KH.MID], pass: [KT.MATE, KH.GROUND], shoot: [KT.GOAL, KH.MID],
-  knock: [KT.SELF, KH.GROUND], control: [KT.CTRL, KH.GROUND], lift: [KT.SELF, KH.HIGH],
+  knock: [KT.SELF, KH.GROUND], control: [KT.CTRL, KH.GROUND], lift: [KT.SELF, KH.HIGH], trick: [KT.TRICK, KH.GROUND],
 };
 // what they do, for the controls dialog
 export const KICK_LABELS = {
   through: 'Through pass – into his run (with Shift: a high through pass)', lob: 'Lob pass – lofted to a team-mate',
   pass: 'Ground pass – to a team-mate\'s feet', shoot: 'Shoot – or head / volley it in the air',
-  knock: 'Knock it into your own run (self pass)', control: 'Control it – chest, thigh or foot, taken dead', lift: 'Lift the ball – flick it up',
+  knock: 'Knock it into your own run (self pass)', control: 'Control it – chest, thigh, foot or head, taken dead', lift: 'Lift the ball – flick it up; again as it drops: keepy-ups',
+  trick: 'Trick – at your feet: elastico (stick to a side), rainbow flick (stick forward); juggling: around the world (dropping to your foot), neck stall (dropping to your head) – timed',
 };
 // the binding that presses a target + height (the AI's keys, as yours are named)
 export function kickBinding(target, height) {
@@ -35,13 +38,14 @@ export function kickBinding(target, height) {
   if (target === KT.MATE) return height === KH.GROUND ? 'pass' : 'lob';
   if (target === KT.GOAL) return 'shoot';
   if (target === KT.CTRL) return 'control';
+  if (target === KT.TRICK) return 'trick';
   return height === KH.HIGH ? 'lift' : 'knock';
 }
 
 export const DEFAULT_KEYS = {
   up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight',
   sprint: 'ShiftLeft', r2: 'Space', jog: 'KeyG',
-  through: 'KeyQ', lob: 'KeyA', pass: 'KeyS', shoot: 'KeyD', knock: 'KeyW', control: 'KeyE', lift: 'KeyF',
+  through: 'KeyQ', lob: 'KeyA', pass: 'KeyS', shoot: 'KeyD', knock: 'KeyW', control: 'KeyE', lift: 'KeyF', trick: 'KeyR',
 };
 
 // v5 replaced the target x height grid with a key per action: of an older
@@ -74,7 +78,8 @@ function loadKeys() {
   return keys;
 }
 
-const PAD_TARGETS = [[0, KT.MATE], [1, KT.SELF], [2, KT.GOAL], [3, KT.RUN]];
+// (L3 / R3, the stick clicks: control, a trick)
+const PAD_TARGETS = [[0, KT.MATE], [1, KT.SELF], [2, KT.GOAL], [3, KT.RUN], [10, KT.CTRL], [11, KT.TRICK]];
 
 export class Input {
   constructor() {

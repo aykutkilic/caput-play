@@ -904,6 +904,31 @@ export function poseFor(p, ctx) {
         P.lab = P.rab = 0.65 * env;
       } else if (p.stA === SKILL.DRAGBACK) {
         P.rh = 0.65 * env; P.rk = 0.12; P.lean = -0.15 * env; P.lk = 0.4 * env; P.lab = 0.55 * env; P.rab = 0.35 * env;
+      } else if (p.stA === SKILL.ELASTICO) {
+        // the outside of the foot out one way, the inside snapping it back
+        // across – the right foot cutting left, the left cutting right
+        const side = p.stB >= 0 ? 1 : -1, u1 = ease(clamp(k / 6, 0, 1)), u2 = ease(clamp((k - 6) / 6, 0, 1)), out = u1 * (1 - u2);
+        const end = clamp((p.stDur - k) / 5, 0, 1), ab = (0.75 * out - 0.45 * u2) * end, th = (0.45 + 0.15 * u2) * end;
+        if (side > 0) { P.ra = ab; P.rh = th; P.rk = 0.45 * end; P.rfy = (-0.6 * out + 0.7 * u2) * end; P.lk = 0.4; }
+        else { P.la = ab; P.lh = th; P.lk = 0.45 * end; P.lfy = (-0.6 * out + 0.7 * u2) * end; P.rk = 0.4; }
+        P.roll = (-0.12 * out + 0.28 * u2) * side * end; P.lean = 0.15; P.lab = P.rab = 0.55 * end;
+      } else if (p.stA === SKILL.RAINBOW) {
+        // the right heel behind the ball draws it up the back of the left leg,
+        // then kicks up and flicks it over his head
+        const up = ease(clamp(k / 8, 0, 1)), flick = clamp((k - 9) / 4, 0, 1) * clamp((18 - k) / 5, 0, 1);
+        P.lh = 0.12; P.lk = 0.3; P.rh = -0.45 * up * (1 - flick) - 0.15 * flick; P.rk = 1.25 * up + 0.9 * flick;
+        P.lean = 0.12 + 0.12 * flick; P.lab = P.rab = 0.5 * env; P.head = -0.25 * flick;
+      } else if (p.stA === SKILL.AROUND) {
+        // the foot goes round the ball as it drops, then back under it
+        const c = p.stB, th = clamp((k - (c - 14)) / 14, 0, 1) * Math.PI * 2, round = k < c && k > c - 14 ? 1 : 0, touch = clamp(1 - Math.abs(k - c) / 4, 0, 1);
+        P.rh = 0.6 + 0.35 * round * Math.sin(th) + 0.2 * touch; P.ra = 0.55 * round * Math.cos(th); P.rk = 1.0 * round + 0.35 * touch;
+        P.rfy = 0.5 * round * Math.sin(th); P.lk = 0.35; P.lab = P.rab = 0.7; P.roll = -0.12 * round * Math.cos(th); P.lean = -0.05;
+      } else if (p.stA === SKILL.NECK) {
+        // bent over under it, head up and arms out: it settles on the back of
+        // his neck and stays there
+        const bend = p.hit === 1 ? 1 : ease(clamp(k / Math.max(2, p.stB), 0, 1)) * clamp((p.stDur - k) / 8, 0, 1);
+        P.lean = 1.15 * bend; P.drop = 0.05 * H * bend; P.lk = P.rk = 0.35 * bend; P.lh = P.rh = 0.2 * bend;
+        P.head = -0.55 * bend; P.lab = P.rab = 1.0 * bend; P.lsh = P.rsh = 0.2; P.lel = P.rel = 0.4;
       }
       break;
     }

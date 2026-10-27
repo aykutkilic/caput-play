@@ -151,6 +151,7 @@ button.icon { width: 34px; padding: 6px 0; font-size: 18px; line-height: 1; font
 .teamcol ul { list-style: none; margin: 0; padding: 0; min-height: 40px; display: flex; flex-direction: column; gap: 3px; }
 .teamcol li { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 3px 4px; border-radius: 6px; }
 .teamcol li.me { background: rgba(182,243,106,.1); }
+.teamcol li.ai { opacity: .72; }
 .teamcol li .tagx { font-size: 10px; padding: 1px 5px; border-radius: 4px; background: rgba(255,255,255,.12); color: var(--muted); }
 .teamcol li .tagx.gk { background: rgba(242,194,48,.2); color: #f2c230; }
 .teamcol li .x { margin-left: auto; background: none; border: none; color: var(--muted); padding: 0 4px; font-size: 14px; }

@@ -1012,6 +1012,77 @@ export function beginSkill(w, p, kind) {
   }
 }
 
+// The trick key (R): the trick the moment calls for – done well or not by
+// when it's pressed (p.kp: 1 just right, 0 missed):
+//  * the ball at his feet – best right at his foot, a touch away it comes off
+//    loose: an ELASTICO with the stick to a side (the outside of the foot
+//    takes it out the other way, the inside snaps it back across to the
+//    stick side – a man close in front bites), otherwise a RAINBOW flick
+//    (rolled up the back of the leg and flicked over his head, landing ahead);
+//  * his own ball in the air, dropping – AROUND THE WORLD towards his foot
+//    (best at ~0.7 m: the foot goes round it, then keeps it up) or a NECK
+//    STALL towards his head (best a metre above the back of his neck: caught
+//    there; F or R pops it back over his head) – too early or too late, missed.
+const TRICK_NAMES = { [SKILL.ELASTICO]: 'Elastico', [SKILL.RAINBOW]: 'Rainbow', [SKILL.AROUND]: 'Around the world', [SKILL.NECK]: 'Neck stall' };
+export function beginTrick(w, p) {
+  const b = w.ball, s = stOf(p);
+  if (!isFree(p) || p.z > 0 || w.m.spTaker === p.id) return;
+  const start = (kind, dur, q, side = 0) => {
+    p.st = ST.SKILL; p.stT = 0; p.stA = kind; p.stB = side; p.stDur = dur; p.hit = 0; p.kp = q;
+    p.chgBtn = 0; p.chg = 0; p.qa = 0;
+    w.events.push({ k: 'trick', name: TRICK_NAMES[kind], q, id: p.id, x: p.x, y: p.y });
+  };
+  if (b.owner === p.id && !b.held) {
+    const [sx, sy, sm] = stickOf(p), fx = Math.cos(p.face), fy = Math.sin(p.face);
+    const lat = sm > 0.3 ? -fy * sx + fx * sy : 0; // (+: to his left)
+    const q = clamp(1 - (Math.hypot(b.x - p.x, b.y - p.y) - 0.5) / 0.35, 0, 1);
+    if (Math.abs(lat) > 0.6) start(SKILL.ELASTICO, 16, q, Math.sign(lat));
+    else { start(SKILL.RAINBOW, 22, q); p.kv = Math.hypot(p.vx, p.vy); } // (kv: his pace going into it – he jogs on through it)
+    return;
+  }
+  if (b.owner < 0 && b.last === p.id && b.kt < 90 && b.vz < 0 && Math.hypot(b.x - p.x, b.y - p.y) < 1.0) {
+    const at = (z) => (b.vz + Math.sqrt(b.vz * b.vz + 2 * G * Math.max(0, b.z - z))) / G; // (when it's down to z)
+    const neckZ = s.H * 0.66;
+    if (b.z < neckZ + 0.3) {
+      const q = clamp(1 - Math.abs(b.z - 0.7) / 0.25, 0, 1), tc = Math.max(2, Math.round(at(0.25) / DT));
+      start(SKILL.AROUND, tc + 10, q); p.stB = tc;
+    } else {
+      const q = clamp(1 - Math.abs(b.z - neckZ - 1.0) / 0.45, 0, 1), tc = Math.max(2, Math.round(at(neckZ) / DT));
+      start(SKILL.NECK, tc + 150, q); p.stB = tc;
+    }
+    p.vx *= 0.5; p.vy *= 0.5;
+  }
+}
+
+// Off the back of his neck, F or R: popped back over his head to come down in
+// front of him (keepy-ups on); left there, after a while he straightens and
+// it rolls off down his back.
+function neckRelease(w, p, pop) {
+  const b = w.ball, fx = Math.cos(p.face), fy = Math.sin(p.face);
+  b.last = p.id; b.lastTeam = p.team; b.kt = 0; b.tgt = p.id; b.dl = 0; b.sh = -1;
+  if (pop) { b.vz = 4.2; b.vx = p.vx + fx * 0.9; b.vy = p.vy + fy * 0.9; w.events.push({ k: 'kick', x: b.x, y: b.y, z: b.z, v: 3, id: p.id }); }
+  else { b.vz = 0.6; b.vx = -fx * 1.4; b.vy = -fy * 1.4; }
+  p.hit = 0; p.st = ST.IDLE; p.stT = 0; p.kcd = 6;
+  invalidatePath(w);
+}
+
+// Where a trick has the ball at his feet: [ahead, to his left, up] (null: the
+// ordinary dribble)
+function trickBall(o) {
+  if (o.st !== ST.SKILL) return null;
+  const t = o.stT, e = (u) => { u = clamp(u, 0, 1); return u * u * (3 - 2 * u); };
+  if (o.stA === SKILL.ELASTICO) {
+    // out to the other side with the outside of the foot, snapped back across
+    const out = -o.stB * 0.3, back = o.stB * 0.38;
+    return [0.42 + 0.08 * e(t / 6), t < 6 ? out * e(t / 6) : out + (back - out) * e((t - 6) / 7), BALL_R];
+  }
+  if (o.stA === SKILL.RAINBOW && t < 10) {
+    // drawn back between his feet and rolled up the back of his leg
+    return [0.42 - 0.6 * e(t / 7), 0, BALL_R + 0.25 * e((t - 5) / 5)];
+  }
+  return null;
+}
+
 // Pass to self from the feet, on release of a SELF key: GROUND knocks it on
 // along the stick (or straight on), MID lifts it to chest height, HIGH flicks it
 // up to head height or over a challenge – further and higher with the hold.
@@ -1977,6 +2048,13 @@ function handleButtons(w, p) {
 
   const code = btn & KICK_MASK;                   // kick target held (0 = none)
   const packed = code | (((btn >> 3) & 3) << 3);  // ... with its height
+  // the trick key (see beginTrick); with the ball on his neck F or R pops it
+  if (p.st === ST.SKILL && p.stA === SKILL.NECK && p.hit === 1 && (code === KT.TRICK || code === KT.SELF) && code !== (p.pb & KICK_MASK)) { neckRelease(w, p, true); return; }
+  if (code === KT.TRICK) {
+    p.chgBtn = 0; p.chg = 0;
+    if (code !== (p.pb & KICK_MASK)) beginTrick(w, p);
+    return;
+  }
   // the control key: no kick – a ball coming is taken dead (see tryControl);
   // it stays wanted a moment after it's let go, as a kick key does
   if (code === KT.CTRL) {
@@ -2556,11 +2634,75 @@ function stateUpdate(w, p, s) {
         if (p.stT > 9) { p.vx *= 0.88; p.vy *= 0.88; }
       } else if (p.stA === SKILL.LIFT) {
         p.vx *= 0.97; p.vy *= 0.97;
-      }
+      } else if (p.stA >= SKILL.ELASTICO) trickStep(w, p);
       break;
     }
   }
 }
+
+// A trick under way, each tick (see beginTrick)
+function trickStep(w, p) {
+  const b = w.ball, s = stOf(p), t = p.stT, q = p.kp;
+  const fx = Math.cos(p.face), fy = Math.sin(p.face), lx = -fy, ly = fx;
+  const agil = clamp((s.turn - 7.8) / 6.5, 0, 1);
+  if (p.stA === SKILL.ELASTICO) {
+    if (t < 6) { const v = 0.8; p.vx = p.vx * 0.85 - lx * p.stB * v * 0.3; p.vy = p.vy * 0.85 - ly * p.stB * v * 0.3; }
+    if (t === 6) {
+      // the snap back across: done right he goes with it, wrong-footing a man
+      // close in front; a touch too far out and it's gone the other way
+      if (b.owner === p.id && q > 0.2) {
+        const lat = (3.4 + 1.6 * agil) * (0.6 + 0.4 * q), fwd = Math.max(0, p.vx * fx + p.vy * fy) * 0.6 + 1;
+        p.vx = fx * fwd + lx * p.stB * lat; p.vy = fy * fwd + ly * p.stB * lat;
+        for (const o of w.players) {
+          if (o.team === p.team) continue;
+          const dx = p.x - o.x, dy = p.y - o.y, d = Math.hypot(dx, dy);
+          if (d > 3 || (Math.cos(o.face) * dx + Math.sin(o.face) * dy) / (d || 1) < 0.2) continue;
+          o.tcd = Math.max(o.tcd, 26);
+          if (isFree(o) && rnd(w) < clamp(0.35 + (s.turn - stOf(o).turn) * 0.05 + agil * 0.15 + 0.2 * q, 0.1, 0.85)) { o.st = ST.STUMBLE; o.stT = 0; o.stDur = 18; }
+        }
+      } else if (b.owner === p.id) {
+        b.owner = -1; b.vx = p.vx - lx * p.stB * 2.2; b.vy = p.vy - ly * p.stB * 2.2; b.vz = 0; b.last = p.id; b.kt = 0; invalidatePath(w);
+      }
+    }
+    if (t > 10) { p.vx *= 0.94; p.vy *= 0.94; }
+  } else if (p.stA === SKILL.RAINBOW) {
+    p.vx *= 0.98; p.vy *= 0.98;
+    if (t === 10 && b.owner === p.id) {
+      // flicked up off his heel, over his head, to land a few metres on – off
+      // line and short if it was mistimed
+      const err = (1 - q) * gauss(w) * 0.5, c = Math.cos(err), sn = Math.sin(err);
+      const ux = fx * c - fy * sn, uy = fy * c + fx * sn, v = p.kv + 1.4 + 1.2 * q; // (on ahead of him as he runs on)
+      b.owner = -1; b.z = 0.4; b.vz = 4.6 + 1.4 * q;
+      b.vx = ux * v; b.vy = uy * v;
+      b.last = p.id; b.lastTeam = p.team; b.kt = 0; b.tgt = p.id; b.dl = 0; b.sh = -1; b.atk = -1;
+      touchedBy(w, p); invalidatePath(w);
+      w.events.push({ k: 'kick', x: b.x, y: b.y, z: b.z, v: 4, id: p.id });
+    }
+  } else if (p.stA === SKILL.AROUND) {
+    p.vx *= 0.85; p.vy *= 0.85;
+    if (t === p.stB && b.owner < 0 && q > 0 && b.last === p.id) {
+      // round it and back under it: kept up
+      const d = Math.hypot(b.x - p.x - fx * 0.35, b.y - p.y - fy * 0.35);
+      if (d < 0.75 && b.z < 0.7) {
+        b.vz = 3.4 + 0.6 * q; b.vx = p.vx * 0.9 + fx * 0.15; b.vy = p.vy * 0.9 + fy * 0.15;
+        b.last = p.id; b.kt = 0; b.tgt = p.id; invalidatePath(w);
+        w.events.push({ k: 'control', x: b.x, y: b.y, z: b.z, v: 3, id: p.id, part: PART.FOOT });
+      }
+    }
+  } else if (p.stA === SKILL.NECK) {
+    p.vx *= 0.8; p.vy *= 0.8;
+    const [nx, ny, nz] = neckSpot(p, s);
+    if (t === p.stB) {
+      // there as it comes down: on the back of his neck (a mistimed one he
+      // bends too soon or too late for, and it bounces off)
+      if (q > 0 && b.owner < 0 && Math.hypot(b.x - nx, b.y - ny, b.z - nz) < 0.55) p.hit = 1;
+      else { p.stDur = t + 12; if (b.owner < 0 && b.last === p.id) { b.vz = Math.abs(b.vz) * 0.35 + 0.5; b.vx -= fx * 1.2; b.vy -= fy * 1.2; invalidatePath(w); } }
+    }
+    if (p.hit === 1 && p.stT >= p.stDur - 1) neckRelease(w, p, false);
+  }
+}
+// Where the ball sits on the back of his neck, bent over (see the renderer)
+function neckSpot(p, s) { return [p.x + Math.cos(p.face) * 0.2 * s.H, p.y + Math.sin(p.face) * 0.2 * s.H, s.H * 0.66]; }
 
 // Someone else struck the ball earlier this tick: it's gone.
 function struckByOther(b, p) { return b.kt === 0 && b.last !== p.id; }
@@ -2804,15 +2946,25 @@ function updateBall(w) {
       if (o.dph > 1000) o.dph -= 1000;
       const ease = (1 - Math.cos(2 * Math.PI * (o.dph - Math.floor(o.dph)))) / 2;
       const amp = (prec ? 0.1 : sprint ? 0.85 : 0.35) * Math.min(1, sp / 4) / s.control;
-      const ahead = o.st === ST.KICK && o.kq === KQ.HEEL ? 0.12 : o.st === ST.KICK || o.st === ST.SKILL ? 0.42 : 0.42 + amp * ease;
+      const tr = trickBall(o);
+      const ahead = tr ? tr[0] : o.st === ST.KICK && o.kq === KQ.HEEL ? 0.12 : o.st === ST.KICK || o.st === ST.SKILL ? 0.42 : 0.42 + amp * ease;
       const fx = Math.cos(o.face), fy = Math.sin(o.face);
-      const tx = o.x + fx * ahead, ty = o.y + fy * ahead;
+      const tx = o.x + fx * ahead - fy * (tr ? tr[1] : 0), ty = o.y + fy * ahead + fx * (tr ? tr[1] : 0);
       const k = 1 - Math.exp(-DT * 16 * s.control * (prec ? 1.5 : 1));
       const cx = b.x + o.vx * DT, cy = b.y + o.vy * DT;
       const [nx, ny] = keepIn(w, o.team, cx + (tx - cx) * k, cy + (ty - cy) * k);
       b.vx = (nx - b.x) / DT; b.vy = (ny - b.y) / DT;
-      b.x = nx; b.y = ny; b.z = BALL_R; b.vz = 0; b.spin = 0; b.ts = 0; b.atT = 0;
+      b.x = nx; b.y = ny; b.z = tr ? tr[2] : BALL_R; b.vz = 0; b.spin = 0; b.ts = 0; b.atT = 0;
       if (Math.hypot(b.x - o.x, b.y - o.y) > 2) { b.owner = -1; b.dl = 0; }
+      return;
+    }
+  }
+  // a ball stalled on the back of someone's neck rides there (see beginTrick)
+  if (b.last >= 0) {
+    const q = pById(w, b.last);
+    if (q && q.st === ST.SKILL && q.stA === SKILL.NECK && q.hit === 1) {
+      const [nx, ny, nz] = neckSpot(q, stOf(q));
+      b.vx = (nx - b.x) / DT; b.vy = (ny - b.y) / DT; b.vz = 0; b.x = nx; b.y = ny; b.z = nz; b.kt = 1; b.spin = 0; b.ts = 0;
       return;
     }
   }
