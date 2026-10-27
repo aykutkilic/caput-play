@@ -12,7 +12,7 @@ import { DevView } from './devview.js';
 import { AimLine } from './aimline.js';
 import { AIKeys } from './aikeys.js';
 import { encodeStick, pById, wantsBlock, inOwnBox, pitchOf, keeperHands, shootingPractice, teamDir, goalWeight, CELEB_TICKS } from '../shared/sim.js';
-import { PHASE, SP, SP_NAME, ROLE, TEAM_NAMES, TICK_RATE, QUICK_CHAT, KICK_MASK, GOAL_SIZE_DEFAULT, KIT_NAMES, KITS_DEFAULT } from '../shared/constants.js';
+import { PHASE, SP, SP_NAME, ROLE, TEAM_NAMES, TICK_RATE, QUICK_CHAT, KICK_MASK, GOAL_SIZE_DEFAULT, KIT_NAMES, KITS_DEFAULT, GAME_SPEEDS } from '../shared/constants.js';
 import { ratings, stats } from '../shared/physique.js';
 
 const $ = (id) => document.getElementById(id);
@@ -410,15 +410,17 @@ function renderPanel() {
   $('offsideSel').value = String(r.settings.offside ?? 0);
   $('moveSel').value = String(r.settings.movement ?? 0);
   $('weatherSel').value = String(r.settings.weather ?? 0);
+  $('speedSel').value = String(r.settings.speed ?? 100);
+  game.speed = (r.settings.speed || 100) / 100; // (the room's pace: our clock runs with it)
   const kits = r.settings.kits || KITS_DEFAULT;
   $('kitA').value = String(kits[0]); $('kitB').value = String(kits[1]);
-  $('matchLen').disabled = $('pitchSel').disabled = $('aiSel').disabled = $('aiSexSel').disabled = $('offsideSel').disabled = $('moveSel').disabled = $('weatherSel').disabled = $('kitA').disabled = $('kitB').disabled = !isHost;
+  $('matchLen').disabled = $('pitchSel').disabled = $('aiSel').disabled = $('aiSexSel').disabled = $('offsideSel').disabled = $('moveSel').disabled = $('weatherSel').disabled = $('speedSel').disabled = $('kitA').disabled = $('kitB').disabled = !isHost;
   // the goals can't be resized during a match
   $('goalSel').disabled = !isHost || !!(game.world && game.world.m.live);
   $('startBtn').disabled = !isHost;
-  $('startBtn').textContent = r.live ? 'End match' : 'Start match';
+  $('startBtn').textContent = playing(r) ? 'End match' : r.ended ? 'Restart match' : 'Start match';
   // (the no-keeper warning goes once there's a match, or keepers for both)
-  if (!$('gkWarn').hidden && (r.live || !isHost || !noKeeper(r).length)) $('gkWarn').hidden = true;
+  if (!$('gkWarn').hidden && (playing(r) || !isHost || !noKeeper(r).length)) $('gkWarn').hidden = true;
   const host = r.members.find((m) => m.id === r.hostId);
   $('hostNote').textContent = isHost ? '(you are host)' : host ? `(host: ${host.name})` : '';
 }
@@ -438,9 +440,11 @@ $('matchLen').onchange = () => send({
   t: 'settings', matchLen: Number($('matchLen').value), pitch: $('pitchSel').value,
   goals: Number($('goalSel').value), ai: Number($('aiSel').value), aiSex: Number($('aiSexSel').value),
   kits: [Number($('kitA').value), Number($('kitB').value)], offside: Number($('offsideSel').value), movement: Number($('moveSel').value),
-  weather: Number($('weatherSel').value),
+  weather: Number($('weatherSel').value), speed: Number($('speedSel').value),
 });
-$('pitchSel').onchange = $('goalSel').onchange = $('aiSel').onchange = $('aiSexSel').onchange = $('offsideSel').onchange = $('moveSel').onchange = $('weatherSel').onchange = $('matchLen').onchange;
+$('pitchSel').onchange = $('goalSel').onchange = $('aiSel').onchange = $('aiSexSel').onchange = $('offsideSel').onchange = $('moveSel').onchange = $('weatherSel').onchange = $('speedSel').onchange = $('matchLen').onchange;
+// game speed: the whole match in a uniform slow motion (see GAME_SPEEDS)
+$('speedSel').innerHTML = GAME_SPEEDS.map((v) => `<option value="${v}">${v === 100 ? 'Normal (100%)' : `${v}%`}</option>`).join('');
 // team kits: picking the other team's colour swaps them over
 for (const id of ['kitA', 'kitB']) $(id).innerHTML = KIT_NAMES.map((n, i) => `<option value="${i}">${n}</option>`).join('');
 const kitChange = (mine, other) => () => {
@@ -452,12 +456,14 @@ $('kitA').onchange = kitChange('kitA', 'kitB');
 $('kitB').onchange = kitChange('kitB', 'kitA');
 // Before a match: a team with no keeper (a person or an AI) is warned about –
 // add an AI keeper and start, start anyway, or not yet
+// (a match under way – not one that's had its final whistle: that's restarted)
+const playing = (r) => !!r.live && !r.ended;
 const noKeeper = (r) => [0, 1].filter((t) => !r.members.some((m) => m.team === t && m.role === ROLE.GK) && !r.ai.some((a) => a.team === t && a.role === ROLE.GK));
 let gkMiss = [];
 $('startBtn').onclick = () => {
   const r = state.room;
   $('startBtn').blur();
-  if (r && !r.live) {
+  if (r && !playing(r)) {
     gkMiss = noKeeper(r);
     if (gkMiss.length) {
       $('gkWarnText').textContent = gkMiss.length === 2 ? 'Neither team has a keeper.' : `${TEAM_NAMES[gkMiss[0]]} has no keeper.`;
@@ -467,7 +473,7 @@ $('startBtn').onclick = () => {
       return;
     }
   }
-  send({ t: r && r.live ? 'stop' : 'start' });
+  send({ t: r && playing(r) ? 'stop' : 'start' });
 };
 $('gkAdd').onclick = () => { for (const t of gkMiss) send({ t: 'addAI', team: t, role: ROLE.GK }); send({ t: 'start' }); $('gkWarn').hidden = true; };
 $('gkAnyway').onclick = () => { send({ t: 'start' }); $('gkWarn').hidden = true; };
@@ -1004,7 +1010,7 @@ function loop(now) {
           $('banner').classList.remove('show');
         }
       }
-      const rp = replay.active ? replay.next(dt) : null;
+      const rp = replay.active ? replay.next(dt * game.speed) : null; // (at the game's pace)
       $('replayBadge').hidden = !rp;
       document.body.classList.toggle('replaying', !!rp);
       // (the slow-motion finish from behind the goal)

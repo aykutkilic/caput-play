@@ -96,6 +96,10 @@ export const TEAM_NAMES = ['TEAM A', 'TEAM B'];
 // kits the host can give each team (room setting; never the same for both)
 export const KIT_NAMES = ['Red', 'Blue', 'Dark blue', 'Yellow', 'White', 'Black'];
 export const KITS_DEFAULT = [4, 5]; // (White against Black)
+// Game speed (room setting, %): how fast the match runs – the room plays
+// TICK_RATE x speed ticks a real second, so everything (players, the ball,
+// the clock) goes in a uniform slow motion; the sim itself is the same
+export const GAME_SPEEDS = [100, 90, 80, 70, 60];
 // the weather the host can pick (room setting; only how it looks – the ball plays the same)
 export const WEATHER_NAMES = ['Day', 'Night', 'Rain', 'Snow'];
 

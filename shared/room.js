@@ -25,7 +25,7 @@
 import {
   createWorld, addPlayer, removePlayer, updatePlayerSpec, step, startMatch, stopMatch, startKickoff, pById, goalTicks,
 } from './sim.js';
-import { SNAP_EVERY, ROLE, PHASE, autoPitch, MAX_PLAYERS, TEAM_NAMES, QUICK_CHAT, GOAL_SIZE_DEFAULT, KIT_NAMES, KITS_DEFAULT } from './constants.js';
+import { SNAP_EVERY, ROLE, PHASE, autoPitch, MAX_PLAYERS, TEAM_NAMES, QUICK_CHAT, GOAL_SIZE_DEFAULT, KIT_NAMES, KITS_DEFAULT, GAME_SPEEDS } from './constants.js';
 import {
   worldBytes, encodeFuture, fullSnapshot, deltaSnapshot, patchSnapshotHeader, readWorld, decodeInputs,
 } from './protocol.js';
@@ -81,7 +81,8 @@ export class Room {
     this.members = new Map(); // clientId -> member
     this.ai = new Map();      // playerId -> ai spec
     this.hostId = null;
-    this.settings = { matchLen: 240, pitch: 'auto', goals: GOAL_SIZE_DEFAULT, ai: 1, aiSex: 0, kits: [...KITS_DEFAULT], offside: 0, movement: 0, weather: 1 }; // (a night match)
+    this.ended = false; // a match played to its end (or stopped): the next is a restart
+    this.settings = { matchLen: 240, pitch: 'auto', goals: GOAL_SIZE_DEFAULT, ai: 1, aiSex: 0, kits: [...KITS_DEFAULT], offside: 0, movement: 0, weather: 1, speed: 100 }; // (a night match)
     this.world = createWorld(1, (Math.random() * 2 ** 31) | 0);
     this.world.auth = true; // inputs that don't arrive are missing here (see BOT_AFTER)
     this.world.m.matchLen = this.settings.matchLen;
@@ -229,6 +230,7 @@ export class Room {
     if ([0, 1, 2].includes(Number(s.ai))) this.settings.ai = Number(s.ai);
     if ([0, 1].includes(Number(s.offside))) this.settings.offside = Number(s.offside);
     if ([0, 1].includes(Number(s.movement))) this.settings.movement = Number(s.movement);
+    if (GAME_SPEEDS.includes(Number(s.speed))) this.settings.speed = Number(s.speed);
     if ([0, 1, 2, 3].includes(Number(s.weather))) this.settings.weather = Number(s.weather);
     if (Array.isArray(s.kits) && s.kits.length === 2) {
       const k = s.kits.map(Number);
@@ -258,6 +260,7 @@ export class Room {
     this.refreshPitch();
     this.world.m.goalS = this.settings.goals; this.world.m.ai = this.settings.ai; this.world.m.offs = this.settings.offside; this.world.m.real = this.settings.movement;
     startMatch(this.world, this.settings.matchLen);
+    this.ended = false;
     this.system('Kick-off! ' + TEAM_NAMES[0] + ' vs ' + TEAM_NAMES[1]);
     this.broadcastRoom();
   }
@@ -266,6 +269,7 @@ export class Room {
     if (m.id !== this.hostId) return;
     stopMatch(this.world);
     this.refreshPitch();
+    this.ended = true;
     this.system('Match stopped - back to warm-up');
     this.broadcastRoom();
   }
@@ -332,6 +336,9 @@ export class Room {
 
   // ------------------------------------------------------------ simulation
 
+  // how fast the room plays: a share of TICK_RATE (see GAME_SPEEDS)
+  speed() { return (this.settings.speed || 100) / 100; }
+
   tick() {
     const w = this.world;
     const t = w.tick + 1;
@@ -341,8 +348,13 @@ export class Room {
       if (it) { frame.set(pid, it); buf.delete(t); }
       for (const k of buf.keys()) if (k < t) buf.delete(k);
     }
+    const phase = w.m.phase, live = w.m.live;
     step(w, frame);
     for (const e of w.events) if (e.k === 'goal') this.onGoal(e);
+    // the final whistle, and the warm-up after it: everyone's panel hears
+    // (its button becomes a restart)
+    if (phase !== PHASE.FULLTIME && w.m.phase === PHASE.FULLTIME) { this.ended = true; this.broadcastRoom(); }
+    else if (live && !w.m.live) this.broadcastRoom();
     if (w.tick % SNAP_EVERY === 0) this.broadcastSnapshot();
   }
 
@@ -416,7 +428,7 @@ export class Room {
     const ai = [...this.ai.values()];
     return {
       t: 'room', code: this.code, name: this.name, hostId: this.hostId, settings: this.settings,
-      members, ai, live: this.world.m.live,
+      members, ai, live: this.world.m.live, ended: this.ended ? 1 : 0, // (ended: a match was played to its end, or stopped – the next one's a restart)
     };
   }
 

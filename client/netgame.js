@@ -39,6 +39,7 @@ export class NetGame {
     this.pending = null;
     this.acc = 0;
     this.timeScale = 1;
+    this.speed = 1;             // the room's game speed (a share of TICK_RATE – see GAME_SPEEDS)
     this.offsets = new Map();   // entity -> [dx, dy, dz]
     this.sampleInput = () => ({ a: 0, m: 0, b: 0 });
     this.onEvent = () => {};
@@ -59,13 +60,14 @@ export class NetGame {
     if (!this.pending || snap.world.tick > this.pending.world.tick) this.pending = snap;
   }
 
+  // (a tick lasts DT_MS / speed real ms)
   targetLead() {
-    return Math.min(8, Math.max(1, 1 + Math.ceil((this.net.jitter * 2) / DT_MS)));
+    return Math.min(8, Math.max(1, 1 + Math.ceil((this.net.jitter * 2 * this.speed) / DT_MS)));
   }
 
   desiredAhead() {
     // ticks we want to be ahead of a snapshot that has just arrived
-    return Math.round(this.net.rtt / DT_MS) + this.targetLead();
+    return Math.round(this.net.rtt * this.speed / DT_MS) + this.targetLead();
   }
 
   // Rebase on a snapshot and fast-forward to where we should be.
@@ -226,7 +228,7 @@ export class NetGame {
       this.acc = 0;
       return 1;
     }
-    this.acc += dtMs * this.timeScale;
+    this.acc += dtMs * this.timeScale * this.speed;
     let n = 0;
     while (this.acc >= DT_MS && n < 8) { this.simTick(false); this.acc -= DT_MS; n++; }
     if (n === 8) this.acc = 0;

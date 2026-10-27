@@ -170,8 +170,9 @@ export class HostSession {
       if (this.closed) return;
       const now = performance.now();
       let n = 0;
-      while (now >= this.nextTick && n < 8) { this.room.tick(); this.nextTick += TICK_MS; n++; }
-      if (now - this.nextTick > 250) this.nextTick = now + TICK_MS;
+      const ms = TICK_MS / this.room.speed(); // (the room's game speed)
+      while (now >= this.nextTick && n < 8) { this.room.tick(); this.nextTick += ms; n++; }
+      if (now - this.nextTick > 250) this.nextTick = now + ms;
       if (++this.watch % 250 === 0) this.dropSilentGuests(now);
     };
     this.watch = 0;
