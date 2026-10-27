@@ -244,7 +244,7 @@ export function meetBall(w, p) {
   const v0 = Math.hypot(p.vx, p.vy);
   // (a keeper who may use his hands goes for it as high as he can catch it)
   const hands = p.role === ROLE.GK && keeperHands(w, p) && inOwnBox(w, p.team, p.x, p.y, 0.6);
-  const top = hands ? s.H * 1.22 + s.jump : p.qa || p.chgBtn ? s.reach + 0.05 : 1.45;
+  const top = hands ? s.H * 1.22 + s.jump : (p.qa && (p.qa & KICK_MASK) !== KT.CTRL) || p.chgBtn ? s.reach + 0.05 : 1.45;
   // (a shot met outside their box: as low as he can volley it – headed on
   // only if it never comes down in his reach)
   let far = !hands && shotKey(p);
@@ -924,6 +924,7 @@ export function startKick(w, p, kind, power, quick = false, tx, ty, tid = -1, kh
 function beginOwnKick(w, p, packed, power, quick) {
   const b = w.ball, m = w.m;
   const target = packed & KICK_MASK;
+  if (target === KT.CTRL) return; // (the control key is no kick)
   let kh = (packed >> 3) & 3;
   const held = b.held === 1 && b.owner === p.id;
   const throwIn = m.spTaker === p.id && m.spType === SP.THROWIN;
@@ -1398,6 +1399,7 @@ export function tryQueued(w, p) {
   // a keeper who may use his hands takes a ball in the air with them (a kick
   // key down then means punch it – see gkSave)
   if (p.role === ROLE.GK && b.z > 0.5 && keeperHands(w, p) && inOwnBox(w, p.team, p.x, p.y, 0.6) && inOwnBox(w, p.team, b.x, b.y, 0.3)) return false;
+  if ((p.qa & KICK_MASK) === KT.CTRL) return false; // (no kick: see tryControl)
   const d0 = Math.hypot(b.x - p.x, b.y - p.y);
   if (d0 > 6) return false;
   const s = stOf(p), pit = pitchOf(w), dir = teamDir(w, p.team);
@@ -1592,7 +1594,8 @@ export function tryControl(w, p) {
   const b = w.ball, m = w.m;
   if (b.owner >= 0 || m.spTaker >= 0 || p.kcd > 0 || !isFree(p) || p.z > 0) return false;
   const self = !!p.qa && (p.qa & KICK_MASK) === KT.SELF;
-  if (p.qa && !self) return false;                      // a first-time kick is queued
+  const dead = !!p.qa && (p.qa & KICK_MASK) === KT.CTRL; // (the control key: taken dead)
+  if (p.qa && !self && !dead) return false;             // a first-time kick is queued
   if (b.z < 0.45 && b.vz > -1) return false;           // on the ground: an ordinary trap
   if (b.last === p.id && b.kt < 20 && b.tgt !== p.id) return false;
   if (p.role === ROLE.GK && keeperHands(w, p) && inOwnBox(w, p.team, p.x, p.y, 0.6)) return false; // hands
@@ -1602,6 +1605,7 @@ export function tryControl(w, p) {
   // it on the chest comes before the head, a big one only after
   const J = s.jump;
   const order = b.last === p.id && b.kt < 60 ? [[PART.FOOT, 0]] // his own cushion coming down: onto the foot
+    : dead ? [[PART.CHEST, J], [PART.THIGH, J], [PART.FOOT, 0]] // (the control key: chest, thigh or foot – not headed down)
     : p.tm === MEET.AT ? [[PART.HEAD, J], [PART.CHEST, J], [PART.THIGH, J], [PART.FOOT, 0]]
       : p.tm === MEET.WITH ? [[PART.THIGH, J], [PART.FOOT, 0], [PART.CHEST, J], [PART.HEAD, J]]
         : [[PART.CHEST, 0.25], [PART.THIGH, J], [PART.FOOT, 0], [PART.HEAD, J], [PART.CHEST, J]];
@@ -1623,6 +1627,7 @@ export function tryControl(w, p) {
       const lead = Math.max(C_CONTACT[part], rise > 0.04 ? Math.ceil(Math.sqrt(2 * rise / G) * 60) : 0);
       if (k > lead) return false; // the right part – but not time to go for it yet
       beginControl(w, p, part, bx, by, bz, self, Math.max(2, k));
+      if (dead) p.kk = KICK.CTRL;
       return true;
     }
   }
@@ -1681,17 +1686,18 @@ function cushion(w, p, s) {
     const push = 1.5 + 4 * p.kp;
     vx = p.vx * 0.5 + p.kx * push; vy = p.vy * 0.5 + p.ky * push;
     lift = (p.kh === KH.HIGH ? 1.4 : p.kh === KH.MID ? 0.8 : 0) + 1.2 * p.kp;
-  } else if (p.tm === MEET.WITH && run > 1) {
+  } else if (p.kk !== KICK.CTRL && p.tm === MEET.WITH && run > 1) {
     // taken in his stride: out ahead, where he'll be in a moment
     vx = p.vx * 1.05 + p.vx / run * 1.2; vy = p.vy * 1.05 + p.vy / run * 1.2;
-  } else if (stickOf(p)[2] > 0.3) {
+  } else if (p.kk !== KICK.CTRL && stickOf(p)[2] > 0.3) {
     // the stick held: the touch goes the way he wants to go, a little ahead of
     // him, and he carries on dribbling
     const [sx, sy] = stickOf(p);
     vx = p.vx * 0.85 + sx * (1.4 + 0.3 * run); vy = p.vy * 0.85 + sy * (1.4 + 0.3 * run);
   } else {
-    // killed: it drops just in front of him
-    vx = p.vx * 0.55 + fx * 0.9; vy = p.vy * 0.55 + fy * 0.9;
+    // killed: it drops just in front of him (the control key: dead at his feet)
+    const k = p.kk === KICK.CTRL ? 0.3 : 0.55;
+    vx = p.vx * k + fx * 0.9; vy = p.vy * k + fy * 0.9;
   }
   [vx, vy] = keptIn(w, b.x, b.y, vx, vy);
   // a heavy touch: the faster it came and the clumsier he is, the more it runs off
@@ -1925,6 +1931,14 @@ function handleButtons(w, p) {
 
   const code = btn & KICK_MASK;                   // kick target held (0 = none)
   const packed = code | (((btn >> 3) & 3) << 3);  // ... with its height
+  // the control key: no kick – a ball coming is taken dead (see tryControl);
+  // it stays wanted a moment after it's let go, as a kick key does
+  if (code === KT.CTRL) {
+    p.chgBtn = 0; p.chg = 0; // (a kick being wound up is off)
+    if (!owner && isFree(p)) { p.qa = packed; p.qt = 255; } else if ((p.qa & KICK_MASK) !== KT.CTRL) p.qa = 0;
+    return;
+  }
+  if ((p.qa & KICK_MASK) === KT.CTRL && p.qt === 255) p.qt = 24;
   const pressed = code && code !== (p.pb & KICK_MASK) ? code : 0;
   if (p.tapT < 255) p.tapT++;
   const fire = (k, power) => {
@@ -2111,7 +2125,7 @@ function updateMeet(w, p, sx, sy, sm) {
 // down beside him rather than on his back.
 function meetPlan(w, p) {
   const pts = ballPath(w), s = stOf(p), v0 = Math.hypot(p.vx, p.vy);
-  const kick = !!p.qa && (p.qa & KICK_MASK) !== KT.SELF;
+  const kick = !!p.qa && (p.qa & KICK_MASK) !== KT.SELF && (p.qa & KICK_MASK) !== KT.CTRL;
   const reaches = (q, t, extra) => Math.hypot(q.x - p.x, q.y - p.y) - 0.4 - extra
     <= (t < 0.15 ? v0 * t : v0 * 0.15 + s.sprint * (t - 0.15) * 0.95);
   const top = kick ? s.reach + 0.05 : s.H * 0.93 + s.jump * 0.8;
@@ -3324,7 +3338,8 @@ function possession(w) {
   if (p.st === ST.CONTROL) { p.st = ST.IDLE; p.stT = 0; p.hit = 0; }
   w.events.push({ k: 'trap', x: b.x, y: b.y, id: p.id });
   if (p.qa && !p.chgBtn) {
-    if ((p.qa & KICK_MASK) === KT.SELF) beginLift(w, p, p.qp, (p.qa >> 3) & 3);
+    if ((p.qa & KICK_MASK) === KT.CTRL) p.qa = 0; // (the control key: kept, that's all)
+    else if ((p.qa & KICK_MASK) === KT.SELF) beginLift(w, p, p.qp, (p.qa >> 3) & 3);
     else beginOwnKick(w, p, p.qa, p.qp, true);
   }
 }

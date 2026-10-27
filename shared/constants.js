@@ -18,7 +18,7 @@ export const MAX_PLAYERS = 16;
 //             top corner)
 // On defence the same keys mean: MATE held = press, GOAL = slide tackle (keeper:
 // dive), RUN = send the keeper out.
-export const KT = { NONE: 0, MATE: 1, RUN: 2, GOAL: 3, SELF: 4 };
+export const KT = { NONE: 0, MATE: 1, RUN: 2, GOAL: 3, SELF: 4, CTRL: 5 }; // (CTRL: no kick – a ball coming is taken dead, see tryControl)
 export const KH = { GROUND: 0, MID: 1, HIGH: 2 };
 export const KICK_MASK = 7;
 export const BTN = {
@@ -61,7 +61,7 @@ export const SP = { NONE: 0, THROWIN: 1, CORNER: 2, GOALKICK: 3, FREEKICK: 4, PE
 export const SP_NAME = ['', 'Throw-in', 'Corner', 'Goal kick', 'Free kick', 'Penalty', 'Kick-off'];
 
 // Kick kinds
-export const KICK = { PASS: 1, LONG: 2, SHOT: 3, THROUGH: 4, CHIP: 5, CLEAR: 6, THROW: 7, PUNT: 8, FINESSE: 9, SELF: 10, DROP: 11 };
+export const KICK = { PASS: 1, LONG: 2, SHOT: 3, THROUGH: 4, CHIP: 5, CLEAR: 6, THROW: 7, PUNT: 8, FINESSE: 9, SELF: 10, DROP: 11, CTRL: 12 };
 // How a shot off the ground is struck (p.kq): facing the goal, plainly; with
 // the back to it, a back-heel or a turn with the ball first
 export const KQ = { PLAIN: 0, HEEL: 1, TURN: 2 };

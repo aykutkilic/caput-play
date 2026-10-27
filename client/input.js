@@ -3,11 +3,12 @@
 // Every kick is a TARGET (team-mate, his running path, the goal, yourself) and a
 // HEIGHT (feet, chest, head); how long the key is held sets the power.
 //
-// Keyboard default – a 4 x 3 grid, one column per target, one row per height:
-//              run path   team-mate   goal   self
-//   high         Q           W         E      R      (head / top corner)
-//   ground       A           S         D      F      (to feet / low)
-//   mid          Z           X         C      V      (chest / mid-height)
+// Keyboard default – a key per action:
+//   Q through pass (run path, along the grass) – with Shift a high through pass
+//   A lob pass (team-mate, lofted)        S ground pass (team-mate, to feet)
+//   D shoot – or head / volley it, when it's in the air
+//   W knock it into your own run (self, along the grass)   F lift it (self, high)
+//   E control it – a ball coming taken dead on the chest, thigh or foot
 //   Arrows move, Shift = R1 sprint / knock-on dribble, Space = R2 precision dribble / finesse.
 // Pad (standard mapping): ✕/A team-mate, △/Y run path, □/X goal, ○/B self;
 //   hold L1 for high, L2 for mid (neither = ground); R1 sprint, R2 precision.
@@ -17,24 +18,35 @@ import { BTN, KT, KH, KICK_MASK, packKick, JOG_TILT } from '../shared/constants.
 
 const KICK_BITS = KICK_MASK | (3 << 3); // target + height
 
-// kick actions: binding name -> [target, height]
+// kick actions: binding name -> [target, height] (through: high with Shift held)
 export const KICK_KEYS = {
-  runH: [KT.RUN, KH.HIGH], mateH: [KT.MATE, KH.HIGH], goalH: [KT.GOAL, KH.HIGH], selfH: [KT.SELF, KH.HIGH],
-  runG: [KT.RUN, KH.GROUND], mateG: [KT.MATE, KH.GROUND], goalG: [KT.GOAL, KH.GROUND], selfG: [KT.SELF, KH.GROUND],
-  runM: [KT.RUN, KH.MID], mateM: [KT.MATE, KH.MID], goalM: [KT.GOAL, KH.MID], selfM: [KT.SELF, KH.MID],
+  through: [KT.RUN, KH.GROUND], lob: [KT.MATE, KH.MID], pass: [KT.MATE, KH.GROUND], shoot: [KT.GOAL, KH.MID],
+  knock: [KT.SELF, KH.GROUND], control: [KT.CTRL, KH.GROUND], lift: [KT.SELF, KH.HIGH],
 };
+// what they do, for the controls dialog
+export const KICK_LABELS = {
+  through: 'Through pass – into his run (with Shift: a high through pass)', lob: 'Lob pass – lofted to a team-mate',
+  pass: 'Ground pass – to a team-mate\'s feet', shoot: 'Shoot – or head / volley it in the air',
+  knock: 'Knock it into your own run (self pass)', control: 'Control it – chest, thigh or foot, taken dead', lift: 'Lift the ball – flick it up',
+};
+// the binding that presses a target + height (the AI's keys, as yours are named)
+export function kickBinding(target, height) {
+  if (target === KT.RUN) return 'through';
+  if (target === KT.MATE) return height === KH.GROUND ? 'pass' : 'lob';
+  if (target === KT.GOAL) return 'shoot';
+  if (target === KT.CTRL) return 'control';
+  return height === KH.HIGH ? 'lift' : 'knock';
+}
 
 export const DEFAULT_KEYS = {
   up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight',
   sprint: 'ShiftLeft', r2: 'Space', jog: 'KeyG',
-  runH: 'KeyQ', mateH: 'KeyW', goalH: 'KeyE', selfH: 'KeyR',
-  runG: 'KeyA', mateG: 'KeyS', goalG: 'KeyD', selfG: 'KeyF',
-  runM: 'KeyZ', mateM: 'KeyX', goalM: 'KeyC', selfM: 'KeyV',
+  through: 'KeyQ', lob: 'KeyA', pass: 'KeyS', shoot: 'KeyD', knock: 'KeyW', control: 'KeyE', lift: 'KeyF',
 };
 
-// v4 replaced the button layout with the target x height grid: of an older
-// saved layout only custom movement / sprint / R2 keys survive.
-const KEYS_VERSION = 4;
+// v5 replaced the target x height grid with a key per action: of an older
+// saved layout only custom movement / sprint / R2 / jog keys survive.
+const KEYS_VERSION = 5;
 const KEPT = ['up', 'down', 'left', 'right', 'sprint', 'r2', 'jog'];
 
 export const ACTION_LABELS = {
@@ -109,11 +121,13 @@ export class Input {
   clear() { this.down.clear(); this.order = []; this.touch.b = 0; this.touch.mag = 0; }
 
   // the most recently pressed kick key still held -> packed target | height
+  // (the through pass high with Shift held)
   keyKick() {
+    const shift = this.down.has(this.keys.sprint) || this.down.has('ShiftLeft') || this.down.has('ShiftRight');
     for (let i = this.order.length - 1; i >= 0; i--) {
       const code = this.order[i];
       if (!this.down.has(code)) continue;
-      for (const [name, [t, h]] of Object.entries(KICK_KEYS)) if (this.keys[name] === code) return packKick(t, h);
+      for (const [name, [t, h]] of Object.entries(KICK_KEYS)) if (this.keys[name] === code) return packKick(t, name === 'through' && shift ? KH.HIGH : h);
     }
     return 0;
   }

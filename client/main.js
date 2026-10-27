@@ -2,7 +2,7 @@ import { Net } from './net.js';
 import { HostSession, PeerNet } from './p2p.js';
 import { CLOUD_URL } from './cloud.js';
 import { NetGame } from './netgame.js';
-import { Input, DEFAULT_KEYS, ACTION_LABELS, keyName, isTyping } from './input.js';
+import { Input, DEFAULT_KEYS, ACTION_LABELS, KICK_LABELS, keyName, isTyping } from './input.js';
 import { Renderer, CAMERAS, lookFor, drawAvatarPreview, TEAM_COLORS, setKits } from './render.js';
 import { Sfx, CHANNELS } from './audio.js';
 import { TouchControls, isTouchDevice, lockZoom } from './touch.js';
@@ -763,10 +763,10 @@ function showControlMode(w) {
   shownMode = mode;
   const k = (name) => `<b>${esc(keyName(input.keys[name]))}</b>`;
   const lines = {
-    defend: `Defending: ${k('mateG')} press · ${k('goalG')} slide · ${k('selfG')} jockey · ${k('runG')} keeper out (any row) · hold ${k('r2')} to face the ball as you move`,
-    keeper: `Keeper: ${k('goalG')} dive at his feet · ${k('selfG')} one-on-one block · ${k('runG')} rush out · ${k('mateG')} press`,
-    keeperAir: `High ball: you catch it on your own · ${k('goalG')} (any row) <b>punches</b> it clear – aim with the stick`,
-    keeperBall: `In your hands: <b>ground</b> row rolls it out · <b>mid</b> row throws it (a drop kick when it's far) · <b>high</b> row punts it`,
+    defend: `Defending: ${k('pass')} press · ${k('shoot')} slide · ${k('knock')} jockey · ${k('through')} keeper out · hold ${k('r2')} to face the ball as you move`,
+    keeper: `Keeper: ${k('shoot')} dive at his feet · ${k('knock')} one-on-one block · ${k('through')} rush out · ${k('pass')} press`,
+    keeperAir: `High ball: you catch it on your own · ${k('shoot')} <b>punches</b> it clear – aim with the stick`,
+    keeperBall: `In your hands: ${k('pass')} rolls it out · ${k('lob')} throws it (a drop kick when it's far) · ${k('shoot')} punts it`,
     block: 'Hard ball coming: any kick key <b>blocks</b> it',
     backGoal: 'Back to goal: a Goal key <b>turns and shoots</b> (it takes a moment) · close in, a quick tap <b>back-heels</b> it',
     after: 'Aftertouch – push the stick <b>sideways</b> to bend it that way · <b>back</b> lifts it · <b>forward</b> dips it',
@@ -781,17 +781,15 @@ function showControlMode(w) {
 
 // ------------------------------------------------------------------ controls dialog
 
-const PAD = { up: 'L-stick / D-pad', down: 'L-stick / D-pad', left: 'L-stick / D-pad', right: 'L-stick / D-pad', sprint: 'R1 / RB', r2: 'R2 / RT' };
-// the kick grid: one column per target, one row per height (see input.js)
-const GRID_COLS = [['run', 'Run path', '△ / Y'], ['mate', 'Team-mate', '✕ / A'], ['goal', 'Goal', '□ / X'], ['self', 'Self', '○ / B']];
-const GRID_ROWS = [['H', 'High', 'head · top corner', '+ L1'], ['G', 'Ground', 'to feet · low', ''], ['M', 'Mid', 'chest · mid-height', '+ L2']];
+const PAD = {
+  up: 'L-stick / D-pad', down: 'L-stick / D-pad', left: 'L-stick / D-pad', right: 'L-stick / D-pad', sprint: 'R1 / RB', r2: 'R2 / RT', jog: 'part tilt',
+  through: '△ / Y (+ L1: high)', lob: '✕ / A + L2', pass: '✕ / A', shoot: '□ / X', knock: '○ / B', control: '–', lift: '○ / B + L1',
+};
 let rebinding = null;
 function renderControls() {
   const key = (k) => `<button data-k="${k}">${rebinding === k ? '…' : keyName(input.keys[k])}</button>`;
-  $('ctrlTable').innerHTML = `
-    <tr class="gh"><td></td>${GRID_COLS.map(([, name, pad]) => `<th>${name}<span>${pad}</span></th>`).join('')}</tr>
-    ${GRID_ROWS.map(([r, name, what, pad]) => `<tr class="grid"><th>${name}<span>${what}${pad ? ` · pad ${pad}` : ''}</span></th>${GRID_COLS.map(([c]) => `<td class="k">${key(c + r)}</td>`).join('')}</tr>`).join('')}
-    ${Object.keys(ACTION_LABELS).map((k) => `<tr><td colspan="2">${ACTION_LABELS[k]}</td><td class="k">${key(k)}</td><td class="pad" colspan="2">${PAD[k]}</td></tr>`).join('')}`;
+  const row = (k, label) => `<tr><td colspan="2">${label}</td><td class="k">${key(k)}</td><td class="pad" colspan="2">${PAD[k] || ''}</td></tr>`;
+  $('ctrlTable').innerHTML = Object.keys(KICK_LABELS).map((k) => row(k, KICK_LABELS[k])).join('') + Object.keys(ACTION_LABELS).map((k) => row(k, ACTION_LABELS[k])).join('');
 }
 $('ctrlTable').onclick = (e) => { const k = e.target.dataset.k; if (k) { rebinding = k; renderControls(); } };
 addEventListener('keydown', (e) => {

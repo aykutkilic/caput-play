@@ -5,12 +5,11 @@
 // the jog key at a part tilt, the kick key held (filling as it charges), R1
 // and R2 – named as your own keys are. A key let go stays up a quarter of a
 // second and then fades, so a tap (a keeper's dive, a slide, a block) can be read.
-import { KT, BTN, KICK_MASK, kickTarget, kickHeight } from '../shared/constants.js';
+import { KT, BTN, KH, KICK_MASK, kickTarget, kickHeight } from '../shared/constants.js';
 import { byPerson, CHG_MAX } from '../shared/sim.js';
+import { kickBinding } from './input.js';
 
 const HOLD = 15, FADE = 36; // ticks a key stays up after it's let go, the last of them fading
-const KICK_COL = { [KT.RUN]: 'run', [KT.MATE]: 'mate', [KT.GOAL]: 'goal', [KT.SELF]: 'self' };
-const KICK_ROW = ['G', 'M', 'H']; // KH.GROUND, MID, HIGH (the binding names: mateG, goalH, ...)
 const ARROWS = ['→', '↘', '↓', '↙', '←', '↖', '↑', '↗']; // by the way on screen, from the right clockwise (y down)
 
 export class AIKeys {
@@ -46,7 +45,9 @@ export class AIKeys {
     }
     if (lit(s.kt)) {
       const held = (p.ib & (KICK_MASK | (3 << 3))) === s.k && p.chgBtn === s.k;
-      caps.push({ text: this.keyName(KICK_COL[kickTarget(s.k)] + KICK_ROW[kickHeight(s.k)]), age: age(s.kt), fill: held ? Math.min(1, p.chg / CHG_MAX) : 0 });
+      // (a high through ball: Shift with it)
+      const t = kickTarget(s.k), b = kickBinding(t, kickHeight(s.k));
+      caps.push({ text: (t === KT.RUN && kickHeight(s.k) === KH.HIGH ? `${this.keyName('sprint')}+` : '') + this.keyName(b), age: age(s.kt), fill: held ? Math.min(1, p.chg / CHG_MAX) : 0 });
     }
     if (lit(s.r1)) caps.push({ text: this.keyName('sprint'), age: age(s.r1) });
     if (lit(s.r2)) caps.push({ text: this.keyName('r2'), age: age(s.r2) });
