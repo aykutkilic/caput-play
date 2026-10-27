@@ -9,6 +9,7 @@ import { skeleton, drawFigure } from './figure.js';
 import { Scene3D } from './mesh3d.js';
 import { Effects } from './fx.js';
 import { GAIT } from './gait.js';
+import { KICK_MOCAP } from './kick.js';
 
 export { skeleton, drawFigure };
 
@@ -277,6 +278,21 @@ function clipNear(pts, near) {
 
 // ---------------------------------------------------------------- pose
 
+// The kick from motion capture (kick.js) t seconds about the strike – the
+// kicking leg and arm the right ones – its swing scaled by big about standing
+// (a pass is gentler than a shot: less backswing, crouch and follow-through)
+const KN = { kh: 0, kk: 0.12, sh: 0, sk: 0.12, karm: 0.08, sarm: 0.08, kab: 0.12, sab: 0.12, kel: 0.25, sel: 0.25, lean: 0.04, tw: 0, drop: 0 };
+function kickPose(P, t, big, H) {
+  const ch = KICK_MOCAP.ch, last = ch.kh.length - 1;
+  const x = clamp((t - KICK_MOCAP.t0) / KICK_MOCAP.dt, 0, last), i = Math.min(Math.floor(x), last - 1), u = x - i;
+  const v = (k) => KN[k] + big * (ch[k][i] + (ch[k][i + 1] - ch[k][i]) * u - KN[k]);
+  P.rh = v('kh'); P.rk = v('kk'); P.lh = v('sh'); P.lk = v('sk');
+  P.rsh = v('karm'); P.lsh = v('sarm'); P.rab = v('kab'); P.lab = v('sab');
+  P.rel = Math.max(0.1, v('kel')); P.lel = Math.max(0.1, v('sel')); // (arms out sideways: their bend measured forward goes astray)
+  P.lean = v('lean'); P.tw = v('tw'); P.drop = v('drop') * 0.53 * H;
+  return P;
+}
+
 // a pose done with the other leg (and the arms swapped to balance it)
 function mirrorLegs(P) {
   for (const [l, r] of [['lh', 'rh'], ['lk', 'rk'], ['la', 'ra'], ['lfy', 'rfy'], ['lsh', 'rsh'], ['lab', 'rab'], ['lel', 'rel']]) [P[l], P[r]] = [P[r], P[l]];
@@ -523,12 +539,11 @@ export function poseFor(p, ctx) {
     handsTo(P, h.f, h.r, h.z, H, 1, 0.1);
   }
   if (ctx.windup) {
-    // holding a pass / shot: the kicking leg draws back as the gauge fills, so
-    // on release the foot comes straight through
-    const { u, big } = ctx.windup;
-    P.rh = mix(P.rh, -0.8 * big, u); P.rk = mix(P.rk, 0.2 + 1.4 * big, u); P.tw = mix(P.tw, 0.3, u);
-    P.lsh = mix(P.lsh, 0.55, u); P.lab = mix(P.lab, 0.9, u); P.rsh = mix(P.rsh, -0.35, u); P.rab = mix(P.rab, 0.45, u);
-    P.lean = mix(P.lean, 0.02 - 0.1 * big, u);
+    // holding a pass / shot: the kicking leg draws back as the gauge fills –
+    // the backswing of the kick (kickPose) – so on release the foot comes
+    // straight through
+    const { u, big } = ctx.windup, K = kickPose(basePose(), -0.15, big, H);
+    for (const k of ['rh', 'rk', 'lh', 'lk', 'rsh', 'lsh', 'rab', 'lab', 'rel', 'lel', 'tw', 'lean', 'drop']) P[k] = mix(P[k], K[k], u);
   }
   if (ctx.throwIn) handsTo(P, -0.02 * H, 0, 1.1 * H, H, 1, 0.1); // both hands on it, above and behind his head
   if (ctx.celebrate === 'slide' || ctx.celebrate === 'kneel') {
@@ -580,19 +595,13 @@ export function poseFor(p, ctx) {
         P.lsh = 0.45; P.lab = 0.8; P.rsh = 0.25; P.rab = 0.6;
         break;
       }
-      const big = p.kk === KICK.PASS || p.kk === KICK.THROUGH ? 0.6 : 1;
+      const big = p.kk === KICK.PASS || p.kk === KICK.THROUGH ? 0.7 : 1;
       const cT = Math.max(1, p.stA), dT = Math.max(cT + 1, p.stDur);
-      let rh, rk;
-      // (a kick released from a held wind-up starts already drawn back)
-      if (k < cT) { const u = cT <= 2 ? 1 : ease(k / cT); rh = -0.8 * big * u; rk = 0.2 + 1.4 * big * u; P.tw = 0.3 * u; }
-      else {
-        const u = clamp((k - cT) / (dT - cT), 0, 1);
-        const f = u < 0.35 ? u / 0.35 : 1 - (u - 0.35) / 0.65;
-        rh = mix(0.45, 1.3 * big, Math.min(1, u / 0.35)) * (u < 0.35 ? 1 : f * 0.9 + 0.1);
-        rk = 0.15 + 0.2 * u; P.tw = -0.2 * f;
-      }
-      P.rh = rh; P.rk = rk; P.lh = 0.12; P.lk = 0.3;
-      P.lsh = 0.55; P.lab = 0.9; P.rsh = -0.35; P.rab = 0.45; P.lean = 0.02 - 0.1 * big;
+      // the kick from motion capture: the backswing to the strike (released
+      // from a held wind-up it starts already drawn back), then the
+      // follow-through – in the game's few ticks
+      kickPose(P, k < cT ? (cT <= 2 ? -0.1 : -0.3) * (1 - k / cT) : 0.4 * clamp((k - cT) / (dT - cT), 0, 1), big, H);
+      const rh = P.rh, rk = P.rk;
       if (p.kc && !ctx.fromHands) {
         // bent (p.kc: + bends it right on screen, - left): with the inside of
         // the foot – the left one to bend it right, the right one left – the
@@ -613,6 +622,14 @@ export function poseFor(p, ctx) {
         P.lh = mix(-0.3 * st, 0.12, u); P.lk = mix(0.35 + 0.35 * Math.max(0, -st), 0.3, u);
         P.tw = mix(0, P.tw, u); P.lean = mix(0.08, P.lean, u);
         P.lsh = mix(0.35, P.lsh, u); P.rsh = mix(0.35, P.rsh, u); P.lab = mix(0.5, P.lab, u); P.rab = mix(0.5, P.rab, u);
+      }
+      if (p.kq === KQ.NOLOOK) {
+        // the no-look pass: his head turned the other way from where it goes
+        // (hy + turns it towards world +y as he faces: away from a pass that
+        // way – and one straight ahead, to the other side)
+        let a = Math.atan2(p.ky - p.y, p.kx - p.x) - p.face;
+        a = Math.atan2(Math.sin(a), Math.cos(a));
+        P.hy = (a >= 0 ? -0.95 : 0.95) * clamp((dT - k) / 4, 0, 1);
       }
       if (ctx.fromHands) {
         // punt: ball held out in front, dropped onto the boot, arms out for
@@ -918,6 +935,26 @@ export function poseFor(p, ctx) {
         const up = ease(clamp(k / 8, 0, 1)), flick = clamp((k - 9) / 4, 0, 1) * clamp((18 - k) / 5, 0, 1);
         P.lh = 0.12; P.lk = 0.3; P.rh = -0.45 * up * (1 - flick) - 0.15 * flick; P.rk = 1.25 * up + 0.9 * flick;
         P.lean = 0.12 + 0.12 * flick; P.lab = P.rab = 0.5 * env; P.head = -0.25 * flick;
+      } else if (p.stA === SKILL.CROQUETA) {
+        // the inside of one foot rolls it across to the other, the body going
+        // with it (to his left: the right foot pushes it, the left steps out)
+        const side = p.stB >= 0 ? 1 : -1, u = ease(clamp(k / 5, 0, 1)), end = clamp((p.stDur - k) / 5, 0, 1);
+        P.rh = 0.25 * end; P.ra = (0.2 - 0.5 * u) * end; P.rfy = 0.6 * (1 - 0.5 * u) * end; P.rk = 0.35 * end;
+        P.la = 0.35 * u * end; P.lk = 0.3; P.lab = P.rab = 0.5 * end; P.lean = 0.14;
+        if (side < 0) mirrorLegs(P);
+        P.roll = 0.2 * side * u * end;
+      } else if (p.stA === SKILL.HEEL) {
+        // the foot steps over the ball, then the heel snaps back into it
+        const u = ease(clamp(k / 4, 0, 1)), f = clamp((k - 4) / 3, 0, 1) * clamp((11 - k) / 5, 0, 1);
+        P.rh = 0.4 * u * (1 - f) - 0.55 * f; P.rk = 0.3 + 0.35 * u + 0.8 * f;
+        P.lh = 0.08; P.lk = 0.3; P.lean = 0.1 + 0.08 * f; P.lsh = 0.45; P.lab = 0.8 * env; P.rsh = 0.25; P.rab = 0.6 * env;
+        if (p.ft) mirrorLegs(P);
+      } else if (p.stA === SKILL.SOMBRERO) {
+        // the toe under it as it drops, flicked up and over, eyes on it
+        const c = p.stB, touch = clamp(1 - Math.abs(k - c) / 4, 0, 1), after = clamp((k - c) / 6, 0, 1) * clamp((p.stDur - k) / 6, 0, 1);
+        P.rh = 0.25 + 0.6 * touch + 0.3 * after; P.rk = 0.7 - 0.45 * touch; P.lk = 0.35; P.lean = -0.1 * touch;
+        P.lab = P.rab = 0.6; P.head = -0.25 * (touch + after);
+        if (p.ft) mirrorLegs(P);
       } else if (p.stA === SKILL.AROUND) {
         // the foot goes round the ball as it drops, then back under it
         const c = p.stB, th = clamp((k - (c - 14)) / 14, 0, 1) * Math.PI * 2, round = k < c && k > c - 14 ? 1 : 0, touch = clamp(1 - Math.abs(k - c) / 4, 0, 1);
@@ -1863,7 +1900,7 @@ export class Renderer {
     // winding up a kick with the ball at the feet (not the lift / skill key)
     const kicking = p.chgBtn & 7;
     if (kicking && kicking !== 4 && b.owner === p.id && !b.held && (p.st === ST.IDLE || p.st === ST.STUMBLE)) {
-      ctx.windup = { u: Math.min(1, p.tapH / 6), big: kicking === 3 ? 1 : 0.6 };
+      ctx.windup = { u: Math.min(1, p.tapH / 6), big: kicking === 3 ? 1 : 0.7 };
     }
     const cf = Math.cos(p.face), sf = Math.sin(p.face);
     const local = (wx, wy) => [(wx - x) * cf + (wy - y) * sf, -(wx - x) * sf + (wy - y) * cf];

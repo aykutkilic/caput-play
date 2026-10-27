@@ -87,7 +87,7 @@ export function pById(w, id) {
 // realistic movement, set each tick – see realStats)
 export function stOf(p) {
   const k = p.hgt * 256 + p.bld + (p.rl ? 65536 : 0);
-  if (p._stK !== k) { p._stK = k; const s = stats(p.hgt, p.bld); p._st = p.rl ? realStats(s) : s; }
+  if (p._stK !== k) { p._stK = k; const s = stats(p.hgt, p.bld); p._st = p.rl ? realStats(s) : arcadeStats(s); }
   return p._st;
 }
 // Realistic movement (room setting m.real), for everyone: nearer real
@@ -105,6 +105,13 @@ const realStats = (s) => ({
   ...s, sprint: s.sprint * 0.9, jog: s.jog * 0.85, accel: s.accel * 0.55, turn: s.turn * 0.6, turnK: 0.25,
   aV0: s.sprint * 0.9 * 1.08, brake: 1, side: 7 * s.turn / 11, cut: 0.5,
 });
+// Arcade movement keeps its quickness – the burst, footwork, braking, sprint
+// and jog speeds – but takes the sideways limit of the real shape (see
+// realStats): no more than ~5x a real player's push into a turn at pace (real
+// ~7 m/s²; before, a sharp cut at a sprint took 60), so a cut at a sprint is
+// a tight curve, not a corner. (Speeding up less past a jog as well was
+// tried: it cost keepy-ups and defenders getting across.)
+const arcadeStats = (s) => ({ ...s, side: 36 * s.turn / 11 });
 // How hard he can speed up at pace v (realistic movement: less the faster he
 // goes – see realStats)
 const accelAt = (s, v) => (s.aV0 ? s.accel * Math.max(0.06, 1 - v / s.aV0) : s.accel);
@@ -139,6 +146,16 @@ function farShot(w, p, x, y) { return x * teamDir(w, p.team) > 0 && !inOwnBox(w,
 export function keeperHands(w, p) {
   const b = w.ball;
   return !(b.dl && b.lastTeam === p.team && b.last !== p.id);
+}
+// A keeper on his feet gets his hands to a ball (a catch, a tip, a parry, the
+// jump for a high one) only with the catch key held – the control key or R2 –
+// or just let go (it stays wanted a moment, as a kick key does), or the shot
+// key held to punch it; without it he's like anyone else: it comes off his
+// body or he takes it at his feet. (A dive is a key pressed already.) The AI's
+// keeper presses it too.
+export function catchKey(p) {
+  const k = p.qa & KICK_MASK;
+  return k === KT.CTRL || k === KT.GOAL || !!(p.ib & BTN.R2);
 }
 
 // Played by a person right now: a human whose inputs are arriving. When a
@@ -934,6 +951,13 @@ export function startKick(w, p, kind, power, quick = false, tx, ty, tid = -1, kh
   p.st = fromHands && kind !== KICK.PUNT && kind !== KICK.DROP ? ST.THROW : ST.KICK;
   p.kq = p.st === ST.KICK && b.owner === p.id && !fromHands ? shotWay(p, p.face, b.x, b.y) : KQ.PLAIN;
   if (p.kq === KQ.HEEL) contact = Math.min(contact, 4); // a flick
+  // R2 with a pass key: the no-look pass – looking the other way, struck
+  // without turning to it; a touch less true, but they read it late (see
+  // the AI's reacting)
+  if (p.kq === KQ.PLAIN && p.st === ST.KICK && !fromHands && (kind === KICK.PASS || kind === KICK.THROUGH) && ((p.ib | p.pb) & BTN.R2) && w.m.spTaker !== p.id) { // (both let go at once: still meant)
+    p.kq = KQ.NOLOOK;
+    w.events.push({ k: 'trick', name: 'No-look pass', q: -1, id: p.id, x: p.x, y: p.y });
+  }
   p.stT = 0; p.stA = contact; p.stDur = contact + (fromHands ? 12 : 11); p.stB = 0; p.hit = 0;
   p.chgBtn = 0; p.chg = 0; p.qa = 0; p.qt = 0;
 }
@@ -1015,15 +1039,27 @@ export function beginSkill(w, p, kind) {
 // The trick key (R): the trick the moment calls for – done well or not by
 // when it's pressed (p.kp: 1 just right, 0 missed):
 //  * the ball at his feet – best right at his foot, a touch away it comes off
-//    loose: an ELASTICO with the stick to a side (the outside of the foot
-//    takes it out the other way, the inside snaps it back across to the
-//    stick side – a man close in front bites), otherwise a RAINBOW flick
-//    (rolled up the back of the leg and flicked over his head, landing ahead);
+//    loose – by the stick against the way he faces: to a side, an ELASTICO
+//    (the outside of the foot takes it out the other way, the inside snaps it
+//    back across to the stick side – a man close in front bites); diagonally
+//    ahead, LA CROQUETA (rolled across from one foot to the other and away on
+//    the diagonal past a man going in for it); back, a BACK-HEEL FLICK (off
+//    his heel to a team-mate behind him, or into the space there as he spins
+//    after it – read late, as a no-look pass); forward or none, a RAINBOW
+//    flick (rolled up the back of the leg and flicked over his head, landing
+//    ahead);
+//  * a ball dropping to him, the stick pushed – his own or a bouncing one –
+//    the SOMBRERO (best at ~0.8 m: flicked up over the head of a man in front
+//    the way the stick points, to come down a few metres on);
 //  * his own ball in the air, dropping – AROUND THE WORLD towards his foot
 //    (best at ~0.7 m: the foot goes round it, then keeps it up) or a NECK
 //    STALL towards his head (best a metre above the back of his neck: caught
 //    there; F or R pops it back over his head) – too early or too late, missed.
-const TRICK_NAMES = { [SKILL.ELASTICO]: 'Elastico', [SKILL.RAINBOW]: 'Rainbow', [SKILL.AROUND]: 'Around the world', [SKILL.NECK]: 'Neck stall' };
+// (The no-look pass is R2 with a pass key: see startKick.)
+const TRICK_NAMES = {
+  [SKILL.ELASTICO]: 'Elastico', [SKILL.RAINBOW]: 'Rainbow', [SKILL.AROUND]: 'Around the world', [SKILL.NECK]: 'Neck stall',
+  [SKILL.CROQUETA]: 'La croqueta', [SKILL.HEEL]: 'Back-heel flick', [SKILL.SOMBRERO]: 'Sombrero',
+};
 export function beginTrick(w, p) {
   const b = w.ball, s = stOf(p);
   if (!isFree(p) || p.z > 0 || w.m.spTaker === p.id) return;
@@ -1032,17 +1068,26 @@ export function beginTrick(w, p) {
     p.chgBtn = 0; p.chg = 0; p.qa = 0;
     w.events.push({ k: 'trick', name: TRICK_NAMES[kind], q, id: p.id, x: p.x, y: p.y });
   };
+  const [sx, sy, sm] = stickOf(p), fx = Math.cos(p.face), fy = Math.sin(p.face);
   if (b.owner === p.id && !b.held) {
-    const [sx, sy, sm] = stickOf(p), fx = Math.cos(p.face), fy = Math.sin(p.face);
-    const lat = sm > 0.3 ? -fy * sx + fx * sy : 0; // (+: to his left)
+    const lat = sm > 0.3 ? -fy * sx + fx * sy : 0, fwd = sm > 0.3 ? fx * sx + fy * sy : 1; // (lat +: to his left)
     const q = clamp(1 - (Math.hypot(b.x - p.x, b.y - p.y) - 0.5) / 0.35, 0, 1);
-    if (Math.abs(lat) > 0.6) start(SKILL.ELASTICO, 16, q, Math.sign(lat));
+    if (fwd < -0.5) start(SKILL.HEEL, 16, q);
+    else if (Math.abs(lat) > 0.6 && fwd > 0.45) start(SKILL.CROQUETA, 14, q, Math.sign(lat));
+    else if (Math.abs(lat) > 0.6) start(SKILL.ELASTICO, 16, q, Math.sign(lat));
     else { start(SKILL.RAINBOW, 22, q); p.kv = Math.hypot(p.vx, p.vy); } // (kv: his pace going into it – he jogs on through it)
     return;
   }
-  if (b.owner < 0 && b.last === p.id && b.kt < 90 && b.vz < 0 && Math.hypot(b.x - p.x, b.y - p.y) < 1.0) {
-    const at = (z) => (b.vz + Math.sqrt(b.vz * b.vz + 2 * G * Math.max(0, b.z - z))) / G; // (when it's down to z)
-    const neckZ = s.H * 0.66;
+  const at = (z) => (b.vz + Math.sqrt(b.vz * b.vz + 2 * G * Math.max(0, b.z - z))) / G; // (when it's down to z)
+  const neckZ = s.H * 0.66, dBall = Math.hypot(b.x - p.x, b.y - p.y);
+  if (b.owner < 0 && b.vz < 0 && sm > 0.3 && b.z > 0.3 && b.z < Math.min(1.3, neckZ + 0.3) && dBall < 1.1) {
+    // the sombrero: flicked up the way the stick points (kx, ky: where to)
+    const q = clamp(1 - Math.abs(b.z - 0.8) / 0.3, 0, 1), tc = Math.max(2, Math.round(at(0.35) / DT));
+    start(SKILL.SOMBRERO, tc + 12, q); p.stB = tc;
+    p.kx = sx; p.ky = sy; p.vx *= 0.7; p.vy *= 0.7;
+    return;
+  }
+  if (b.owner < 0 && b.last === p.id && b.kt < 90 && b.vz < 0 && dBall < 1.0) {
     if (b.z < neckZ + 0.3) {
       const q = clamp(1 - Math.abs(b.z - 0.7) / 0.25, 0, 1), tc = Math.max(2, Math.round(at(0.25) / DT));
       start(SKILL.AROUND, tc + 10, q); p.stB = tc;
@@ -1075,6 +1120,14 @@ function trickBall(o) {
     // out to the other side with the outside of the foot, snapped back across
     const out = -o.stB * 0.3, back = o.stB * 0.38;
     return [0.42 + 0.08 * e(t / 6), t < 6 ? out * e(t / 6) : out + (back - out) * e((t - 6) / 7), BALL_R];
+  }
+  if (o.stA === SKILL.CROQUETA && t < 8) {
+    // rolled across from the one foot to the other
+    return [0.36, o.stB * (-0.12 + 0.4 * e(t / 5)), BALL_R];
+  }
+  if (o.stA === SKILL.HEEL && t < 6) {
+    // stepped over: the heel comes back onto it
+    return [0.42 - 0.38 * e(t / 5), 0, BALL_R];
   }
   if (o.stA === SKILL.RAINBOW && t < 10) {
     // drawn back between his feet and rolled up the back of his leg
@@ -1286,7 +1339,7 @@ function blockLimb(p, s) {
 
 // Swept ball vs player bodies, so a hard shot can't pass through someone
 // standing in its way. Players who could simply control the ball are left to
-// possession(); keepers in their box are handled by gkSave().
+// possession(); keepers in their box with the catch key are handled by gkSave().
 const BODY_R = 0.24;
 function blockContacts(w) {
   const b = w.ball;
@@ -1297,7 +1350,7 @@ function blockContacts(w) {
     if (b.last === p.id && b.kt < 10) continue;
     if (p.st === ST.CONTROL) continue; // taking it on a part / just has (see cushion)
     if (b.nut === p.id && b.z < 0.6) continue;      // it's gone past (or through) him
-    if (p.role === ROLE.GK && inOwnBox(w, p.team, p.x, p.y, 0.6) && inOwnBox(w, p.team, b.x, b.y, 0.3)) continue;
+    if (p.role === ROLE.GK && catchKey(p) && inOwnBox(w, p.team, p.x, p.y, 0.6) && inOwnBox(w, p.team, b.x, b.y, 0.3)) continue;
     const rs = Math.hypot(b.vx - p.vx, b.vy - p.vy, b.vz - p.vz);
     const blocking = p.st === ST.BLOCK && !p.hit && p.stT >= 2 && p.stT <= 22;
     if (!blocking && (rs < 9 || (canControl(p) && rs < 15))) continue;
@@ -1345,6 +1398,7 @@ function deflect(w, p, nx, ny, nz, limb) {
   }
   b.spin = 0; b.ts = 0;
   b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.kt = 0; b.tgt = -1; b.atT = 0;
+  p.kq = KQ.PLAIN;
   invalidatePath(w);
   w.events.push({ k: 'block', x: b.x, y: b.y, z: b.z, v: Math.abs(vn), id: p.id });
 }
@@ -1735,6 +1789,7 @@ export function tryControl(w, p) {
 
 function beginControl(w, p, part, bx, by, bz, self, tk = C_CONTACT[part]) {
   const s = stOf(p);
+  p.kq = KQ.PLAIN; // (his next touch isn't a no-look pass)
   if (self) {
     // the touch goes where the stick points – or, with it neutral, forwards,
     // towards the goal he's attacking (kx, ky: that direction)
@@ -1831,6 +1886,8 @@ function cushion(w, p, s) {
 // hooked round with the side of the foot, softer – up to nearly square (a
 // ball into his own goal turned round the post)
 const SLIDE_TURN = 1.45, SLIDE_HOOK = 1.0;
+// a no-look pass: how much further off it can go (rad)
+const NOLOOK_ERR = 0.03;
 // a header: how fast he turns in the air towards where it's going (rad/s),
 // and how far off the way he faces his neck can still send it (rad) –
 // softer and less true the further it's turned
@@ -1979,6 +2036,7 @@ function launch(w, p, tech) {
     ux = nux; uy = nuy;
   }
   if (tech === ST.SLIDE) err += 0.03 + 0.03 * Math.min(misalign, SLIDE_TURN); // (a stab at it, going down)
+  if (tech === ST.KICK && p.kq === KQ.NOLOOK) err += NOLOOK_ERR; // (not looking at it)
   if (tech === ST.HEADER) err += 0.04 * Math.min(misalign, HEAD_TURN) / HEAD_TURN; // (glanced, the neck turned)
   if (kind === KICK.SHOT || kind === KICK.FINESSE) err *= SHOT_ERR; // (the same for everyone: the AI's skill is how it presses the keys)
   if (err > 0) {
@@ -2549,7 +2607,7 @@ function stateUpdate(w, p, s) {
           // turning with the ball to face the goal: the strike waits for it
           turnToward(p, want, s.turn * TURN_K * DT);
           if (p.stT === p.stA && Math.abs(angDiff(p.face, want)) > TURN_OK) { p.stA++; p.stDur++; }
-        } else if (p.kq !== KQ.HEEL && p.stT < p.stA) turnToward(p, want, s.turn * 1.6 * DT);
+        } else if (p.kq !== KQ.HEEL && p.kq !== KQ.NOLOOK && p.stT < p.stA) turnToward(p, want, s.turn * 1.6 * DT);
       }
       if (!p.hit) {
         if (p.stB === 0) {
@@ -2678,6 +2736,80 @@ function trickStep(w, p) {
       touchedBy(w, p); invalidatePath(w);
       w.events.push({ k: 'kick', x: b.x, y: b.y, z: b.z, v: 4, id: p.id });
     }
+  } else if (p.stA === SKILL.CROQUETA) {
+    if (t < 5) { p.vx *= 0.9; p.vy *= 0.9; }
+    if (t === 5) {
+      // away on the diagonal with it: a man close in front going in for it
+      // is past it – his challenge comes too late; mistimed, it runs loose
+      if (b.owner === p.id && q > 0.2) {
+        const lat = (2.6 + 1.2 * agil) * (0.6 + 0.4 * q), fwd = Math.max(2.2, p.vx * fx + p.vy * fy);
+        p.vx = fx * fwd + lx * p.stB * lat; p.vy = fy * fwd + ly * p.stB * lat;
+        for (const o of w.players) {
+          if (o.team === p.team) continue;
+          const dx = p.x - o.x, dy = p.y - o.y, d = Math.hypot(dx, dy);
+          if (d > 2.4 || (Math.cos(o.face) * dx + Math.sin(o.face) * dy) / (d || 1) < 0.2) continue;
+          o.tcd = Math.max(o.tcd, 22);
+          if (isFree(o) && rnd(w) < clamp(0.15 + (s.turn - stOf(o).turn) * 0.04 + agil * 0.1 + 0.25 * q, 0.05, 0.6)) { o.st = ST.STUMBLE; o.stT = 0; o.stDur = 12; }
+        }
+      } else if (b.owner === p.id) {
+        b.owner = -1; b.vx = p.vx + lx * p.stB * 2.8; b.vy = p.vy + ly * p.stB * 2.8; b.vz = 0; b.last = p.id; b.kt = 0; invalidatePath(w);
+      }
+    }
+    if (t > 9) { p.vx *= 0.96; p.vy *= 0.96; }
+  } else if (p.stA === SKILL.HEEL) {
+    p.vx *= 0.88; p.vy *= 0.88;
+    if (t === 5 && b.owner === p.id) {
+      // off his heel: to the team-mate behind him most nearly the way he
+      // faces away (rolled to arrive at a pace he can take), or a few metres
+      // into the space there – then he spins round after it
+      let mate = null, best = 1e9;
+      for (const o of w.players) {
+        if (o === p || o.team !== p.team) continue;
+        const dx = o.x - p.x, dy = o.y - p.y, d = Math.hypot(dx, dy), c = -(dx * fx + dy * fy) / (d || 1);
+        if (d < 2.5 || d > 22 || c < 0.75) continue;
+        const score = (1 - c) * 20 + d * 0.15 + (o.role === ROLE.GK ? 4 : 0);
+        if (score < best) { best = score; mate = o; }
+      }
+      const tx = mate ? mate.x + mate.vx * 0.4 : p.x - fx * (3 + 2 * q), ty = mate ? mate.y + mate.vy * 0.4 : p.y - fy * (3 + 2 * q);
+      const bx = p.x - fx * 0.12, by = p.y - fy * 0.12, d = Math.hypot(tx - bx, ty - by);
+      const a = Math.atan2(ty - by, tx - bx) + (1 - q) * gauss(w) * 0.35;
+      const v = Math.min(18, groundSpeedFor(d, mate ? 4 + 0.08 * d : 0.8)) * (0.75 + 0.25 * q);
+      b.owner = -1; b.held = 0; b.x = bx; b.y = by; b.z = BALL_R; b.vz = 0.3;
+      b.vx = Math.cos(a) * v; b.vy = Math.sin(a) * v;
+      touchedBy(w, p);
+      b.tgt = mate ? mate.id : p.id; b.lastTeam = p.team;
+      p.kq = KQ.NOLOOK; p.kcd = 10; // (read late – see the AI's reacting)
+      if (!mate) { const [sx, sy, sm] = stickOf(p); p.stB = sm > 0.3 && -fy * sx + fx * sy < 0 ? -1 : 1; }
+      w.events.push({ k: 'kick', x: b.x, y: b.y, z: b.z, v: 4, id: p.id });
+    }
+    if (p.stB && t > 5 && t <= 13) {
+      p.face += p.stB * Math.PI / 8;
+      if (p.face > Math.PI) p.face -= TAU; else if (p.face < -Math.PI) p.face += TAU;
+    }
+  } else if (p.stA === SKILL.SOMBRERO) {
+    p.vx *= 0.9; p.vy *= 0.9;
+    if (t === p.stB && b.owner < 0 && !struckByOther(b, p)) {
+      const d = Math.hypot(b.x - p.x - fx * 0.3, b.y - p.y - fy * 0.3);
+      if (d < 0.8 && b.z < 0.9) {
+        // up over the head of a man in front, to come down a few metres on as
+        // he runs round him (the man caught looking up a moment); mistimed,
+        // lower, shorter and off line
+        const err = (1 - q) * gauss(w) * 0.6, a = Math.atan2(p.ky, p.kx) + err, ux = Math.cos(a), uy = Math.sin(a);
+        const vz = 5.0 + 1.4 * q, T = 2 * vz / G, v = (2.6 + 2 * q) / T + Math.max(0, p.vx * ux + p.vy * uy) * 0.5;
+        b.z = Math.max(b.z, 0.3); b.vz = vz; b.vx = ux * v; b.vy = uy * v;
+        touchedBy(w, p);
+        b.tgt = p.id; b.lastTeam = p.team;
+        p.kcd = 12;
+        for (const o of w.players) {
+          if (o.team === p.team) continue;
+          const dx = o.x - p.x, dy = o.y - p.y, along = dx * ux + dy * uy;
+          if (along > 0.3 && along < 3 && Math.abs(-uy * dx + ux * dy) < 1.2) o.tcd = Math.max(o.tcd, 24);
+        }
+        const sp = Math.max(3, Math.hypot(p.vx, p.vy));
+        p.vx = ux * sp; p.vy = uy * sp;
+        w.events.push({ k: 'kick', x: b.x, y: b.y, z: b.z, v: 3, id: p.id });
+      } else p.stDur = t + 6;
+    }
   } else if (p.stA === SKILL.AROUND) {
     p.vx *= 0.85; p.vy *= 0.85;
     if (t === p.stB && b.owner < 0 && q > 0 && b.last === p.id) {
@@ -2770,7 +2902,7 @@ function tackleContact(w, p, ps) {
 function keeperJump(w, p, s) {
   const b = w.ball;
   if (p.role !== ROLE.GK || p.z > 0 || p.vz !== 0 || !isFree(p) || b.owner >= 0 || p.kcd > 0) return;
-  if (!keeperHands(w, p) || !inOwnBox(w, p.team, p.x, p.y, 0.6) || (b.last === p.id && b.kt < 20)) return;
+  if (!keeperHands(w, p) || !catchKey(p) || !inOwnBox(w, p.team, p.x, p.y, 0.6) || (b.last === p.id && b.kt < 20)) return;
   const rvx = b.vx - p.vx, rvy = b.vy - p.vy, v2 = rvx * rvx + rvy * rvy;
   if (v2 < 4) return;
   const tc = ((p.x - b.x) * rvx + (p.y - b.y) * rvy) / v2; // when it's closest
@@ -3181,6 +3313,9 @@ function gkSave(w, p) {
   if (!inOwnBox(w, p.team, b.x, b.y, 0.3) || !inOwnBox(w, p.team, p.x, p.y, 0.6)) return false;
   if (p.st === ST.FALLEN || (p.st === ST.DIVE && p.stT > 30) || !(isFree(p) || p.st === ST.DIVE)) return false;
   if (b.last === p.id && b.kt < 20) return false;
+  // (on his feet without the catch key: no hands – a foot out or his body on
+  // reflex at most; a ball at him otherwise just comes off him, see blockContacts)
+  const keyed = p.st === ST.DIVE || catchKey(p);
   const s = stOf(p);
   // the parts of him that can get to it – segments, how close counts for each,
   // and which are legs (no hands: a block, never a catch)
@@ -3209,7 +3344,7 @@ function gkSave(w, p) {
     const fx = Math.cos(p.face) * 0.2, fy = Math.sin(p.face) * 0.2;
     segs = [[p.x + fx, p.y + fy, p.z + 0.1, p.x + fx, p.y + fy, p.z + s.H + 0.25]];
     tols = [0.6];
-    if (keeperBig(w, p)) {
+    if (keyed && keeperBig(w, p)) {
       // made himself big: an arm out to each side, shoulder to open hand
       for (const side of [-1, 1]) {
         const lx = -Math.sin(p.face) * side, ly = Math.cos(p.face) * side;
@@ -3265,6 +3400,7 @@ function gkSave(w, p) {
   // are – off his chest or stomach, hard to hold
   const zb = b.z - p.z;
   const body = !legs && !p.spr && p.st !== ST.DIVE && b.kt < 12 && zb > 0.48 * s.H && zb < s.H && dPass < 0.3 && Math.hypot(b.vx, b.vy) > 18;
+  if (!keyed && !legs && !body) return false;
   if (victim) {
     // one go per dive: the looser the touch, the likelier he gets it
     p.hit = 1;
@@ -3299,14 +3435,14 @@ function gkSave(w, p) {
   }
   // a high ball, standing or in the air: punched clear – a human with the
   // shoot key down, the AI when he'd have to catch it in a crowd
-  if (!p.spr && p.st !== ST.DIVE && zr > sH * 0.7) {
+  if (!p.spr && p.st !== ST.DIVE && zr > sH * 0.7 && keyed) {
     // (the shot key held for it: the AI's keeper holds it too, when he means to punch)
     if ((p.qa & KICK_MASK) === KT.GOAL) { punchClear(w, p, at, contest); return true; }
   }
   // going back under a ball dropping in over his head: tip it over the bar
   // rather than take it and carry it over his own line
   const back = (p.vx * teamDir(w, p.team)) < -1.2;
-  if (tgt.on && back && !p.spr && zr > sH * 1.05 && rnd(w) < 0.9 && tipAway(w, p, s, tgt, at)) return true;
+  if (tgt.on && back && keyed && !p.spr && zr > sH * 1.05 && rnd(w) < 0.9 && tipAway(w, p, s, tgt, at)) return true;
   // Holding on to it: with two hands on it a keeper catches it – only a
   // rocket gets spilled; with one hand he can only push it away, unless it's
   // a gentle one he can pull in. Someone challenging him for it makes it harder.
@@ -3317,14 +3453,14 @@ function gkSave(w, p) {
   if (p.spr === GKB.STAR) pc *= 0.3; // arms and legs out: it only drops to him if it's gentle
   if (body) pc *= 0.5;
   pc = clamp((pc - awkward) * hands, 0.04, 0.99);
-  if (rnd(w) < pc) {
+  if (keyed && rnd(w) < pc) {
     b.owner = p.id; b.held = 1; b.vx = b.vy = b.vz = 0; b.spin = 0; b.ts = 0;
     b.last = p.id; b.lastTeam = p.team; b.dl = 0; b.tgt = -1; b.sh = -1;
     p.hold = 0; p.chgBtn = 0; p.qa = 0;
     w.events.push({ k: 'catch', x: b.x, y: b.y });
   } else {
     // going in: tipped over the bar or round the post if he can
-    const arm = !leg && (!p.spr || (p.spr === GKB.STAR && segs[part][5] > p.z + 0.85 * sH));
+    const arm = keyed && !leg && (!p.spr || (p.spr === GKB.STAR && segs[part][5] > p.z + 0.85 * sH));
     if (tgt.on && !legs && arm && rnd(w) < 0.85 && tipAway(w, p, s, tgt, at)) return true;
     // parried: pushed out wide (to the side it was on) rather than back into
     // the middle, and up – off his legs or a block's body it stays lower. A
@@ -3500,7 +3636,7 @@ function possession(w) {
     if (b.nut === p.id) continue;
     const settling = p.st === ST.CONTROL && p.hit === 1; // brought it down: collects it at his feet
     if (!canControl(p) && !(settling && b.z < 0.55)) continue;
-    if (p.role === ROLE.GK && keeperHands(w, p) && inOwnBox(w, p.team, b.x, b.y, 0.3) && inOwnBox(w, p.team, p.x, p.y, 0.6)) continue;
+    if (p.role === ROLE.GK && catchKey(p) && keeperHands(w, p) && inOwnBox(w, p.team, b.x, b.y, 0.3) && inOwnBox(w, p.team, p.x, p.y, 0.6)) continue;
     // (his own flick or keepy-up in the air isn't snatched off its flight:
     // it comes down to him – see tryControl)
     if (b.last === p.id && b.kt < 60 && b.z >= 0.45 && !settling) continue;
@@ -3546,7 +3682,7 @@ function possession(w) {
   }
   b.owner = p.id; b.held = 0; b.vz = 0; b.z = BALL_R; b.spin = 0; b.ts = 0; b.tgt = -1; b.sh = -1;
   b.last = p.id; b.lastTeam = p.team; b.dl = 0;
-  p.dph = 0;
+  p.dph = 0; p.kq = KQ.PLAIN;
   if (p.st === ST.CONTROL) { p.st = ST.IDLE; p.stT = 0; p.hit = 0; }
   w.events.push({ k: 'trap', x: b.x, y: b.y, id: p.id });
   if (p.qa && !p.chgBtn) {

@@ -2,12 +2,12 @@
 // world's seeded RNG) so that clients predicting AI players get the same
 // decisions as the server.
 
-import { G, BTN, KT, KH, KICK_MASK, packKick, PHASE, ST, ROLE, SP, KICK, GKB, FOOT, JOG_TILT } from './constants.js';
+import { G, BTN, KT, KH, KICK_MASK, packKick, PHASE, ST, ROLE, SP, KICK, GKB, FOOT, JOG_TILT, KQ } from './constants.js';
 import {
   rnd, teamDir, pitchOf, pById, stOf, startKick, blockKind, slotOf, slotIndex, shootingPractice,
   inOwnBox, clamp, encodeStick, ballPath, blockPlan, wantsBlock, loftTime,
   groundSpeedFor, passEndSpeed, MU, CF, byPerson, keeperBig, bigReach, exitPoint, keepInReach, footFor, footCurl, offsidePos,
-  tiltFor, CHG_MAX, CELEB_TICKS, goalWeight,
+  tiltFor, CHG_MAX, CELEB_TICKS, goalWeight, keeperHands,
 } from './sim.js';
 import { SHAPE, MARK } from './learned.js';
 import { shotHole, aiReact, POST_IN } from './lanes.js';
@@ -60,6 +60,15 @@ const sprintTilt = (p, floor = 0.05) => (p.stam > floor ? 1 : JOG_TILT);
 function tapKey(p, target, kh = KH.GROUND) {
   p.ib = (p.ib & ~KICK_MASK & ~(3 << 3)) | packKick(target, kh);
 }
+
+// How far off where he wants to be (m) before a man without the ball sprints
+// rather than jogs, when there's no race on and no runner to keep with: back
+// into shape (after a loose ball in our half / anywhere else, and our side's
+// shape on the ball), a marker (the ball in our half / further off), the
+// cover behind the presser, support for the man on the ball in their third, a
+// loose ball he'll get to first anyway. (Real players sprint 1-4% of the
+// time; ours, with shorter distances than these, were flat out a quarter of it.)
+const PACE = { shapeOurs: 16, shape: 22, markOurs: 10, mark: 16, cover: 8, support: 9, loose: 6 };
 
 // tau: no hurry – he goes at the pace that gets him there in about tau
 // seconds (a walk when it's near, a jog when it's moved on a way), and only
@@ -852,8 +861,8 @@ function supportThink(w, p, owner) {
     press = Math.min(press, Math.hypot(o.x - owner.x, o.y - owner.y));
   }
   if (run && (p.aiX - line) * dir > -2 && press > 2.5) moveTo(p, p.aiX, p.aiY, 3, 0.6);
-  else if (p.aiS) moveTo(p, p.aiX, p.aiY, 6, 0.6, SHARP); // (supporting the man on the ball in their third)
-  else moveTo(p, p.aiX, p.aiY, run ? 10 : 12, 0.6, run ? 0.9 : CALM);
+  else if (p.aiS) moveTo(p, p.aiX, p.aiY, PACE.support, 0.6, SHARP); // (supporting the man on the ball in their third)
+  else moveTo(p, p.aiX, p.aiY, run ? PACE.shape : PACE.shape + 4, 0.6, run ? 0.9 : CALM);
 }
 
 function defendThink(w, p, c, owner) {
@@ -896,7 +905,7 @@ function defendThink(w, p, c, owner) {
         for (const o of w.players) if (o.team !== p.team && o.st !== ST.FALLEN) tAny = Math.min(tAny, c.ic.get(o.id).t);
         const gj = go.t < 9 && tAny > go.t + 1 && !(b.tgt === p.id && b.lastTeam === p.team) ? intercept(p, c.path, 2.2, stOf(p).jog) : null;
         if (gj && gj.t < 9 && gj.t + 0.5 < tAny) moveTo(p, gj.x, gj.y, 99, 0.05, Math.max(0.3, gj.t));
-        else moveTo(p, go.x, go.y, go.t > 0.5 ? 2 : 99, 0.05);
+        else moveTo(p, go.x, go.y, go.t > 0.5 ? PACE.loose : 99, 0.05);
       }
       const d = Math.hypot(b.x - p.x, b.y - p.y);
       if (!p.qa && !p.akK && d < 7) {
@@ -940,15 +949,15 @@ function defendThink(w, p, c, owner) {
     for (const q of w.players) if (q !== p && q.team === p.team && q.role === ROLE.OUT && (q.x - p.x) * dir < 0) deeper++;
     const beaten = deeper < 2 && b.lastTeam !== p.team && b.x * dir < 0 && (p.x - b.x) * dir > 0 && (p.x - tx) * dir > 8;
     if (beaten) moveTo(p, tx, ty, 8, 0.6);
-    else if (b.x * dir < 0) moveTo(p, tx, ty, 8, 0.6, SHARP);
-    else moveTo(p, tx, ty, 14, 0.6, CALM);
+    else if (b.x * dir < 0) moveTo(p, tx, ty, PACE.shapeOurs, 0.6, SHARP);
+    else moveTo(p, tx, ty, PACE.shape, 0.6, CALM);
     return;
   }
   const ogx = -dir * pit.L / 2;
   const dGoalB = Math.hypot(owner.x - ogx, owner.y);
   const mk = c.mark.get(p.id);
   p.ai = c.presser[p.team] === p.id ? AI_PRESS : c.cover[p.team] === p.id ? AI_COVER : mk !== undefined ? AI_MARK : 0;
-  if (p.ai === AI_COVER) { const [tx, ty] = c.coverAt[p.team]; guardTo(p, tx, ty, 6, 0.3, SHARP); return; }
+  if (p.ai === AI_COVER) { const [tx, ty] = c.coverAt[p.team]; guardTo(p, tx, ty, PACE.cover, 0.3, SHARP); return; }
   if (mk !== undefined) p.aiY = mk;
   if (c.presser[p.team] === p.id) {
     // near our goal and not goal-side of him (beaten, or off his shooting
@@ -1026,8 +1035,8 @@ function defendThink(w, p, c, owner) {
   // one to mark, far from our goal – an easy pace)
   const o = mk !== undefined ? pById(w, mk) : null, hurry = o && Math.hypot(o.vx, o.vy) > stOf(o).jog * 1.05;
   if (hurry) guardTo(p, tx, ty, 3, 0.5);
-  else if (owner.x * dir < 0) guardTo(p, tx, ty, 5, 0.5, SHARP);
-  else guardTo(p, tx, ty, 9, 0.5, 0.9);
+  else if (owner.x * dir < 0) guardTo(p, tx, ty, PACE.markOurs, 0.5, SHARP);
+  else guardTo(p, tx, ty, PACE.mark, 0.5, 0.9);
 }
 
 // Where a keeper stands against a ball at (bx, by): on the bisector of the
@@ -1441,11 +1450,28 @@ function gkThink(w, p, c) {
 // Reaction: a kick by the other side is seen a moment late (longer when it's
 // struck behind his back – lanes.aiReact); till then he carries on as he was.
 // His own side reads it as it's played.
+// The catch key (the control key), held as a ball comes at him in his box –
+// as a person holds it (see the sim's catchKey): once he has reacted to it,
+// when its path comes near enough to get to in the next second. (A dive or
+// a punch is a key of its own: then not.)
+function catchReady(w, p, c) {
+  const b = w.ball, s = stOf(p);
+  if (b.owner >= 0 || (p.ib & KICK_MASK) || (p.qa & KICK_MASK) === KT.GOAL || !keeperHands(w, p) || !inOwnBox(w, p.team, p.x, p.y, 0.6)) return; // (the punch key just let go: still meant)
+  if ((b.last === p.id && b.kt < 20) || (b.lastTeam !== p.team && b.kt < lvlOf(w).react)) return;
+  const top = s.H + s.jump + 0.6;
+  for (let k = 0; k <= 10; k++) {
+    const q = c.path[k];
+    if (q.z < top && Math.hypot(q.x - p.x, q.y - p.y) < 1.2 + 3 * k * 0.1) { p.ib |= packKick(KT.CTRL, KH.GROUND); return; }
+  }
+}
+
+const NOLOOK_READ = 0.25; // s
 function reacting(w, p) {
   const b = w.ball;
   if (w.m.phase !== PHASE.PLAY || p.role !== ROLE.OUT || b.owner >= 0 || b.last < 0 || b.lastTeam === p.team || b.kt >= 40) return false;
   const k = pById(w, b.last);
-  return !!k && b.kt / 60 < aiReact(w, p, k.x, k.y);
+  // (a no-look pass or a back-heel flick: read later)
+  return !!k && b.kt / 60 < aiReact(w, p, k.x, k.y) + (k.kq === KQ.NOLOOK ? NOLOOK_READ : 0);
 }
 
 export function aiThink(w, p) {
@@ -1503,7 +1529,7 @@ function think(w, p) {
     return;
   }
   const c = analyse(w);
-  if (p.role === ROLE.GK) { gkThink(w, p, c); return; }
+  if (p.role === ROLE.GK) { gkThink(w, p, c); catchReady(w, p, c); return; }
   const b = w.ball;
   if (b.owner === p.id) { carrierThink(w, p); return; }
   if (p.ai === AI_CARRY) p.ai = 0;

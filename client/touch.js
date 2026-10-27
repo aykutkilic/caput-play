@@ -6,7 +6,7 @@
 //    his feet / head), Goal and Self. WHERE on a bar you press sets the height
 //    (top = head / top corner, middle = chest, bottom = feet / low; slide the
 //    finger to change it), HOW LONG you hold sets the power. Above them Sprint
-//    (R1) and R2.
+//    (R1), R2 and Trick (the trick key – R on a keyboard, R3 on a pad).
 // Everything is multi-touch. The state is written into `input.touch` once per event.
 
 import { BTN, KT, KH, packKick } from '../shared/constants.js';
@@ -17,16 +17,20 @@ const BARS = [
   { t: KT.GOAL, glyph: 'Shoot', hint: 'goal', cls: 'goal' },
   { t: KT.SELF, glyph: 'Self', hint: 'lift / skill', cls: 'self' },
 ];
-// The same keys defend: the bars say what they do right now.
+// The same keys defend: the bars say what they do right now. (A ball coming
+// at the keeper: the Catch bars are the catch key – see the sim's catchKey.)
+const CATCH_MODES = new Set(['keeperAir', 'keeperCatch']);
 export const BAR_LABELS = {
   attack: [['Run', 'through'], ['Pass', 'team-mate'], ['Shoot', 'goal'], ['Self', 'lift / skill']],
   defend: [['GK out', 'send keeper'], ['Press', 'hold'], ['Slide', 'tackle'], ['Jockey', 'hold']],
   keeper: [['Rush', 'come out'], ['Press', 'hold'], ['Dive', 'save'], ['Block', '1v1']],
-  keeperAir: [['Catch', 'auto'], ['Catch', 'auto'], ['Punch', 'clear'], ['Catch', 'auto']],
+  keeperAir: [['Catch', 'hold'], ['Catch', 'hold'], ['Punch', 'clear'], ['Catch', 'hold']],
+  keeperCatch: [['Catch', 'hold'], ['Catch', 'hold'], ['Dive', 'save'], ['Catch', 'hold']],
   block: [['Block', 'leg / body'], ['Block', 'leg / body'], ['Block', 'leg / body'], ['Block', 'leg / body']],
 };
 
 const SHOULDER = [
+  { kick: KT.TRICK, glyph: '✦', hint: 'Trick', cls: 'small' },
   { bit: BTN.R2, glyph: 'R2', hint: 'Control', cls: 'small' },
   { bit: BTN.SPRINT, glyph: 'R1', hint: 'Get ball', cls: '' },
 ];
@@ -35,7 +39,7 @@ export class TouchControls {
   constructor(input, onFirstTouch) {
     this.input = input;
     this.onFirstTouch = onFirstTouch;
-    this.held = new Map();    // pointerId -> shoulder button bit
+    this.held = new Map();    // pointerId -> shoulder button (SHOULDER entry)
     this.kick = null;         // { id, t, h, el } – the kick bar being held
     this.stick = null;        // { id, x0, y0 }
     this.sx = 0; this.sy = 0; this.mag = 0; this.rim = false;
@@ -60,14 +64,14 @@ export class TouchControls {
         e.preventDefault();
         this.first();
         el.setPointerCapture(e.pointerId);
-        this.held.set(e.pointerId, def.bit);
+        this.held.set(e.pointerId, def);
         el.classList.add('on');
         this.write();
       });
       const up = (e) => {
         if (!this.held.has(e.pointerId)) return;
         this.held.delete(e.pointerId);
-        if (![...this.held.values()].includes(def.bit)) el.classList.remove('on');
+        if (![...this.held.values()].includes(def)) el.classList.remove('on');
         this.write();
       };
       el.addEventListener('pointerup', up);
@@ -118,10 +122,11 @@ export class TouchControls {
 
   radius() { return this.stickEl.offsetWidth / 2 || 55; }
 
-  // 'attack' | 'defend' | 'keeper' | 'block'
+  // 'attack' | 'defend' | 'keeper' | 'keeperAir' | 'keeperCatch' | 'block'
   setMode(mode) {
     if (mode === this.mode || !BAR_LABELS[mode]) return;
     this.mode = mode;
+    if (this.kick) this.write(); // (a bar held on: what it presses now)
     this.root.dataset.mode = mode;
     this.root.querySelectorAll('.tbar').forEach((el, i) => {
       const [glyph, hint] = BAR_LABELS[mode][i];
@@ -169,9 +174,11 @@ export class TouchControls {
   }
 
   write() {
-    let b = 0;
-    for (const bit of this.held.values()) b |= bit;
-    if (this.kick) b |= packKick(this.kick.t, this.kick.h);
+    let b = 0, trick = false;
+    for (const d of this.held.values()) { if (d.kick) trick = true; else b |= d.bit; }
+    // (the trick button over a kick bar: two kicks can't be packed together)
+    if (trick) b |= packKick(KT.TRICK, KH.GROUND);
+    else if (this.kick) b |= packKick(CATCH_MODES.has(this.mode) && this.kick.t !== KT.GOAL ? KT.CTRL : this.kick.t, this.kick.h);
     const t = this.input.touch;
     t.x = this.sx; t.y = this.sy; t.mag = this.mag; t.b = b;
   }

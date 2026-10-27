@@ -52,7 +52,7 @@ export const PART = { FOOT: 0, THIGH: 1, CHEST: 2, HEAD: 3 };
 export const MEET = { NONE: 0, AT: 1, WITH: 2 };
 
 // Technique moves (ST.SKILL, kind stored in the player's stA)
-export const SKILL = { LIFT: 1, KNOCK: 2, FEINT_L: 3, FEINT_R: 4, DRAGBACK: 5, ELASTICO: 6, RAINBOW: 7, AROUND: 8, NECK: 9 };
+export const SKILL = { LIFT: 1, KNOCK: 2, FEINT_L: 3, FEINT_R: 4, DRAGBACK: 5, ELASTICO: 6, RAINBOW: 7, AROUND: 8, NECK: 9, CROQUETA: 10, HEEL: 11, SOMBRERO: 12 };
 
 export const ROLE = { OUT: 0, GK: 1 };
 
@@ -63,8 +63,9 @@ export const SP_NAME = ['', 'Throw-in', 'Corner', 'Goal kick', 'Free kick', 'Pen
 // Kick kinds
 export const KICK = { PASS: 1, LONG: 2, SHOT: 3, THROUGH: 4, CHIP: 5, CLEAR: 6, THROW: 7, PUNT: 8, FINESSE: 9, SELF: 10, DROP: 11, CTRL: 12 };
 // How a shot off the ground is struck (p.kq): facing the goal, plainly; with
-// the back to it, a back-heel or a turn with the ball first
-export const KQ = { PLAIN: 0, HEEL: 1, TURN: 2 };
+// the back to it, a back-heel or a turn with the ball first. (NOLOOK: a pass
+// played looking the other way – R2 held – and the back-heel flick, read late)
+export const KQ = { PLAIN: 0, HEEL: 1, TURN: 2, NOLOOK: 3 };
 // The stick tilt that jogs (less walks, more up to full tilt sprints – sim paceFor)
 export const JOG_TILT = 0.8;
 // Which part of the foot a bent kick is struck with (p.kf): the inside – the

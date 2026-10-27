@@ -770,7 +770,10 @@ function controlMode(w) {
   const b = w.ball, owner = b.owner >= 0 ? pById(w, b.owner) : null;
   const gk = me.role === ROLE.GK && inOwnBox(w, me.team, me.x, me.y, 0.6);
   if (gk && b.owner === me.id && b.held) return 'keeperBall';
-  if (gk && !owner && keeperHands(w, me) && (b.z > 1.2 || b.vz > 2) && inOwnBox(w, me.team, b.x, b.y, 3)) return 'keeperAir';
+  if (gk && !owner && keeperHands(w, me) && inOwnBox(w, me.team, b.x, b.y, 3)) {
+    if (b.z > 1.2 || b.vz > 2) return 'keeperAir';
+    if (Math.hypot(b.vx, b.vy) > 2 && (me.x - b.x) * b.vx + (me.y - b.y) * b.vy > 0) return 'keeperCatch';
+  }
   if (owner && owner.team !== me.team) return me.role === ROLE.GK && inOwnBox(w, me.team, me.x, me.y, 2) ? 'keeper' : 'defend';
   if (!owner && wantsBlock(w, me)) return 'block';
   if (owner === me && !b.held) {
@@ -789,8 +792,9 @@ function showControlMode(w) {
   const k = (name) => `<b>${esc(keyName(input.keys[name]))}</b>`;
   const lines = {
     defend: `Defending: ${k('pass')} press · ${k('shoot')} slide · ${k('knock')} jockey · ${k('through')} keeper out · hold ${k('r2')} to face the ball as you move`,
-    keeper: `Keeper: ${k('shoot')} dive at his feet · ${k('knock')} one-on-one block · ${k('through')} rush out · ${k('pass')} press`,
-    keeperAir: `High ball: you catch it on your own · ${k('shoot')} <b>punches</b> it clear – aim with the stick`,
+    keeper: `Keeper: hold ${k('control')} to <b>catch</b> a shot at you · ${k('shoot')} dive at his feet · ${k('knock')} one-on-one block · ${k('through')} rush out · ${k('pass')} press`,
+    keeperAir: `High ball: hold ${k('control')} (or ${k('r2')}) to <b>catch</b> it · ${k('shoot')} <b>punches</b> it clear – aim with the stick`,
+    keeperCatch: `Ball coming: hold ${k('control')} (or ${k('r2')}) to <b>catch</b> it – without, it only hits you · a kick key dives for it`,
     keeperBall: `In your hands: ${k('pass')} rolls it out · ${k('lob')} throws it (a drop kick when it's far) · ${k('shoot')} punts it`,
     block: 'Hard ball coming: any kick key <b>blocks</b> it',
     backGoal: 'Back to goal: a Goal key <b>turns and shoots</b> (it takes a moment) · close in, a quick tap <b>back-heels</b> it',
@@ -809,6 +813,7 @@ function showControlMode(w) {
 const PAD = {
   up: 'L-stick / D-pad', down: 'L-stick / D-pad', left: 'L-stick / D-pad', right: 'L-stick / D-pad', sprint: 'R1 / RB', r2: 'R2 / RT', jog: 'part tilt',
   through: '△ / Y (+ L1: high)', lob: '✕ / A + L2', pass: '✕ / A', shoot: '□ / X', knock: '○ / B', control: 'L3', lift: '○ / B + L1', trick: 'R3',
+  higher: 'L1: head height · L2: chest', lower: 'neither L1 nor L2: feet',
 };
 let rebinding = null;
 function renderControls() {
@@ -847,7 +852,8 @@ game.onEvent = (e) => {
     case 'nutmeg': sfx.oooh(); break;
     case 'trick': {
       // how well it was timed, over his head (a perfect one gets an oooh)
-      state.bubbles.set(e.id, { text: `${e.name} · ${e.q >= 0.7 ? 'perfect' : e.q > 0.2 ? 'good' : 'mistimed'}`, until: performance.now() + 1300 });
+      // (q < 0: not a timed one – the no-look pass)
+      state.bubbles.set(e.id, { text: e.q < 0 ? e.name : `${e.name} · ${e.q >= 0.7 ? 'perfect' : e.q > 0.2 ? 'good' : 'mistimed'}`, until: performance.now() + 1300 });
       if (e.q >= 0.7 && e.id === state.myId) sfx.oooh();
       break;
     }
