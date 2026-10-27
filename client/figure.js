@@ -262,6 +262,12 @@ function drawTorso(g, cam, J, P, pts, path, w, look, H, S, detail) {
     g.strokeText(String(look.number), cx, cy - size * 0.15);
     g.fillStyle = look.trim;
     g.fillText(String(look.number), cx, cy - size * 0.15);
+    if (look.name) {
+      // a person's name over it
+      const ns = Math.max(5, size * 0.32);
+      g.font = `800 ${ns}px system-ui, sans-serif`; g.lineWidth = Math.max(1, ns * 0.16);
+      g.strokeText(look.name, cx, cy - size * 0.82); g.fillText(look.name, cx, cy - size * 0.82);
+    }
     g.textBaseline = 'alphabetic';
   } else if (facing > 0.1) {
     // collar

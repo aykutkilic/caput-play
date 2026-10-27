@@ -137,7 +137,8 @@ export const CAMERAS = {
   tp: { name: 'Third person', tp: true },
 };
 
-export function lookFor(avatar, team, role) {
+// (name: a person's, for the back of his shirt – none for the AI's players)
+export function lookFor(avatar, team, role, name = '') {
   const tc = TEAM_COLORS[team] || TEAM_COLORS[0];
   const gk = role === ROLE.GK;
   const a = avatar || {};
@@ -154,6 +155,7 @@ export function lookFor(avatar, team, role) {
     gloves: gk ? '#f7f7f7' : null,
     longSleeves: gk,
     number: a.number || 0,
+    name: name ? name.toUpperCase() : '',
     female: a.sex === 1,
   };
 }
@@ -1190,7 +1192,7 @@ export class Renderer {
     const lifts = this.layoutTags(w, ppos, info, ball);
     for (const p of w.players) {
       const [x, y, z] = ppos.get(p.id);
-      this.overlay(w, p, x, y, z, info, lifts.get(p.id) || 0, ball);
+      this.overlay(w, p, x, y, z, info, lifts.get(p.id) || 0);
     }
     // a replay: black bars sliding in top and bottom, like the television's
     this.barK = clamp((this.barK || 0) + (info.replay ? dt * 4 : -dt * 4) / Math.max(0.2, info.replay ? info.replaySpeed || 1 : 1), 0, 1);
@@ -2009,7 +2011,7 @@ export class Renderer {
       const top = Math.max((p._headZ || stats(p.hgt, p.bld).H) + 0.35, z + 0.6);
       if (cam.persp && !cam.ahead(x, y, top, 0.3)) continue;
       const S = cam.persp ? cam.sc(x, y, z) : cam.scale, fs = Math.round(clamp(S * 0.3, 9, 12) * d);
-      const name = info.names.get(p.id) || '';
+      const name = p.human ? info.names.get(p.id) || '' : ''; // (the AI's players: no tag)
       g.font = `600 ${fs}px system-ui, sans-serif`;
       const keys = info.aiKeys && info.aiKeys.on && !p.human ? 12 * d : 0;
       const wd = Math.max(name ? g.measureText(name).width : 0, keys ? 40 * d : 0) + 6 * d;
@@ -2035,7 +2037,7 @@ export class Renderer {
     return out;
   }
 
-  overlay(w, p, x, y, z, info, lift = 0, ball = null) {
+  overlay(w, p, x, y, z, info, lift = 0) {
     const g = this.gu, cam = this.cam, S = cam.persp ? cam.sc(x, y, z) : cam.scale;
     const s = stats(p.hgt, p.bld);
     const top = Math.max((p._headZ || s.H) + 0.35, z + 0.6);
@@ -2085,20 +2087,20 @@ export class Renderer {
       }
       nameY = (p.chgBtn ? by - 24 * this.dpr : by - 4 * this.dpr);
     }
-    // small name tag for everyone (AI players dimmed, more so away from the ball)
-    // a lagging player's stand-in: the AI plays him until his inputs come back
-    const name = (info.names.get(p.id) || '') + (p.human && p.bot && info.names.get(p.id) ? ' · AI' : '');
+    // a small name tag for people (the AI's players have none – their numbers
+    // are on their backs); a lagging player's stand-in: the AI plays him until
+    // his inputs come back
+    const nm = p.human ? info.names.get(p.id) || '' : '', name = nm + (nm && p.bot ? ' · AI' : '');
     if (name) {
       g.font = `600 ${fs}px system-ui, sans-serif`;
       g.textAlign = 'center';
-      const nearBall = !ball || w.ball.owner === p.id || Math.hypot(ball[0] - x, ball[1] - y) < 12;
-      g.globalAlpha = p.human ? 0.95 : (nearBall ? 0.62 : 0.42) * (this.weather === 'snow' ? 1.45 : 1);
+      g.globalAlpha = 0.95;
       g.lineWidth = Math.max(2, 2.5 * this.dpr); g.strokeStyle = this.weather === 'snow' ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.6)';
       g.strokeText(name, X, nameY);
-      g.fillStyle = mine ? '#ffffff' : p.human ? '#f2f6f3' : '#dfe7e2';
+      g.fillStyle = mine ? '#ffffff' : '#f2f6f3';
       g.fillText(name, X, nameY);
       g.globalAlpha = 1;
-      if (p.human && !mine) { g.fillStyle = TEAM_COLORS[p.team].ui; g.fillRect(X - 7 * this.dpr, nameY + 2 * this.dpr, 14 * this.dpr, 1.5 * this.dpr); }
+      if (!mine) { g.fillStyle = TEAM_COLORS[p.team].ui; g.fillRect(X - 7 * this.dpr, nameY + 2 * this.dpr, 14 * this.dpr, 1.5 * this.dpr); }
     }
     // the keys an AI player presses (see aikeys.js), over his name
     if (info.aiKeys) {
@@ -2159,7 +2161,7 @@ export class Renderer {
 function angDiff(a, b) { let d = (b - a) % TAU; if (d > Math.PI) d -= TAU; if (d < -Math.PI) d += TAU; return d; }
 
 // Standalone avatar preview (used by the editor).
-export function drawAvatarPreview(canvas, avatar, team, t) {
+export function drawAvatarPreview(canvas, avatar, team, t, name = '') {
   const g = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
   g.clearRect(0, 0, W, H);
@@ -2170,7 +2172,7 @@ export function drawAvatarPreview(canvas, avatar, team, t) {
   cam.scale = H / 2.35;
   cam.cx = 0; cam.cy = 0;
   // centre the figure vertically: project feet/head
-  const look = lookFor(avatar, team, ROLE.OUT);
+  const look = lookFor(avatar, team, ROLE.OUT, name); // (turning: your name and number on the back)
   const run = (Math.sin(t * 0.5) + 1) / 2 > 0.55;
   const sp = run ? 5.5 : 0;
   const ph = t * (sp ? 7 : 0);

@@ -964,9 +964,10 @@ function updateHud(w, auth, now) {
 function looksFor(w) {
   const looks = new Map();
   for (const p of w.players) {
-    const key = `${p.id}:${p.team}:${p.role}`;
+    // (a person's name on the back of his shirt – not the AI's players')
+    const name = p.human ? state.names.get(p.id) || '' : '', key = `${p.id}:${p.team}:${p.role}:${name}`;
     let l = state.lookCache.get(key);
-    if (!l) { l = lookFor(state.avatars.get(p.id), p.team, p.role); state.lookCache.set(key, l); }
+    if (!l) { l = lookFor(state.avatars.get(p.id), p.team, p.role, name); state.lookCache.set(key, l); }
     looks.set(p.id, l);
   }
   return looks;
@@ -1027,7 +1028,7 @@ function loop(now) {
     const g = renderer.g;
     g.fillStyle = '#0e1a14'; g.fillRect(0, 0, renderer.cam.w, renderer.cam.h);
   }
-  if (draft && !$('editor').hidden) drawAvatarPreview($('edPreview'), draft.avatar, kit, now / 1000);
+  if (draft && !$('editor').hidden) drawAvatarPreview($('edPreview'), draft.avatar, kit, now / 1000, (draft.name || '').trim());
 }
 requestAnimationFrame(loop);
 

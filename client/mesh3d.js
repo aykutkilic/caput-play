@@ -123,6 +123,26 @@ export class Scene3D {
     emitPlayer(this.ghost.batch, J, look, H, wd);
   }
 
+  // The row of the name atlas a shirt name is in – drawn there the first time
+  // (capitals, squeezed to fit a long one); a new name with every row taken
+  // starts the atlas afresh (the names in use are drawn again as they come)
+  nameRow(text) {
+    const A = this.names;
+    let row = A.rows.get(text);
+    if (row !== undefined) return row;
+    if (A.rows.size >= NAME_ROWS) { A.rows.clear(); A.g.clearRect(0, 0, NAME_W, NAME_H * NAME_ROWS); }
+    row = A.rows.size; A.rows.set(text, row);
+    const g = A.g, y = row * NAME_H + NAME_H / 2, fs = NAME_H * 0.72;
+    g.font = `800 ${fs}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    const w = g.measureText(text).width, k = Math.min(1, (NAME_W - 12) / Math.max(1, w));
+    g.save(); g.translate(NAME_W / 2, y); g.scale(k, 1);
+    g.lineWidth = fs * 0.07; g.strokeStyle = 'rgba(0,0,0,0.3)'; g.fillStyle = '#ffffff';
+    g.strokeText(text, 0, 0); g.fillText(text, 0, 0);
+    g.restore();
+    A.t.needsUpdate = true;
+    return row;
+  }
+
   // ------------------------------------------------------------ ball
 
   // squash: { k: 0..1, dir: [x, y, z] } – the ball flattened by a hard kick
@@ -562,12 +582,34 @@ function partMaterial(s3, tapered) {
   return m;
 }
 
+// A print on the back of a shirt (a number, a name): a quad bent round the
+// back the way the torso is – across it (x -0.5..0.5) it falls away as an
+// ellipse PRINT_K times the print's half-width across and PRINT_D of that
+// deep would (see the shirt's sections in emitPlayer) – scaled with its width
+const PRINT_K = 1.5, PRINT_D = 0.6;
+function printGeometry() {
+  const g = new THREE.PlaneGeometry(1, 1, 10, 1), pos = g.attributes.position;
+  for (let i = 0; i < pos.count; i++) { const x = pos.getX(i) * PRINT_K; pos.setZ(i, PRINT_D / PRINT_K * (Math.sqrt(Math.max(0, 1 - x * x)) - 1)); }
+  g.computeVertexNormals();
+  return g;
+}
+
+// People's names for the backs of their shirts, a row each in one texture,
+// white (tinted per player like the numbers) – drawn when a name first turns
+// up (see Scene3D.nameRow)
+const NAME_ROWS = 16, NAME_W = 256, NAME_H = 64;
+function nameAtlas() {
+  const c = document.createElement('canvas'); c.width = NAME_W; c.height = NAME_H * NAME_ROWS;
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  return { c, g: c.getContext('2d'), t, rows: new Map() };
+}
+
 // The shirt numbers 0-99 in one texture, white (tinted per player).
 function numberAtlas() {
   const c = document.createElement('canvas'); c.width = c.height = 640;
   const g = c.getContext('2d');
   g.font = '800 46px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.lineWidth = 6; g.strokeStyle = 'rgba(0,0,0,0.45)'; g.fillStyle = '#ffffff';
+  g.lineWidth = 3; g.strokeStyle = 'rgba(0,0,0,0.3)'; g.fillStyle = '#ffffff'; // (a faint edge: a dark print on a light shirt stays crisp)
   for (let n = 1; n < 100; n++) {
     const x = (n % 10) * 64 + 32, y = Math.floor(n / 10) * 64 + 35;
     g.strokeText(String(n), x, y); g.fillText(String(n), x, y);
@@ -576,7 +618,7 @@ function numberAtlas() {
   return t;
 }
 
-const CAP = { hi: 640, lo: 640, tap: 720, num: 32 };
+const CAP = { hi: 640, lo: 640, tap: 720, num: 32, name: 32 };
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _v = new THREE.Vector3(), _d = new THREE.Vector3();
 // -1 for a mirrored basis: its X turned round, so the part isn't drawn inside
 // out (three.js picks which side of the triangles to draw per mesh, not per
@@ -594,7 +636,9 @@ class Batch {
   constructor(s3, layer = 0) {
     const tap = new THREE.CylinderGeometry(1, 1, 1, 12, 1, false).translate(0, 0.5, 0);
     tap.setAttribute('taper', new THREE.InstancedBufferAttribute(new Float32Array(CAP.tap), 1).setUsage(THREE.DynamicDrawUsage));
-    const num = s3.geo.plane.clone();
+    this.s3 = s3;
+    if (!s3.printGeo) s3.printGeo = printGeometry();
+    const num = s3.printGeo.clone();
     num.setAttribute('cell', new THREE.InstancedBufferAttribute(new Float32Array(CAP.num * 2), 2).setUsage(THREE.DynamicDrawUsage));
     if (!s3.numbers) s3.numbers = numberAtlas();
     const numMat = new THREE.MeshBasicMaterial({ map: s3.numbers, transparent: true, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
@@ -602,6 +646,14 @@ class Batch {
       sh.vertexShader = 'attribute vec2 cell;\n' + sh.vertexShader.replace('#include <uv_vertex>', '#include <uv_vertex>\n  vMapUv = vMapUv * 0.1 + cell;');
     };
     numMat.customProgramCacheKey = () => 'number';
+    const nm = s3.printGeo.clone();
+    nm.setAttribute('cell', new THREE.InstancedBufferAttribute(new Float32Array(CAP.name), 1).setUsage(THREE.DynamicDrawUsage));
+    if (!s3.names) s3.names = nameAtlas();
+    const nameMat = new THREE.MeshBasicMaterial({ map: s3.names.t, transparent: true, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+    nameMat.onBeforeCompile = (sh) => {
+      sh.vertexShader = 'attribute float cell;\n' + sh.vertexShader.replace('#include <uv_vertex>', `#include <uv_vertex>\n  vMapUv = vec2(vMapUv.x, vMapUv.y / ${NAME_ROWS}.0 + cell);`);
+    };
+    nameMat.customProgramCacheKey = () => 'name';
     const make = (geo, mat, n) => {
       const m = new THREE.InstancedMesh(geo, mat, n);
       m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -614,7 +666,7 @@ class Batch {
     const solid = partMaterial(s3, false);
     this.k = {
       hi: make(s3.geo.sphere, solid, CAP.hi), lo: make(s3.geo.lowSphere, solid, CAP.lo),
-      tap: make(tap, partMaterial(s3, true), CAP.tap), num: make(num, numMat, CAP.num),
+      tap: make(tap, partMaterial(s3, true), CAP.tap), num: make(num, numMat, CAP.num), name: make(nm, nameMat, CAP.name),
     };
   }
 
@@ -628,6 +680,7 @@ class Batch {
       up(m.instanceMatrix, 16); up(m.instanceColor, 3);
       if (name === 'tap') up(m.geometry.attributes.taper, 1);
       if (name === 'num') up(m.geometry.attributes.cell, 2);
+      if (name === 'name') up(m.geometry.attributes.cell, 1);
     }
   }
 
@@ -666,10 +719,17 @@ class Batch {
 
   ball(c, r, color) { _m.makeScale(r, r, r).setPosition(c); this.push('lo', color); }
 
+  // the prints on the back of a shirt, at c facing Z, size across (see printGeometry)
   number(c, X, Y, Z, size, n, color) {
-    _m.makeBasis(X, Y, Z).scale(_v.set(size, size, 1)).setPosition(c);
+    _m.makeBasis(X, Y, Z).scale(_v.set(size, size, size)).setPosition(c);
     const i = this.push('num', color);
     if (i >= 0) { const a = this.k.num.m.geometry.attributes.cell.array; a[i * 2] = (n % 10) * 0.1; a[i * 2 + 1] = 1 - (Math.floor(n / 10) + 1) * 0.1; }
+  }
+  name(c, X, Y, Z, size, text, color) {
+    const row = this.s3.nameRow(text);
+    _m.makeBasis(X, Y, Z).scale(_v.set(size, size * NAME_H / NAME_W, size)).setPosition(c);
+    const i = this.push('name', color);
+    if (i >= 0) this.k.name.m.geometry.attributes.cell.array[i] = 1 - (row + 1) / NAME_ROWS;
   }
 }
 
@@ -812,11 +872,16 @@ function emitPlayer(B, Jw, look, H, wd) {
   // collar and neck
   B.limb(along(0.94), along(1.0), 0.05 * H, 0.046 * H, trim);
   B.limb(neck.clone().addScaledVector(Y, -0.02 * H), lerpV(neck, J.head, 0.6), 0.036 * bulk * H, 0.031 * bulk * H, skin);
-  // number on the back
-  if (look.number) {
-    const c = along(0.66).addScaledVector(Z, -waistHalf * 0.64 - 0.004);
-    B.number(c, X, Y, Z.clone().negate(), 0.17 * H, clampN(look.number | 0, 1, 99), trim);
-  }
+  // on the back: a person's name across the top, under the collar (not the
+  // AI's), the number under it – each as wide across as the shirt there
+  // allows (the upper section, waist to shoulders, see above)
+  const back = Z.clone().negate(), depth = fem ? 0.625 : 0.585;
+  const backAt = (u) => {
+    const r = waistHalf + (shHalf - waistHalf) * clampN((u - 0.48) / 0.49, 0, 1);
+    return [r, along(u).addScaledVector(Z, -r * depth - 0.006)];
+  };
+  if (look.number) { const [r, c] = backAt(0.6); B.number(c, X, Y, back, PRINT_K * r, clampN(look.number | 0, 1, 99), trim); }
+  if (look.name) { const [r, c] = backAt(0.87); B.name(c, X, Y, back, PRINT_K * r, look.name, trim); }
 
   // ---- arms
   for (const s of ['L', 'R']) {
