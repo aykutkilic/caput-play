@@ -125,6 +125,13 @@ export function inOwnBox(w, team, x, y, margin = 0) {
   return Math.abs(y) < pit.boxW / 2 + margin && d > -1.5 && d < pit.boxD + margin;
 }
 function isFree(p) { return p.st === ST.IDLE || p.st === ST.STUMBLE; }
+// A shot met at (x, y) in their half but outside their box: nobody heads it
+// (or dives to head it) at goal from there – a ball out of the air is met low
+// enough to volley, or headed on as a pass (see meetBall, tryQueued). (In his
+// own half the Goal key is a clearance: headers and all.)
+const VOLLEY_TOP = 1.35;
+const shotKey = (p) => (p.qa & KICK_MASK) === KT.GOAL;
+function farShot(w, p, x, y) { return x * teamDir(w, p.team) > 0 && !inOwnBox(w, 1 - p.team, x, y, 0); }
 
 // The back-pass rule: a keeper may not handle a ball a team-mate deliberately
 // played to him with his feet (b.dl: the last touch was a kick or throw, not a
@@ -238,11 +245,15 @@ export function meetBall(w, p) {
   // (a keeper who may use his hands goes for it as high as he can catch it)
   const hands = p.role === ROLE.GK && keeperHands(w, p) && inOwnBox(w, p.team, p.x, p.y, 0.6);
   const top = hands ? s.H * 1.22 + s.jump : p.qa || p.chgBtn ? s.reach + 0.05 : 1.45;
+  // (a shot met outside their box: as low as he can volley it – headed on
+  // only if it never comes down in his reach)
+  let far = !hands && shotKey(p);
   const rolling = w.ball.z < 0.3 && Math.abs(w.ball.vz) < 1;
   let res = null, best = 1e9, early = null;
+  for (let pass = 0; pass < 2; pass++, far = false) {
   for (let k = 1; k < pts.length; k++) {
     const q = pts[k];
-    if (q.z > top) continue;
+    if (q.z > top || (far && q.z > VOLLEY_TOP && farShot(w, p, q.x, q.y))) continue;
     const t = k * PATH_H;
     const d = Math.hypot(q.x - p.x, q.y - p.y) - 0.4;
     const run = t < 0.15 ? v0 * t : v0 * 0.15 + s.sprint * (t - 0.15) * 0.95;
@@ -259,6 +270,8 @@ export function meetBall(w, p) {
       score = t + 0.04 * Math.max(0, d);
     } else score = Math.max(0, d) + t; // in the air the height he meets it at matters more
     if (score < best) { best = score; res = { t, x: q.x, y: q.y, z: q.z }; }
+  }
+  if (res || early || !far) break;
   }
   if (!res) res = early;
   if (res) res.first = firstReach(pts, p, s.reach + 0.05);
@@ -1415,9 +1428,11 @@ export function tryQueued(w, p) {
     techs.push(ST.KICK, ST.VOLLEY, ST.HEADER);
     if (isShot) techs.push(ST.DIVEHEAD);
   }
+  // (outside their box: no header at goal – see farShot)
   for (const tech of techs) {
     const tc = T_CONTACT[tech], t = tc * DT;
     const [bx, by, bz] = predictBallShort(b, t);
+    if (isShot && (tech === ST.HEADER || tech === ST.DIVEHEAD) && farShot(w, p, bx, by)) continue;
     const qx = p.x + p.vx * t * 0.6, qy = p.y + p.vy * t * 0.6;
     const hx = bx - qx, hy = by - qy, h = Math.hypot(hx, hy);
     const front = h < 0.05 ? 1 : (hx * fx + hy * fy) / h;
@@ -1426,7 +1441,9 @@ export function tryQueued(w, p) {
       case ST.KICK: ok = bz < 0.45 && h < 1.0; break;
       case ST.VOLLEY: ok = bz >= 0.45 && bz < 1.35 && h < 1.25; break;
       case ST.HEADER: ok = bz >= s.H * 0.8 && bz <= s.reach + 0.1 && h < 1.1; break;
-      case ST.OVERHEAD: ok = bz >= 0.95 && bz <= 1.4 + s.jump && h < 1.0 && front > 0.2; break;
+      // (any way it comes in – he turns his back to the goal, see
+      // beginTechnique – as long as it isn't behind him already)
+      case ST.OVERHEAD: ok = bz >= 0.95 && bz <= 1.4 + s.jump && h < 1.0 && (h < 0.05 || (hx * gdx + hy * gdy) / (h * gd) < 0.6); break;
       // (a dive covers at most 10 m/s – see beginTechnique)
       case ST.DIVEHEAD: ok = bz >= 0.25 && bz <= 1.05 && h > 1.0 && Math.hypot(bx - p.x, by - p.y) - 0.75 <= 10 * t && front > 0.75; break;
     }
@@ -1438,6 +1455,13 @@ export function tryQueued(w, p) {
       if (shotMis(p, p.face, bx, by) > HEEL_MIS && !(tech === ST.KICK && shotWay(p, p.face, bx, by) === KQ.HEEL)) continue;
     }
     if (ok) { beginTechnique(w, p, tech, kind, power, bx, by, bz, kh); return true; }
+  }
+  // outside their box a ball at head height that won't come down for him to
+  // volley: headed on as a pass
+  if (isShot) {
+    const t = T_CONTACT[ST.HEADER] * DT, [bx, by, bz] = predictBallShort(b, t);
+    const h = Math.hypot(bx - p.x - p.vx * t * 0.6, by - p.y - p.vy * t * 0.6);
+    if (bz >= s.H * 0.8 && bz <= s.reach + 0.1 && h < 1.1 && farShot(w, p, bx, by) && !volleyLater(w, p)) { beginTechnique(w, p, ST.HEADER, KICK.PASS, power, bx, by, bz, kh); return true; }
   }
   // a ball on the grass he'd lose on his feet: slide in and strike it first
   if (kind !== KICK.SELF && p.role !== ROLE.GK) {
@@ -1486,6 +1510,17 @@ function kickOnFootAt(p, pts) {
   return 99;
 }
 
+// Whether a ball in the air comes down low enough to volley somewhere he can
+// get to in the next 0.7 s
+function volleyLater(w, p) {
+  const pts = ballPath(w), v = Math.max(3, Math.hypot(p.vx, p.vy));
+  for (let k = 1; k * PATH_H <= 0.7; k++) {
+    const q = pts[k];
+    if (q.z >= 0.45 && q.z < VOLLEY_TOP && Math.hypot(q.x - p.x, q.y - p.y) - 1.2 <= v * k * PATH_H) return true;
+  }
+  return false;
+}
+
 // When the ball on its way is gone for a team: over a line, or into its own
 // goal (into the one it attacks is a goal, not a loss); Infinity: not on its
 // predicted path.
@@ -1519,7 +1554,11 @@ function beginTechnique(w, p, tech, kind, power, bx, by, bz, kh) {
   // was facing" rather than back towards whoever played it
   planKick(w, p, kind, power, undefined, undefined, -1, kh);
   p.kq = tech === ST.KICK && shotWay(p, p.face, bx, by) === KQ.HEEL ? KQ.HEEL : KQ.PLAIN;
-  if (p.kq !== KQ.HEEL) p.face = Math.atan2(by - p.y, bx - p.x); // (a back-heel keeps his back to goal)
+  // (a back-heel keeps his back to goal; an overhead kick turns his back to
+  // where it's going – the ball in front of him and over his head that way,
+  // however it came in: a cross from the side as much as one from ahead)
+  if (tech === ST.OVERHEAD) p.face = Math.atan2(by - p.ky, bx - p.kx);
+  else if (p.kq !== KQ.HEEL) p.face = Math.atan2(by - p.y, bx - p.x);
   p.st = tech; p.stT = 0; p.stA = T_CONTACT[tech]; p.stDur = T_DUR[tech]; p.stB = 1; p.hit = 0;
   p.qa = 0; p.qt = 0; p.chgBtn = 0; p.chg = 0;
   const t = p.stA * DT;
@@ -1696,6 +1735,13 @@ function launch(w, p, tech) {
   const heel = p.kq === KQ.HEEL && tech === ST.KICK;
   if (heel) { b.x = p.x - Math.cos(p.face) * 0.12; b.y = p.y - Math.sin(p.face) * 0.12; } // off his heel
   let dx = p.kx - b.x, dy = p.ky - b.y;
+  // a keeper's kick (from his hands or off the grass) comes down no further
+  // than a fifth of the way into their half – past that it's cut short along
+  // its line, landing there and running on
+  if (p.role === ROLE.GK) {
+    const lim = teamDir(w, p.team) * 0.1 * pit.L;
+    if ((p.kx - lim) * teamDir(w, p.team) > 0 && Math.abs(dx) > 0.1) { const k = Math.max(0, (lim - b.x) / dx); dx *= k; dy *= k; }
+  }
   let d = Math.hypot(dx, dy);
   if (d < 0.1) { dx = Math.cos(p.face); dy = Math.sin(p.face); d = 1; }
   let ux = dx / d, uy = dy / d;
@@ -1820,6 +1866,13 @@ function launch(w, p, tech) {
     ux = nux; uy = nuy;
   }
   if (zErr > 0) vz += gauss(w) * zErr * 0.6;
+  if (p.role === ROLE.GK && vz > 0) {
+    // (and wherever it was meant to go, a keeper's kick in the air first
+    // comes down no further than that – see above)
+    const dirT = teamDir(w, p.team), room = (dirT * 0.1 * pit.L - b.x) * dirT, fwd = ux * dirT;
+    const tf = (vz + Math.sqrt(vz * vz + 2 * G * Math.max(0, b.z - BALL_R))) / G, reach = vh * tf * fwd;
+    if (fwd > 0.05 && reach > room) vh *= Math.max(0, room) / reach;
+  }
   if (tech === ST.SLIDE && misalign > SLIDE_HOOK) { const k = 1 - 0.3 * Math.min(1, (misalign - SLIDE_HOOK) / (SLIDE_TURN - SLIDE_HOOK)); vh *= k; vz *= k; }
   // overhead and headers inherit a bit of the player's own momentum
   b.vx = ux * vh + (aerial ? p.vx * 0.15 : 0);
