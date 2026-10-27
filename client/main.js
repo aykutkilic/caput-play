@@ -417,6 +417,8 @@ function renderPanel() {
   $('goalSel').disabled = !isHost || !!(game.world && game.world.m.live);
   $('startBtn').disabled = !isHost;
   $('startBtn').textContent = r.live ? 'End match' : 'Start match';
+  // (the no-keeper warning goes once there's a match, or keepers for both)
+  if (!$('gkWarn').hidden && (r.live || !isHost || !noKeeper(r).length)) $('gkWarn').hidden = true;
   const host = r.members.find((m) => m.id === r.hostId);
   $('hostNote').textContent = isHost ? '(you are host)' : host ? `(host: ${host.name})` : '';
 }
@@ -448,7 +450,28 @@ const kitChange = (mine, other) => () => {
 };
 $('kitA').onchange = kitChange('kitA', 'kitB');
 $('kitB').onchange = kitChange('kitB', 'kitA');
-$('startBtn').onclick = () => { send({ t: state.room && state.room.live ? 'stop' : 'start' }); $('startBtn').blur(); };
+// Before a match: a team with no keeper (a person or an AI) is warned about –
+// add an AI keeper and start, start anyway, or not yet
+const noKeeper = (r) => [0, 1].filter((t) => !r.members.some((m) => m.team === t && m.role === ROLE.GK) && !r.ai.some((a) => a.team === t && a.role === ROLE.GK));
+let gkMiss = [];
+$('startBtn').onclick = () => {
+  const r = state.room;
+  $('startBtn').blur();
+  if (r && !r.live) {
+    gkMiss = noKeeper(r);
+    if (gkMiss.length) {
+      $('gkWarnText').textContent = gkMiss.length === 2 ? 'Neither team has a keeper.' : `${TEAM_NAMES[gkMiss[0]]} has no keeper.`;
+      $('gkAdd').textContent = gkMiss.length === 2 ? 'Add AI keepers & start' : 'Add an AI keeper & start';
+      $('gkWarn').hidden = false;
+      $('gkWarn').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      return;
+    }
+  }
+  send({ t: r && r.live ? 'stop' : 'start' });
+};
+$('gkAdd').onclick = () => { for (const t of gkMiss) send({ t: 'addAI', team: t, role: ROLE.GK }); send({ t: 'start' }); $('gkWarn').hidden = true; };
+$('gkAnyway').onclick = () => { send({ t: 'start' }); $('gkWarn').hidden = true; };
+$('gkCancel').onclick = () => { $('gkWarn').hidden = true; };
 $('leaveBtn').onclick = () => {
   if (state.host) state.host.goOffline();
   else if (state.mode === 'p2p') { if (net) { net.said = true; net.close(); } } else send({ t: 'leave' });

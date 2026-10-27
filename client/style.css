@@ -152,6 +152,9 @@ button.icon { width: 34px; padding: 6px 0; font-size: 18px; line-height: 1; font
 .teamcol li { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 3px 4px; border-radius: 6px; }
 .teamcol li.me { background: rgba(182,243,106,.1); }
 .teamcol li.ai { opacity: .72; }
+/* starting with a team that has no keeper */
+.gkwarn { grid-column: 1 / -1; margin-top: 8px; padding: 10px 12px; border: 1px solid rgba(242,194,48,.45); background: rgba(242,194,48,.08); border-radius: 10px; font-size: 13px; }
+.gkwarn .row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .teamcol li .tagx { font-size: 10px; padding: 1px 5px; border-radius: 4px; background: rgba(255,255,255,.12); color: var(--muted); }
 .teamcol li .tagx.gk { background: rgba(242,194,48,.2); color: #f2c230; }
 .teamcol li .x { margin-left: auto; background: none; border: none; color: var(--muted); padding: 0 4px; font-size: 14px; }
