@@ -106,6 +106,18 @@ function toView(b) {
 
 const cleanName = (n) => cleanRoomName(n) || 'Room';
 export const cleanPass = (p) => String(p || '').trim().slice(0, 20);
+const cleanWho = (w) => (typeof w === 'string' && /^[a-z0-9]{8,24}$/.test(w) ? w : '');
+// This browser's random id (kept): what a host's ban goes by – nothing else.
+let whoAmI = '';
+export function browserId() {
+  if (whoAmI) return whoAmI;
+  try { whoAmI = cleanWho(localStorage.getItem('caput.who')); } catch { /* storage unavailable */ }
+  if (!whoAmI) {
+    whoAmI = newKey() + newKey().slice(0, 6);
+    try { localStorage.setItem('caput.who', whoAmI); } catch { /* this session only */ }
+  }
+  return whoAmI;
+}
 // a private room's key (in its invite link)
 function newKey() {
   const b = new Uint8Array(10);
@@ -136,6 +148,8 @@ export class HostSession {
   // A room only this tab plays in (solo warm-up): no network at all.
   startLocal(roomName) {
     this.room = new Room('', cleanName(roomName), () => {});
+    // someone the host sent out: their connection closes once the news is out
+    this.room.onKicked = (client) => setTimeout(() => this.drop(client), 300);
     this.startTicker();
   }
 
@@ -257,8 +271,10 @@ export class HostSession {
     };
     conn.on('open', () => {
       const given = conn.metadata && typeof conn.metadata.pass === 'string' ? cleanPass(conn.metadata.pass) : '';
+      client.who = cleanWho(conn.metadata && conn.metadata.who);
       const wrongPass = !!this.pass && given !== this.pass;
       const why = this.closed ? 'Room closed'
+        : this.room.refusal(client.who) ? this.room.refusal(client.who)
         : this.room.members.size >= MAX_MEMBERS ? 'Room is full'
         : wrongPass && this.access === 'private' ? 'This room is private – only its invite link gets in'
         : wrongPass ? (given ? 'Wrong password' : 'This room has a password')
@@ -388,7 +404,7 @@ export class PeerNet extends Transport {
     try {
       const Peer = await loadPeer();
       this.peer = await openPeer(Peer, guestId(this.code));
-      const conn = this.peer.connect(PEER_PREFIX + this.code, { reliable: true, serialization: 'raw', metadata: this.pass ? { pass: this.pass } : undefined });
+      const conn = this.peer.connect(PEER_PREFIX + this.code, { reliable: true, serialization: 'raw', metadata: { pass: this.pass || undefined, who: browserId() } });
       this.conn = conn;
       let timer = setTimeout(() => this.fail('Could not reach the host (a strict firewall can block peer-to-peer).'), 20000);
       // connected – but in only once the host lets us in (its welcome);

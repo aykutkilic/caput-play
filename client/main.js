@@ -1,7 +1,7 @@
 import { Net } from './net.js';
-import { HostSession, PeerNet, cleanPass } from './p2p.js';
+import { HostSession, PeerNet, cleanPass, browserId } from './p2p.js';
 import { CLOUD_URL } from './cloud.js';
-import { fetchRooms, fetchStats, lobbyAvailable } from './lobby.js';
+import { fetchRooms, fetchStats, lobbyAvailable, reportKick } from './lobby.js';
 import { renderStats } from './statsview.js';
 import { cleanPlayerName, nameProblem } from '../shared/names.js';
 import { NetGame } from './netgame.js';
@@ -139,7 +139,7 @@ function useTransport(t, onOpen, onClose, deferred = false) {
   t.on('open', () => {
     if (deferred) activate(t);
     if (net !== t) return;
-    t.send({ t: 'hello', profile: state.profile });
+    t.send({ t: 'hello', profile: state.profile, who: browserId() });
     if (onOpen) onOpen();
   });
   t.on('close', (info) => onClose(info || {}));
@@ -160,6 +160,7 @@ function useTransport(t, onOpen, onClose, deferred = false) {
         break;
       case 'error':
         toast(msg.text);
+        if (msg.kicked && state.mode === 'p2p') reportKick(msg.kicked); // (the room's "kicks a lot")
         t.said = true; // (no second toast if this is the end of the connection)
         // couldn't get back into a room after reconnecting: a fresh one of your own
         if (state.mode === 'server' && state.joining && !state.inRoom) send({ t: 'create' });
@@ -385,7 +386,7 @@ function renderRooms() {
   if (d && d.full) $('roomsFull').textContent = `Online play is full (${d.cap.toLocaleString()} players): rooms can't take anyone new for now. Playing against the AI is always open.`;
   if (!list.some((r) => r.code === roomsUi.sel)) roomsUi.sel = null;
   $('roomsList').innerHTML = list.map((r) => `<tr data-code="${r.code}" class="${r.code === roomsUi.sel ? 'sel' : ''}${r.players >= r.max ? ' full' : ''}">`
-    + `<td title="${esc(r.name)} · ${r.code}">${r.live ? '<span class="live">LIVE</span>' : ''}${esc(r.name)}</td>`
+    + `<td title="${esc(r.name)} · ${r.code}">${r.live ? '<span class="live">LIVE</span>' : ''}${esc(r.name)}${r.kicks >= 3 ? `<span class="kicky" title="Its host sent ${r.kicks} people out in the last 30 minutes">kicks a lot</span>` : ''}</td>`
     + `<td>${r.players}/${r.max}</td><td>${r.locked ? 'Yes' : 'No'}</td>`
     + `<td>${r.country ? `<span title="${r.country}">${flag(r.country)}</span> ` : ''}${r.km === null ? '–' : `${r.km.toLocaleString()} km`}</td></tr>`).join('');
   $('roomsNote').textContent = !lobbyAvailable() ? 'There is no room list here – join with a room code or an invite link.'
@@ -523,7 +524,7 @@ $('panelPill').onclick = () => showPanel(true);
 // a click or tap anywhere outside the open panel (not in a dialog over it) tucks it away
 addEventListener('pointerdown', (e) => {
   if (!state.inRoom || $('panel').hidden) return;
-  if (e.target.closest && e.target.closest('#panel, #panelPill, .modal, #updateBtn, #toast')) return;
+  if (e.target.closest && e.target.closest('#panel, #panelPill, .modal, #updateBtn, #toast, #kickMenu')) return;
   showPanel(false);
 }, true);
 
@@ -564,7 +565,7 @@ function renderPanel() {
     // the keeper first (a person or an AI), then the AI players in one row,
     // then the people
     const people = r.members.filter((x) => x.team === team), ais = r.ai.filter((x) => x.team === team), aiOut = ais.filter((a) => a.role !== ROLE.GK);
-    const person = (m) => `<li class="${m.id === state.clientId ? 'me' : ''}">${esc(m.name)}${m.role === ROLE.GK ? ' <span class="tagx gk">GK</span>' : ''}${m.id === r.hostId ? ' <span class="host">★</span>' : ''}${m.id === state.clientId ? ' <span class="muted">(you)</span>' : ''}</li>`;
+    const person = (m) => `<li class="${m.id === state.clientId ? 'me' : ''}">${esc(m.name)}${m.role === ROLE.GK ? ' <span class="tagx gk">GK</span>' : ''}${m.id === r.hostId ? ' <span class="host">★</span>' : ''}${m.id === state.clientId ? ' <span class="muted">(you)</span>' : ''}${kickable(m) ? kickBtn(m) : ''}</li>`;
     const rows = [];
     for (const m of people) if (m.role === ROLE.GK) rows.push(person(m));
     for (const a of ais) if (a.role === ROLE.GK) rows.push(`<li class="ai"><span class="muted">${esc(a.name)}</span> <span class="tagx gk">GK</span><button class="x" data-rm="${a.playerId}" title="Remove">×</button></li>`);
@@ -575,8 +576,11 @@ function renderPanel() {
     const meHere = r.members.find((m) => m.id === state.clientId && m.team === team);
     for (const b of col.querySelectorAll('.seg button')) b.setAttribute('aria-checked', String(!!meHere && meHere.role === Number(b.dataset.role)));
   }
-  const specs = r.members.filter((m) => m.team === -1).map((m) => esc(m.name));
+  const specs = r.members.filter((m) => m.team === -1).map((m) => `<span class="sp">${esc(m.name)}${kickable(m) ? kickBtn(m) : ''}</span>`);
   $('specList').innerHTML = specs.length ? specs.join(', ') : '–';
+  $('clearBans').hidden = !isHost || !r.bans;
+  $('clearBans').textContent = `Clear bans (${r.bans || 0})`;
+  if (!$('kickMenu').hidden && !r.members.some((m) => m.id === kickId)) closeKickMenu();
   $('matchLen').value = String(r.settings.matchLen);
   $('pitchSel').value = String(r.settings.pitch);
   $('goalSel').value = String(r.settings.goals ?? GOAL_SIZE_DEFAULT);
@@ -611,6 +615,38 @@ document.querySelector('.teams').addEventListener('click', (e) => {
   t.blur();
 });
 $('spectate').onclick = () => send({ t: 'team', team: -1, role: 0 });
+// The host sending someone out: a player's ⋯ opens the menu (reason, Kick,
+// Ban); an AI takes their place (shared/room.js kick)
+let kickId = -1;
+const kickable = (m) => !!state.room && state.room.hostId === state.clientId && m.id !== state.clientId;
+const kickBtn = (m) => `<button class="kx" data-kick="${m.id}" title="Kick or ban ${esc(m.name)}" aria-label="Kick or ban ${esc(m.name)}">⋯</button>`;
+function openKickMenu(id, at) {
+  const m = state.room && state.room.members.find((x) => x.id === id);
+  if (!m) return;
+  kickId = id;
+  const menu = $('kickMenu');
+  menu.querySelector('.km-name').textContent = m.name;
+  $('kickReason').value = '';
+  menu.hidden = false;
+  const r = at.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.min(innerWidth - menu.offsetWidth - 8, r.right - menu.offsetWidth))}px`;
+  menu.style.top = `${Math.min(innerHeight - menu.offsetHeight - 8, r.bottom + 6)}px`;
+}
+function closeKickMenu() { $('kickMenu').hidden = true; kickId = -1; }
+function sendOut(ban) {
+  if (kickId < 0) return;
+  send({ t: 'kick', id: kickId, ban, reason: $('kickReason').value });
+  closeKickMenu();
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest && e.target.closest('[data-kick]');
+  if (b) { e.stopPropagation(); openKickMenu(Number(b.dataset.kick), b); return; }
+  if (!$('kickMenu').hidden && !e.target.closest('#kickMenu')) closeKickMenu();
+}, true);
+$('kickBtn').onclick = () => sendOut(false);
+$('banBtn').onclick = () => sendOut(true);
+$('kickReason').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendOut(false); });
+$('clearBans').onclick = () => { send({ t: 'clearBans' }); $('clearBans').blur(); };
 $('matchLen').onchange = () => send({
   t: 'settings', matchLen: Number($('matchLen').value), pitch: $('pitchSel').value,
   goals: Number($('goalSel').value), ai: Number($('aiSel').value), aiSex: Number($('aiSexSel').value),
@@ -843,6 +879,7 @@ addEventListener('keydown', (e) => {
   }
   if (isTyping(e)) return;
   if (e.code === 'Escape') {
+    if (!$('kickMenu').hidden) { closeKickMenu(); return; }
     if (!$('rooms').hidden) { closeRoomList(); return; }
     if (!$('stats').hidden) { $('stats').hidden = true; return; }
     if (!$('editor').hidden) { closeEditor(); return; }

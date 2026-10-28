@@ -73,6 +73,16 @@ label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--t
 #accessRow input { width: 110px; }
 .warnline { color: var(--danger); font-size: 11px; }
 
+/* ---------------- the host sending someone out */
+#kickMenu { position: fixed; z-index: 20; width: 240px; background: #121c22; border: 1px solid var(--line); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+#kickMenu[hidden] { display: none; }
+#kickMenu .km-name { font-weight: 700; }
+#kickMenu .km-row { display: flex; gap: 6px; }
+#kickMenu .km-row button { flex: 1; }
+.teamcol li .kx, #specList .kx { background: none; border: none; color: var(--muted); padding: 0 4px; font-size: 14px; margin-left: auto; }
+#specList .sp { white-space: nowrap; }
+.roomsTable .kicky { font-size: 10px; padding: 1px 5px; border-radius: 4px; background: rgba(255,214,90,.18); color: #ffd65a; margin-left: 6px; }
+
 /* ---------------- developer mode: players online */
 .sheet.stats { width: 800px; display: flex; flex-direction: column; gap: 12px; position: relative; }
 .sseg { margin-left: auto; display: flex; }

@@ -126,6 +126,7 @@
     <div class="spec">
       <span class="muted">Spectators:</span> <span id="specList">–</span>
       <button id="spectate" class="ghost small">Spectate</button>
+      <button id="clearBans" class="ghost small" hidden title="Let the people you banned come back">Clear bans</button>
     </div>
     <div class="section host">
       <h4>Match <span class="muted" id="hostNote"></span></h4>
@@ -241,6 +242,14 @@
         <label class="check" title="Rooms with only their host in them"><input type="checkbox" id="showEmpty"> Show empty</label>
       </div>
     </div>
+  </div>
+
+  <!-- the host sending someone out (a player's ⋯ in the room panel) -->
+  <div id="kickMenu" hidden>
+    <div class="km-name"></div>
+    <input id="kickReason" placeholder="Reason (optional)" maxlength="28" autocomplete="off">
+    <div class="km-row"><button id="kickBtn" class="small">Kick</button><button id="banBtn" class="small danger">Ban</button></div>
+    <div class="muted small">An AI takes their place. Kicked: back in 2 min. Banned: not while the room is open – another browser gets round it.</div>
   </div>
 
   <!-- developer mode: people online by hour and place (client/statsview.js) -->

@@ -40,6 +40,16 @@ export async function fetchStats(days) {
   return res.json();
 }
 
+// The host of this room sent us out: towards its "kicks a lot" in the list
+// (each network counts once).
+export function reportKick(code) {
+  const base = cloudUrl();
+  if (!base || !/^[A-Z]{4}$/.test(code || '')) return;
+  const u = cloudEndpoint(base, 'kicked');
+  u.searchParams.set('room', code);
+  fetch(u, { cache: 'no-store' }).catch(() => { /* only a hint */ });
+}
+
 // A hosted room's place in the list.
 export class LobbyLink {
   constructor() {

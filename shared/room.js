@@ -25,13 +25,16 @@
 import {
   createWorld, addPlayer, removePlayer, updatePlayerSpec, step, startMatch, stopMatch, startKickoff, pById, goalTicks,
 } from './sim.js';
-import { cleanPlayerName } from './names.js';
+import { cleanPlayerName, cleanRoomName } from './names.js';
 import { SNAP_EVERY, ROLE, PHASE, autoPitch, MAX_PLAYERS, TEAM_NAMES, QUICK_CHAT, GOAL_SIZE_DEFAULT, KIT_NAMES, KITS_DEFAULT, GAME_SPEEDS, GAME_SPEED_DEFAULT } from './constants.js';
 import {
   worldBytes, encodeFuture, fullSnapshot, deltaSnapshot, patchSnapshotHeader, readWorld, decodeInputs,
 } from './protocol.js';
 
 const MAX_PER_TEAM = 8;
+// the host sending people out (kick): back after KICK_BACK, never while the
+// room is open if banned; at most KICKS_PER every KICK_WINDOW
+const KICK_BACK = 2 * 60e3, KICKS_PER = 3, KICK_WINDOW = 5 * 60e3;
 const LEAD_WINDOW = 30;
 export const MAX_MEMBERS = 16;
 
@@ -96,6 +99,9 @@ export class Room {
     this.inputs = new Map();  // playerId -> Map(tick -> input)
     this.skips = new Set();   // members who skipped the current goal replay
     this.onChange = null;     // (whoever lists the room: called whenever the room state goes out)
+    this.onKicked = null;     // (client) whoever hosts the room closes their connection
+    this.bans = new Map();    // who (a browser's random id) -> until (ms; Infinity: while the room is open)
+    this.kicks = [];          // when the host last sent people out
     this.addAI(1, ROLE.GK);   // someone to shoot at from the start (Team A's first player: shooting practice)
   }
 
@@ -118,7 +124,7 @@ export class Room {
     this.sendSnapshotTo(m, this.encode());
   }
 
-  leave(client) {
+  leave(client, note = '') {
     const m = this.members.get(client.id);
     if (!m) return;
     if (m.playerId >= 0) this.removeWorldPlayer(m.playerId);
@@ -126,8 +132,41 @@ export class Room {
     client.room = null;
     if (this.hostId === client.id) this.hostId = this.members.size ? this.members.keys().next().value : null;
     if (this.members.size === 0) { this.onEmpty(this); return; }
-    this.system(`${m.name} left`);
+    this.system(note || `${m.name} left`);
     this.refreshPitch();
+    this.broadcastRoom();
+  }
+
+  // The host sends someone out: their spot goes to an AI player (the same
+  // team and role), everyone is told, and they can't come back for KICK_BACK
+  // – banned, not while the room is open (a ban goes by the browser's id, so
+  // another browser gets round it). At most KICKS_PER every KICK_WINDOW.
+  kick(host, id, ban, reason) {
+    const m = this.members.get(id);
+    if (host.id !== this.hostId || !m || m === host) return;
+    const now = Date.now();
+    this.kicks = this.kicks.filter((t) => now - t < KICK_WINDOW);
+    if (this.kicks.length >= KICKS_PER) return this.whisper(host, `You can send ${KICKS_PER} people out every ${KICK_WINDOW / 60e3} minutes.`);
+    this.kicks.push(now);
+    const why = cleanRoomName(reason), { team, role, name } = m;
+    if (m.client.who) this.bans.set(m.client.who, ban ? Infinity : now + KICK_BACK);
+    m.client.sendText(JSON.stringify({ t: 'error', text: `You were ${ban ? 'banned from' : 'kicked out of'} the room${why ? ` – ${why}` : ''}`, kicked: this.code, ban: !!ban }));
+    this.leave(m.client, `${name} was ${ban ? 'banned' : 'kicked'} by the host${why ? ` – ${why}` : ''}`);
+    if (team >= 0) this.addAI(team, role); // (their spot, played by the AI)
+    if (this.onKicked) this.onKicked(m.client);
+  }
+
+  // Can this browser come in? '' yes, otherwise why not.
+  refusal(who) {
+    const until = who ? this.bans.get(who) : 0;
+    if (!until || until <= Date.now()) return '';
+    return until === Infinity ? 'You are banned from this room' : `You were kicked out – you can come back in ${Math.ceil((until - Date.now()) / 60e3)} min`;
+  }
+
+  clearBans(host) {
+    if (host.id !== this.hostId) return;
+    this.bans.clear();
+    this.whisper(host, 'Bans cleared.');
     this.broadcastRoom();
   }
 
@@ -296,6 +335,8 @@ export class Room {
       case 'team': this.setTeam(m, Number(msg.team), Number(msg.role)); break;
       case 'addAI': this.addAI(Number(msg.team), Number(msg.role)); break;
       case 'removeAI': this.removeAI(Number(msg.id)); break;
+      case 'kick': this.kick(m, Number(msg.id), !!msg.ban, msg.reason); break;
+      case 'clearBans': this.clearBans(m); break;
       case 'settings': this.applySettings(m, msg); break;
       case 'start': this.start(m); break;
       case 'stop': this.stop(m); break;
@@ -435,6 +476,7 @@ export class Room {
     return {
       t: 'room', code: this.code, name: this.name, hostId: this.hostId, settings: this.settings,
       members, ai, live: this.world.m.live, ended: this.ended ? 1 : 0, // (ended: a match was played to its end, or stopped – the next one's a restart)
+      bans: [...this.bans.values()].filter((u) => u === Infinity).length,
     };
   }
 
