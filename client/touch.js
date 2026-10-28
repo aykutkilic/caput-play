@@ -2,35 +2,35 @@
 //
 //  * Left half: a floating stick – put a thumb down anywhere and drag.
 //    Pushing it all the way to the rim also sprints.
-//  * Right side: four tall kick bars – Run (into a team-mate's path), Mate (to
-//    his feet / head), Goal and Self. WHERE on a bar you press sets the height
-//    (top = head / top corner, middle = chest, bottom = feet / low; slide the
-//    finger to change it), HOW LONG you hold sets the power. Above them Sprint
-//    (R1), R2 and Trick (the trick key – R on a keyboard, R3 on a pad).
+//  * Right side: eight round buttons, as arcade buttons, laid out as the
+//    keyboard's – Q W E R over A S D F: Through, Knock on, Control, Trick /
+//    Lob, Pass, Shoot, Lift – each its key's kick at its key's height; slide
+//    the finger up on one for a level higher (further up, two), down for a
+//    level lower (the keyboard's X / Z); HOW LONG you hold sets the power.
+//    Above them Sprint (R1) and R2.
 // Everything is multi-touch. The state is written into `input.touch` once per event.
 
 import { BTN, KT, KH, packKick } from '../shared/constants.js';
 
-const BARS = [
-  { t: KT.RUN, glyph: 'Run', hint: 'through', cls: 'run' },
-  { t: KT.MATE, glyph: 'Pass', hint: 'team-mate', cls: 'mate' },
-  { t: KT.GOAL, glyph: 'Shoot', hint: 'goal', cls: 'goal' },
-  { t: KT.SELF, glyph: 'Self', hint: 'lift / skill', cls: 'self' },
+// The eight buttons, as the keyboard's keys (see input.js KICK_KEYS)
+const BUTTONS = [
+  { key: 'Q', t: KT.RUN, h: KH.GROUND, cls: 'run' }, { key: 'W', t: KT.SELF, h: KH.GROUND, cls: 'self' },
+  { key: 'E', t: KT.CTRL, h: KH.GROUND, cls: 'ctrl' }, { key: 'R', t: KT.TRICK, h: KH.GROUND, cls: 'trick' },
+  { key: 'A', t: KT.MATE, h: KH.MID, cls: 'mate' }, { key: 'S', t: KT.MATE, h: KH.GROUND, cls: 'mate' },
+  { key: 'D', t: KT.GOAL, h: KH.MID, cls: 'goal' }, { key: 'F', t: KT.SELF, h: KH.HIGH, cls: 'self' },
 ];
-// The same keys defend: the bars say what they do right now. (A ball coming
-// at the keeper: the Catch bars are the catch key – see the sim's catchKey.)
-const CATCH_MODES = new Set(['keeperAir', 'keeperCatch']);
-export const BAR_LABELS = {
-  attack: [['Run', 'through'], ['Pass', 'team-mate'], ['Shoot', 'goal'], ['Self', 'lift / skill']],
-  defend: [['GK out', 'send keeper'], ['Press', 'hold'], ['Slide', 'tackle'], ['Jockey', 'hold']],
-  keeper: [['Rush', 'come out'], ['Press', 'hold'], ['Dive', 'save'], ['Block', '1v1']],
-  keeperAir: [['Catch', 'hold'], ['Catch', 'hold'], ['Punch', 'clear'], ['Catch', 'hold']],
-  keeperCatch: [['Catch', 'hold'], ['Catch', 'hold'], ['Dive', 'save'], ['Catch', 'hold']],
-  block: [['Block', 'leg / body'], ['Block', 'leg / body'], ['Block', 'leg / body'], ['Block', 'leg / body']],
+// The same keys defend: the buttons say what they do right now (null: nothing
+// special – shown dimmed with its attacking name)
+export const BUTTON_LABELS = {
+  attack: ['Through', 'Knock on', 'Control', 'Trick', 'Lob', 'Pass', 'Shoot', 'Lift'],
+  defend: ['GK out', 'Jockey', null, null, 'Press', 'Press', 'Slide', 'Jockey'],
+  keeper: ['Rush out', 'Block', 'Catch', null, 'Press', 'Press', 'Dive', 'Block'],
+  keeperAir: [null, null, 'Catch', null, null, null, 'Punch', null],
+  keeperCatch: ['Dive', 'Dive', 'Catch', null, 'Dive', 'Dive', 'Dive', 'Dive'],
+  block: ['Block', 'Block', null, null, 'Block', 'Block', 'Block', 'Block'],
 };
 
 const SHOULDER = [
-  { kick: KT.TRICK, glyph: '✦', hint: 'Trick', cls: 'small' },
   { bit: BTN.R2, glyph: 'R2', hint: 'Control', cls: 'small' },
   { bit: BTN.SPRINT, glyph: 'R1', hint: 'Get ball', cls: '' },
 ];
@@ -40,7 +40,7 @@ export class TouchControls {
     this.input = input;
     this.onFirstTouch = onFirstTouch;
     this.held = new Map();    // pointerId -> shoulder button (SHOULDER entry)
-    this.kick = null;         // { id, t, h, el } – the kick bar being held
+    this.kick = null;         // { id, t, h0, h, y0, el } – the button being held
     this.stick = null;        // { id, x0, y0 }
     this.sx = 0; this.sy = 0; this.mag = 0; this.rim = false;
     const root = document.createElement('div');
@@ -50,7 +50,7 @@ export class TouchControls {
       <div class="tzone"></div>
       <div class="tstick" hidden><div class="tknob"></div></div>
       <div class="tshoulder">${SHOULDER.map((b, i) => `<button class="tb ${b.cls}" data-i="${i}"><b>${b.glyph}</b><i>${b.hint}</i></button>`).join('')}</div>
-      <div class="tbars">${BARS.map((b, i) => `<button class="tbar ${b.cls}" data-k="${i}"><span class="lv h">head</span><span class="lv m">chest</span><span class="lv g">feet</span><b>${b.glyph}</b><i>${b.hint}</i></button>`).join('')}</div>`;
+      <div class="tpad">${BUTTONS.map((b, i) => `<button class="tk ${b.cls}" data-k="${i}"><u>${b.key}</u><b>${BUTTON_LABELS.attack[i]}</b></button>`).join('')}</div>`;
     this.mode = 'attack';
     document.getElementById('hud').before(root); // under the HUD, so its buttons stay tappable
     this.root = root;
@@ -79,14 +79,14 @@ export class TouchControls {
       el.addEventListener('contextmenu', (e) => e.preventDefault());
     }
 
-    for (const el of root.querySelectorAll('.tbar')) {
-      const def = BARS[Number(el.dataset.k)];
+    for (const el of root.querySelectorAll('.tk')) {
+      const def = BUTTONS[Number(el.dataset.k)];
       el.addEventListener('pointerdown', (e) => {
         e.preventDefault();
         this.first();
-        if (this.kick) this.endKick();       // a second bar replaces the first
+        if (this.kick) this.endKick();       // a second button replaces the first
         el.setPointerCapture(e.pointerId);
-        this.kick = { id: e.pointerId, t: def.t, h: KH.GROUND, el };
+        this.kick = { id: e.pointerId, t: def.t, h0: def.h, h: def.h, y0: e.clientY, el };
         this.setHeight(e);
       });
       el.addEventListener('pointermove', (e) => { if (this.kick && this.kick.id === e.pointerId) this.setHeight(e); });
@@ -124,30 +124,32 @@ export class TouchControls {
 
   // 'attack' | 'defend' | 'keeper' | 'keeperAir' | 'keeperCatch' | 'block'
   setMode(mode) {
-    if (mode === this.mode || !BAR_LABELS[mode]) return;
+    if (mode === this.mode || !BUTTON_LABELS[mode]) return;
     this.mode = mode;
-    if (this.kick) this.write(); // (a bar held on: what it presses now)
     this.root.dataset.mode = mode;
-    this.root.querySelectorAll('.tbar').forEach((el, i) => {
-      const [glyph, hint] = BAR_LABELS[mode][i];
-      el.querySelector('b').textContent = glyph;
-      el.querySelector('i').textContent = hint;
+    this.root.querySelectorAll('.tk').forEach((el, i) => {
+      const label = BUTTON_LABELS[mode][i];
+      el.querySelector('b').textContent = label || BUTTON_LABELS.attack[i];
+      el.classList.toggle('dim', !label);
     });
   }
 
-  // top third of a bar = high, middle = mid, bottom = ground
+  // the finger slid up from where it went down: a level higher (further up,
+  // two), down: a level lower – the keyboard's X / Z (not for the control
+  // and trick buttons)
   setHeight(e) {
-    const k = this.kick, r = k.el.getBoundingClientRect();
-    const u = (e.clientY - r.top) / Math.max(1, r.height);
-    k.h = u < 1 / 3 ? KH.HIGH : u < 2 / 3 ? KH.MID : KH.GROUND;
-    k.el.dataset.h = k.h;
+    const k = this.kick, dy = e.clientY - k.y0, R = k.el.offsetWidth || 60;
+    const lvl = dy < -0.75 * R ? 2 : dy < -0.28 * R ? 1 : dy > 0.28 * R ? -1 : 0;
+    const fixed = k.t === KT.CTRL || k.t === KT.TRICK;
+    k.h = fixed ? k.h0 : Math.max(KH.GROUND, Math.min(KH.HIGH, k.h0 + lvl));
+    k.el.dataset.lv = fixed || k.h === k.h0 ? '' : k.h > k.h0 ? (k.h - k.h0 > 1 ? 'up2' : 'up') : 'down';
     k.el.classList.add('on');
     this.write();
   }
 
   endKick() {
     this.kick.el.classList.remove('on');
-    delete this.kick.el.dataset.h;
+    delete this.kick.el.dataset.lv;
     this.kick = null;
     this.write();
   }
@@ -174,11 +176,9 @@ export class TouchControls {
   }
 
   write() {
-    let b = 0, trick = false;
-    for (const d of this.held.values()) { if (d.kick) trick = true; else b |= d.bit; }
-    // (the trick button over a kick bar: two kicks can't be packed together)
-    if (trick) b |= packKick(KT.TRICK, KH.GROUND);
-    else if (this.kick) b |= packKick(CATCH_MODES.has(this.mode) && this.kick.t !== KT.GOAL ? KT.CTRL : this.kick.t, this.kick.h);
+    let b = 0;
+    for (const d of this.held.values()) b |= d.bit;
+    if (this.kick) b |= packKick(this.kick.t, this.kick.h);
     const t = this.input.touch;
     t.x = this.sx; t.y = this.sy; t.mag = this.mag; t.b = b;
   }

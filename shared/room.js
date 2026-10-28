@@ -25,7 +25,7 @@
 import {
   createWorld, addPlayer, removePlayer, updatePlayerSpec, step, startMatch, stopMatch, startKickoff, pById, goalTicks,
 } from './sim.js';
-import { SNAP_EVERY, ROLE, PHASE, autoPitch, MAX_PLAYERS, TEAM_NAMES, QUICK_CHAT, GOAL_SIZE_DEFAULT, KIT_NAMES, KITS_DEFAULT, GAME_SPEEDS } from './constants.js';
+import { SNAP_EVERY, ROLE, PHASE, autoPitch, MAX_PLAYERS, TEAM_NAMES, QUICK_CHAT, GOAL_SIZE_DEFAULT, KIT_NAMES, KITS_DEFAULT, GAME_SPEEDS, GAME_SPEED_DEFAULT } from './constants.js';
 import {
   worldBytes, encodeFuture, fullSnapshot, deltaSnapshot, patchSnapshotHeader, readWorld, decodeInputs,
 } from './protocol.js';
@@ -82,7 +82,7 @@ export class Room {
     this.ai = new Map();      // playerId -> ai spec
     this.hostId = null;
     this.ended = false; // a match played to its end (or stopped): the next is a restart
-    this.settings = { matchLen: 240, pitch: 'auto', goals: GOAL_SIZE_DEFAULT, ai: 1, aiSex: 0, kits: [...KITS_DEFAULT], offside: 0, movement: 0, weather: 1, speed: 100 }; // (a night match)
+    this.settings = { matchLen: 240, pitch: 'auto', goals: GOAL_SIZE_DEFAULT, ai: 1, aiSex: 0, kits: [...KITS_DEFAULT], offside: 0, movement: 0, weather: 1, speed: GAME_SPEED_DEFAULT }; // (a night match, at 80%)
     this.world = createWorld(1, (Math.random() * 2 ** 31) | 0);
     this.world.auth = true; // inputs that don't arrive are missing here (see BOT_AFTER)
     this.world.m.matchLen = this.settings.matchLen;
@@ -90,6 +90,7 @@ export class Room {
     startKickoff(this.world, 0);
     this.inputs = new Map();  // playerId -> Map(tick -> input)
     this.skips = new Set();   // members who skipped the current goal replay
+    this.onChange = null;     // (whoever lists the room: called whenever the room state goes out)
     this.addAI(1, ROLE.GK);   // someone to shoot at from the start (Team A's first player: shooting practice)
   }
 
@@ -337,7 +338,7 @@ export class Room {
   // ------------------------------------------------------------ simulation
 
   // how fast the room plays: a share of TICK_RATE (see GAME_SPEEDS)
-  speed() { return (this.settings.speed || 100) / 100; }
+  speed() { return (this.settings.speed || GAME_SPEED_DEFAULT) / 100; }
 
   tick() {
     const w = this.world;
@@ -435,6 +436,7 @@ export class Room {
   broadcastRoom() {
     const msg = JSON.stringify(this.roomState());
     for (const m of this.members.values()) m.client.sendText(msg);
+    if (this.onChange) this.onChange();
   }
 
   system(text) { this.say(null, text); }

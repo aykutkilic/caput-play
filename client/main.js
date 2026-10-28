@@ -1,6 +1,7 @@
 import { Net } from './net.js';
-import { HostSession, PeerNet } from './p2p.js';
+import { HostSession, PeerNet, cleanPass } from './p2p.js';
 import { CLOUD_URL } from './cloud.js';
+import { fetchRooms, lobbyAvailable } from './lobby.js';
 import { NetGame } from './netgame.js';
 import { Input, DEFAULT_KEYS, ACTION_LABELS, KICK_LABELS, keyName, isTyping } from './input.js';
 import { Renderer, CAMERAS, lookFor, drawAvatarPreview, TEAM_COLORS, setKits } from './render.js';
@@ -12,7 +13,7 @@ import { DevView } from './devview.js';
 import { AimLine } from './aimline.js';
 import { AIKeys } from './aikeys.js';
 import { encodeStick, pById, wantsBlock, inOwnBox, pitchOf, keeperHands, shootingPractice, teamDir, goalWeight, CELEB_TICKS } from '../shared/sim.js';
-import { PHASE, SP, SP_NAME, ROLE, TEAM_NAMES, TICK_RATE, QUICK_CHAT, KICK_MASK, GOAL_SIZE_DEFAULT, KIT_NAMES, KITS_DEFAULT, GAME_SPEEDS } from '../shared/constants.js';
+import { PHASE, SP, SP_NAME, ROLE, TEAM_NAMES, TICK_RATE, QUICK_CHAT, KICK_MASK, GOAL_SIZE_DEFAULT, KIT_NAMES, KITS_DEFAULT, GAME_SPEEDS, GAME_SPEED_DEFAULT } from '../shared/constants.js';
 import { ratings, stats } from '../shared/physique.js';
 
 const $ = (id) => document.getElementById(id);
@@ -67,6 +68,8 @@ const state = {
   lastPhase: -1,
   lastRoomCode: null,
   wantJoin: params.get('room'),
+  wantPass: params.get('pass') || '', // (an invite link to a room with a password carries it)
+  roomPass: '',    // the password of the room you joined (for its invite link)
   joining: false,  // (server) asked to join a room after (re)connecting
   roomNet: null,   // the transport the current room came through
   // 'server': a dedicated game server is reachable; 'p2p': rooms are hosted in a player's browser
@@ -113,8 +116,8 @@ game.sampleInput = () => {
 
 function send(obj) { if (net) net.send(obj); }
 
-function inviteQuery(code) {
-  return `?room=${code}${params.has('p2p') && !STATIC_HOST ? '&p2p=1' : ''}`;
+function inviteQuery(code, pass = '') {
+  return `?room=${code}${pass ? `&pass=${encodeURIComponent(pass)}` : ''}${params.has('p2p') && !STATIC_HOST ? '&p2p=1' : ''}`;
 }
 
 // Wires a transport (dedicated server, serverless host loopback or serverless
@@ -132,7 +135,11 @@ function useTransport(t, onOpen, onClose, deferred = false) {
   t.on('close', (info) => onClose(info || {}));
   t.on('snap', (snap) => { if (net === t && state.inRoom) game.onSnapshot(snap); });
   t.on('msg', (msg) => {
-    if (net !== t) { if (msg.t === 'error') toast(msg.text); return; }
+    if (net !== t) {
+      if (msg.t === 'error') toast(msg.text);
+      if (msg.t === 'error' && msg.pass && msg.code) askPass(msg.code, msg.text); // (a room with a password)
+      return;
+    }
     switch (msg.t) {
       case 'welcome': state.clientId = msg.id; break;
       case 'rooms': renderRoomList(msg.rooms); break;
@@ -191,7 +198,7 @@ function enterP2PMode() {
   state.mode = 'p2p';
   net = null;
   startSolo();
-  if (state.wantJoin) { const c = state.wantJoin; state.wantJoin = null; joinPeer(c); }
+  if (state.wantJoin) { const c = state.wantJoin; state.wantJoin = null; joinPeer(c, state.wantPass); }
   else banner('CAPUT', 'Warm up · create a room to play with friends');
 }
 
@@ -210,33 +217,37 @@ function startSolo() {
   t.connect();
 }
 
-// Opens the room you're in to others: it gets a code and an invite link,
-// and everything on the pitch carries on.
+// Opens the room you're in to others: it gets a code, an invite link and a
+// line in the room list, and everything on the pitch carries on. (Not when
+// online play is full: then it stays your own.)
 async function openRoom() {
   const host = state.host;
   if (!host || host.online || state.busy) return;
   state.busy = true;
   setFriendsStatus('Opening the room…');
   try {
-    await host.goOnline($('newRoomName').value.trim() || `${state.profile.name}'s room`);
+    await host.goOnline($('newRoomName').value.trim() || `${state.profile.name}'s room`, cleanPass($('newRoomPass').value));
   } catch (e) {
-    toast(`Could not open a room (${e.type || e.message}) – check your connection`);
+    toast(e.type === 'full'
+      ? `Online play is full right now${e.cap ? ` (${e.cap.toLocaleString()} players)` : ''} – try again in a little while`
+      : `Could not open a room (${e.type || e.message}) – check your connection`);
     return;
   } finally {
     state.busy = false;
     setFriendsStatus('');
   }
-  const url = `${location.origin}${location.pathname}${inviteQuery(host.code)}`;
-  try { await navigator.clipboard.writeText(url); toast(`Room ${host.code} is open – link copied, or send it on WhatsApp`); } catch { toast(`Room ${host.code} is open – invite: ${url}`); }
+  const url = `${location.origin}${location.pathname}${inviteQuery(host.code, host.pass)}`;
+  const listed = host.listed === 'ok' ? ', in the room list' : host.listed === 'busy' ? ' (not in the room list: too many rooms from your network)' : '';
+  try { await navigator.clipboard.writeText(url); toast(`Room ${host.code} is open${listed} – link copied, or send it on WhatsApp`); } catch { toast(`Room ${host.code} is open${listed} – invite: ${url}`); }
 }
 
-function joinPeer(code) {
+function joinPeer(code, pass = '') {
   if (state.busy) return;
   state.busy = true;
   setFriendsStatus(`Connecting to room ${code}…`);
-  const t = new PeerNet(code);
+  const t = new PeerNet(code, pass);
   const done = () => { state.busy = false; setFriendsStatus(''); };
-  useTransport(t, done, ({ wasOpen }) => {
+  useTransport(t, () => { done(); state.roomPass = t.pass; }, ({ wasOpen }) => {
     done();
     if (net !== t) return;
     if (wasOpen && state.inRoom && !t.said) toast('Disconnected from the host');
@@ -278,6 +289,113 @@ $('joinBtn').onclick = () => {
   if (state.mode === 'p2p') joinPeer(c); else send({ t: 'join', code: c });
 };
 $('joinCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('joinBtn').click(); });
+
+// The room list (serverless rooms with the Worker, see lobby.js): every room
+// open to others, nearest first. Fetched only when it's opened or refreshed –
+// warming up or playing the AI never goes online.
+const roomsUi = { data: null, error: false, loading: false, sel: null };
+const roomFilters = { locked: true, full: true, empty: true };
+try { Object.assign(roomFilters, JSON.parse(localStorage.getItem('caput.roomFilters') || '{}')); } catch { /* ignore */ }
+if (lobbyAvailable()) $('p2pInfo').textContent += ' Rooms are in the room list for anyone to join – a password keeps yours to friends.';
+
+function openRoomList() {
+  $('rooms').hidden = false;
+  $('roomsPass').hidden = true;
+  if (lobbyAvailable()) loadRooms(); else renderRooms();
+}
+function closeRoomList() { $('rooms').hidden = true; }
+
+async function loadRooms() {
+  if (roomsUi.loading) return;
+  roomsUi.loading = true;
+  $('roomsRefresh').disabled = true;
+  renderRooms();
+  try { roomsUi.data = await fetchRooms(); roomsUi.error = false; } catch { roomsUi.error = true; }
+  roomsUi.loading = false;
+  setTimeout(() => { $('roomsRefresh').disabled = false; }, 2000); // (each refresh is a request)
+  renderRooms();
+}
+
+const flag = (cc) => (/^[A-Z]{2}$/.test(cc || '') ? String.fromCodePoint(...[...cc].map((c) => 0x1f1a5 + c.charCodeAt(0))) : '');
+
+// nearest first (within ~50 km it's all the same), then the busier
+function shownRooms() {
+  const d = roomsUi.data;
+  if (!d) return [];
+  const near = (r) => Math.floor((r.km ?? 1e5) / 50);
+  return d.rooms
+    .filter((r) => !(state.room && r.code === state.room.code))
+    .filter((r) => (roomFilters.locked || !r.locked) && (roomFilters.full || r.players < r.max) && (roomFilters.empty || r.players > 1))
+    .sort((a, b) => near(a) - near(b) || b.players - a.players || a.name.localeCompare(b.name));
+}
+
+function renderRooms() {
+  const d = roomsUi.data, list = shownRooms();
+  const n = (k, word) => `${k} ${word}${k === 1 ? '' : 's'}`;
+  $('roomsCount').textContent = d ? `${n(d.players, 'player')} in ${n(d.rooms.length, 'room')}` : '';
+  $('roomsFull').hidden = !(d && d.full);
+  if (d && d.full) $('roomsFull').textContent = `Online play is full (${d.cap.toLocaleString()} players): rooms can't take anyone new for now. Playing against the AI is always open.`;
+  if (!list.some((r) => r.code === roomsUi.sel)) roomsUi.sel = null;
+  $('roomsList').innerHTML = list.map((r) => `<tr data-code="${r.code}" class="${r.code === roomsUi.sel ? 'sel' : ''}${r.players >= r.max ? ' full' : ''}">`
+    + `<td title="${esc(r.name)} · ${r.code}">${r.live ? '<span class="live">LIVE</span>' : ''}${esc(r.name)}</td>`
+    + `<td>${r.players}/${r.max}</td><td>${r.locked ? 'Yes' : 'No'}</td>`
+    + `<td>${r.country ? `<span title="${r.country}">${flag(r.country)}</span> ` : ''}${r.km === null ? '–' : `${r.km.toLocaleString()} km`}</td></tr>`).join('');
+  $('roomsNote').textContent = !lobbyAvailable() ? 'There is no room list here – join with a room code or an invite link.'
+    : roomsUi.error ? "Couldn't load the room list – check your connection and refresh."
+    : !d ? 'Loading rooms…'
+    : !d.rooms.length ? 'No rooms are open right now – create one and others will see it here.'
+    : !list.length ? 'No rooms match the filters.' : '';
+  $('roomsJoin').disabled = !roomsUi.sel;
+}
+
+function joinListed() {
+  const r = roomsUi.data && roomsUi.data.rooms.find((x) => x.code === roomsUi.sel);
+  if (!r) return;
+  if (r.locked) { askPass(r.code); return; }
+  closeRoomList();
+  joinPeer(r.code);
+}
+
+// A room with a password: asked for here – picked from the list, or a code
+// or a link the host turned away for want of it.
+function askPass(code, why = '') {
+  if ($('rooms').hidden) openRoomList();
+  $('roomsPass').hidden = false;
+  $('roomsPass').dataset.code = code;
+  $('roomsPassFor').textContent = `${why || 'Password'} – room ${code}:`;
+  $('roomsPassIn').value = '';
+  $('roomsPassIn').focus();
+}
+
+$('listBtn').onclick = () => { openRoomList(); $('listBtn').blur(); };
+$('roomsRefresh').onclick = () => loadRooms();
+$('roomsClose').onclick = () => closeRoomList();
+$('roomsCreate').onclick = () => { closeRoomList(); showPanel(true); $('newRoomName').focus(); };
+$('roomsJoin').onclick = () => joinListed();
+$('roomsList').addEventListener('click', (e) => {
+  const tr = e.target.closest('tr[data-code]');
+  if (!tr) return;
+  roomsUi.sel = tr.dataset.code;
+  $('roomsPass').hidden = true;
+  renderRooms();
+});
+$('roomsList').addEventListener('dblclick', (e) => { if (e.target.closest('tr[data-code]')) joinListed(); });
+$('roomsPassGo').onclick = () => {
+  const code = $('roomsPass').dataset.code, pass = cleanPass($('roomsPassIn').value);
+  if (!code || !pass) return;
+  closeRoomList();
+  joinPeer(code, pass);
+};
+$('roomsPassIn').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('roomsPassGo').click(); });
+$('rooms').addEventListener('pointerdown', (e) => { if (e.target === $('rooms')) closeRoomList(); });
+for (const [k, id] of [['locked', 'showLocked'], ['full', 'showFull'], ['empty', 'showEmpty']]) {
+  $(id).checked = roomFilters[k] !== false;
+  $(id).onchange = () => {
+    roomFilters[k] = $(id).checked;
+    try { localStorage.setItem('caput.roomFilters', JSON.stringify(roomFilters)); } catch { /* ignore */ }
+    renderRooms();
+  };
+}
 addEventListener('beforeunload', (e) => {
   // closing the tab ends a hosted room for everyone in it
   if (state.host && state.room && state.room.members.length > 1) { e.preventDefault(); e.returnValue = ''; }
@@ -330,6 +448,7 @@ function leaveRoomUi(keepCode = false) {
   state.inRoom = false;
   state.room = null;
   state.roomNet = null;
+  state.roomPass = '';
   if (!keepCode) state.lastRoomCode = null;
   state.myId = -1;
   game.reset();
@@ -379,6 +498,7 @@ function renderPanel() {
   $('friends').hidden = p2p ? !offline : !alone;
   $('p2pInfo').hidden = !p2p;
   $('createRow').hidden = !p2p;
+  $('listBtn').hidden = !p2p || !lobbyAvailable();
   // leaving: closing the room you host takes it offline (you play on);
   // leaving someone else's takes you back to a warm-up of your own
   $('leaveBtn').hidden = p2p ? offline : alone;
@@ -410,8 +530,8 @@ function renderPanel() {
   $('offsideSel').value = String(r.settings.offside ?? 0);
   $('moveSel').value = String(r.settings.movement ?? 0);
   $('weatherSel').value = String(r.settings.weather ?? 0);
-  $('speedSel').value = String(r.settings.speed ?? 100);
-  game.speed = (r.settings.speed || 100) / 100; // (the room's pace: our clock runs with it)
+  $('speedSel').value = String(r.settings.speed ?? GAME_SPEED_DEFAULT);
+  game.speed = (r.settings.speed || GAME_SPEED_DEFAULT) / 100; // (the room's pace: our clock runs with it)
   const kits = r.settings.kits || KITS_DEFAULT;
   $('kitA').value = String(kits[0]); $('kitB').value = String(kits[1]);
   $('matchLen').disabled = $('pitchSel').disabled = $('aiSel').disabled = $('aiSexSel').disabled = $('offsideSel').disabled = $('moveSel').disabled = $('weatherSel').disabled = $('speedSel').disabled = $('kitA').disabled = $('kitB').disabled = !isHost;
@@ -444,7 +564,7 @@ $('matchLen').onchange = () => send({
 });
 $('pitchSel').onchange = $('goalSel').onchange = $('aiSel').onchange = $('aiSexSel').onchange = $('offsideSel').onchange = $('moveSel').onchange = $('weatherSel').onchange = $('speedSel').onchange = $('matchLen').onchange;
 // game speed: the whole match in a uniform slow motion (see GAME_SPEEDS)
-$('speedSel').innerHTML = GAME_SPEEDS.map((v) => `<option value="${v}">${v === 100 ? 'Normal (100%)' : `${v}%`}</option>`).join('');
+$('speedSel').innerHTML = GAME_SPEEDS.map((v) => `<option value="${v}">${v === 100 ? 'Full (100%)' : v === GAME_SPEED_DEFAULT ? `Normal (${v}%)` : `${v}%`}</option>`).join('');
 // team kits: picking the other team's colour swaps them over
 for (const id of ['kitA', 'kitB']) $(id).innerHTML = KIT_NAMES.map((n, i) => `<option value="${i}">${n}</option>`).join('');
 const kitChange = (mine, other) => () => {
@@ -485,7 +605,9 @@ $('leaveBtn').onclick = () => {
 };
 // Inviting friends: the room's link on WhatsApp, through the device's share
 // sheet (phones), or copied.
-function inviteUrl() { return `${location.origin}${location.pathname}${inviteQuery(state.room ? state.room.code : '')}`; }
+// (with the room's password, if it has one)
+function roomPass() { return state.host && state.host.online ? state.host.pass : state.roomPass; }
+function inviteUrl() { return `${location.origin}${location.pathname}${inviteQuery(state.room ? state.room.code : '', roomPass())}`; }
 function inviteText() { return `Come and play football with me on CAPUT – room ${state.room ? state.room.code : ''}: ${inviteUrl()}`; }
 $('copyLink').onclick = async () => {
   try { await navigator.clipboard.writeText(inviteUrl()); toast('Invite link copied'); } catch { toast(inviteUrl()); }
@@ -641,6 +763,7 @@ addEventListener('keydown', (e) => {
   }
   if (isTyping(e)) return;
   if (e.code === 'Escape') {
+    if (!$('rooms').hidden) { closeRoomList(); return; }
     if (!$('editor').hidden) { closeEditor(); return; }
     if (!$('controls').hidden) { toggleControls(false); return; }
     if (state.inRoom) showPanel($('panel').hidden);

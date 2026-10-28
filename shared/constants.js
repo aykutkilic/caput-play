@@ -100,6 +100,7 @@ export const KITS_DEFAULT = [4, 5]; // (White against Black)
 // TICK_RATE x speed ticks a real second, so everything (players, the ball,
 // the clock) goes in a uniform slow motion; the sim itself is the same
 export const GAME_SPEEDS = [100, 90, 80, 70, 60];
+export const GAME_SPEED_DEFAULT = 80; // (full speed can be very fast)
 // the weather the host can pick (room setting; only how it looks – the ball plays the same)
 export const WEATHER_NAMES = ['Day', 'Night', 'Rain', 'Snow'];
 

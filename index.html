@@ -65,8 +65,10 @@
       <h4>Play with friends</h4>
       <p class="muted small" id="p2pInfo">Create a room and send the invite link – friends join this game, right where it is.</p>
       <ul id="roomList"></ul>
+      <button id="listBtn" hidden>Room list – find a game</button>
       <div class="row" id="createRow">
         <input id="newRoomName" placeholder="Room name (optional)" maxlength="28">
+        <input id="newRoomPass" class="pass" placeholder="Password" maxlength="20" autocomplete="off" title="Optional: only people with the password (or your invite link) get in">
         <button id="createBtn" class="primary">Create room</button>
       </div>
       <div class="row">
@@ -186,6 +188,40 @@
     </footer>
   </aside>
 
+  <!-- the public room list (serverless rooms with the Worker, client/lobby.js) -->
+  <div id="rooms" class="modal" hidden>
+    <div class="sheet rooms">
+      <header class="roomsHead"><h2>Room list</h2><span id="roomsCount" class="muted"></span>
+        <button id="roomsClose" class="ghost icon" title="Close (Esc)" aria-label="Close the room list">×</button></header>
+      <div id="roomsFull" class="small" hidden></div>
+      <div class="roomsBody">
+        <div class="roomsTable">
+          <table>
+            <colgroup><col><col class="cp"><col class="cl"><col class="cd"></colgroup>
+            <thead><tr><th>Name</th><th>Players</th><th>Pass</th><th>Distance</th></tr></thead>
+            <tbody id="roomsList"></tbody>
+          </table>
+          <div id="roomsNote" class="muted small"></div>
+        </div>
+        <div class="roomsSide">
+          <button id="roomsRefresh">Refresh</button>
+          <button id="roomsJoin" class="primary" disabled>Join room</button>
+          <button id="roomsCreate">Create room</button>
+        </div>
+      </div>
+      <div class="roomsPass" id="roomsPass" hidden>
+        <span id="roomsPassFor" class="small"></span>
+        <input id="roomsPassIn" placeholder="Password" maxlength="20" autocomplete="off">
+        <button id="roomsPassGo" class="primary">Join</button>
+      </div>
+      <div class="roomsFilters">
+        <label class="check"><input type="checkbox" id="showLocked"> Show locked</label>
+        <label class="check"><input type="checkbox" id="showFull"> Show full</label>
+        <label class="check" title="Rooms with only their host in them"><input type="checkbox" id="showEmpty"> Show empty</label>
+      </div>
+    </div>
+  </div>
+
   <!-- avatar editor -->
   <div id="editor" class="modal" hidden>
     <div class="sheet wide">
@@ -267,7 +303,7 @@
           <b>jockey</b> (stay goal-side at arm's length, facing him, no lunge), hold R2 to <b>guard</b> (keep facing the ball,
           side-stepping into position), Goal = slide tackle (from behind may be a
           foul; keeper: dive), Run path = send your keeper out. When a shot or pass comes at you, press any kick key to block
-          it – your player throws out a leg, his body or jumps to head it (the keeper uses his hands). The touch bars and an
+          it – your player throws out a leg, his body or jumps to head it (the keeper uses his hands). The touch buttons and an
           on-screen hint switch to these whenever you're defending.</p>
         <p><b>Keeper with the ball:</b> the ground pass rolls it out, the lob pass throws it (a drop kick when it's far), shoot punts it.</p>
         <p><b>Passing past opponents:</b> a ground pass is angled round an opponent near its line when your team-mate can
@@ -282,9 +318,9 @@
           kick key, a volley if you get there in time, otherwise a flying header (facing away from goal, a bicycle kick);
           with no key, you take it on the thigh or foot, in your stride. <b>Neither</b>: you take it at whatever height it
           arrives. Your choice holds until the ball is touched again.</p>
-        <p><b>Touch:</b> drag anywhere on the left half for the stick – you run (and dribble) at full pace; R1 (Get ball) runs to the ball or closes down whoever has it. On the right are four tall
-          bars – Run, Pass, Shoot, Self: where you press on a bar sets the height (top = head, middle = chest, bottom = feet;
-          slide to change it), how long you hold sets the power.</p>
+        <p><b>Touch:</b> drag anywhere on the left half for the stick – you run (and dribble) at full pace; R1 (Get ball) runs to the ball or closes down whoever has it. On the right are eight round
+          buttons, laid out as the keyboard's keys – Through, Knock on, Control, Trick over Lob, Pass, Shoot, Lift: slide the finger up on
+          one for a level higher (further, two – the top corner), down for a level lower; how long you hold sets the power.</p>
         <p><b>Quick chat:</b> keys 1–5 (or 💬 on touch) – Pass! · Shoot! · Nice one! · Sorry! · Good game!</p>
         <p class="small">The AI players position themselves the way real sides do – learned from SkillCorner's open broadcast tracking data (A-League matches).</p>
       </div>

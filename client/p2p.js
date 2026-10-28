@@ -2,11 +2,12 @@
 // (the very same code the Node server runs) inside their browser; everyone else
 // connects to them directly with WebRTC.
 //
-//  * Signalling (the WebRTC handshake) goes through our Cloudflare Worker
-//    (cloud/, a PeerJS-compatible broker), which also hands out TURN relay
-//    credentials for networks that block direct connections; after that all
-//    traffic is peer-to-peer. Without a Worker configured (client/cloud.js)
-//    the free public PeerJS broker and its defaults are used.
+//  * Signalling (the WebRTC handshake) goes through the free public PeerJS
+//    broker, with PeerJS's STUN and TURN relay servers for networks that
+//    block direct connections; after that all traffic is peer-to-peer. Our
+//    Cloudflare Worker (cloud/, a PeerJS-compatible broker handing out
+//    Cloudflare TURN credentials) can take that over (CLOUD_SIGNALLING in
+//    client/cloud.js).
 //  * Each guest gets two channels on one connection: PeerJS's reliable,
 //    ordered channel for lobby JSON, and our own negotiated unordered,
 //    zero-retransmit channel for inputs, snapshots and pings - the same
@@ -14,12 +15,17 @@
 //    rollback netcode is unchanged.
 //  * The host's simulation is clocked from a Web Worker, because page timers
 //    are throttled hard in background tabs while worker timers are not.
+//  * A room open to others is in the public room list while it's open
+//    (lobby.js), and may have a password: guests send it with their
+//    connection request and the host lets them in or turns them away before
+//    they leave their own warm-up. So does online play being full.
 
 import { Transport } from './net.js';
 import { Room, sanitizeProfile, MAX_MEMBERS } from '../shared/room.js';
 import { MSG, encodePong } from '../shared/protocol.js';
 import { TICK_RATE } from '../shared/constants.js';
-import { cloudUrl } from './cloud.js';
+import { signallingUrl, cloudEndpoint } from './cloud.js';
+import { LobbyLink } from './lobby.js';
 
 const PEERJS_URL = 'https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js';
 const PEERJS_SRI = 'sha384-x0YgkOr/3UOZP2CRDxGW9e0Q+2Qjyr3uJrm4xU32Y7ZCNAo7Cc7bjhrZMi/dwczu';
@@ -45,16 +51,17 @@ export function loadPeer() {
   return peerLib;
 }
 
-// PeerJS options: our Worker as the broker, with its STUN/TURN servers
+// PeerJS options: its public servers, or our Worker as the broker with its
+// STUN/TURN servers
 let iceOnce = null;
 async function peerOptions() {
-  const base = cloudUrl();
+  const base = signallingUrl();
   if (!base) return { debug: 0 };
   const u = new URL(base);
   const secure = u.protocol === 'https:';
-  const opts = { debug: 0, host: u.hostname, port: Number(u.port) || (secure ? 443 : 80), path: '/', secure, key: 'peerjs' };
+  const opts = { debug: 0, host: u.hostname, port: Number(u.port) || (secure ? 443 : 80), path: u.pathname.replace(/\/?$/, '/'), secure, key: 'peerjs' };
   if (!iceOnce) {
-    iceOnce = fetch(new URL('/ice', base), { cache: 'no-store' })
+    iceOnce = fetch(cloudEndpoint(base, 'ice'), { cache: 'no-store' })
       .then((r) => r.json())
       .then((j) => (Array.isArray(j.iceServers) && j.iceServers.length ? j.iceServers : null))
       .catch(() => null);
@@ -94,6 +101,7 @@ function toView(b) {
 // ---------------------------------------------------------------- host
 
 const cleanName = (n) => String(n).replace(/[<>]/g, '').slice(0, 28);
+export const cleanPass = (p) => String(p || '').trim().slice(0, 20);
 
 export class HostSession {
   constructor() {
@@ -103,6 +111,8 @@ export class HostSession {
     this.guests = new Set();
     this.nextId = 2; // 1 is the host's own client
     this.closed = false;
+    this.pass = '';    // the room's password ('' none)
+    this.lobby = null; // its place in the room list while it's open
     this.local = new LocalNet(this);
   }
 
@@ -120,23 +130,32 @@ export class HostSession {
 
   get online() { return !!this.peer; }
 
-  // Open the room to others, keeping what's on the pitch: it gets a code
-  // and becomes reachable through the broker.
-  async goOnline(roomName) {
-    const Peer = await loadPeer();
-    let err = null;
-    for (let i = 0; i < 5 && !this.peer; i++) {
-      let code = '';
-      for (let k = 0; k < 4; k++) code += CODE_CHARS[(Math.random() * CODE_CHARS.length) | 0];
-      try {
-        this.peer = await openPeer(Peer, PEER_PREFIX + code);
-        this.code = code;
-      } catch (e) {
-        err = e;
-        if (e.type !== 'unavailable-id') break;
-      }
+  // Open the room to others, keeping what's on the pitch: it gets a code,
+  // becomes reachable through the broker and is listed – unless online play
+  // is full, then it stays as it was.
+  async goOnline(roomName, pass = '') {
+    const lobby = new LobbyLink();
+    const listed = await lobby.open();
+    if (listed === 'full') {
+      lobby.close();
+      throw Object.assign(new Error('online play is full'), { type: 'full', cap: lobby.cap });
     }
-    if (!this.peer) throw err || new Error('could not open a room');
+    let err = null;
+    try {
+      const Peer = await loadPeer();
+      for (let i = 0; i < 5 && !this.peer; i++) {
+        let code = '';
+        for (let k = 0; k < 4; k++) code += CODE_CHARS[(Math.random() * CODE_CHARS.length) | 0];
+        try {
+          this.peer = await openPeer(Peer, PEER_PREFIX + code);
+          this.code = code;
+        } catch (e) {
+          err = e;
+          if (e.type !== 'unavailable-id') break;
+        }
+      }
+    } catch (e) { err = e; }
+    if (!this.peer) { lobby.close(); throw err || new Error('could not open a room'); }
     const peer = this.peer;
     peer.on('connection', (conn) => { if (this.peer === peer) this.accept(conn); else conn.close(); });
     // stay reachable for new joiners if the signalling socket drops
@@ -144,8 +163,25 @@ export class HostSession {
     peer.on('error', (e) => console.warn('[host] peer error:', e.type));
     this.room.code = this.code;
     if (roomName) this.room.name = cleanName(roomName);
+    this.pass = cleanPass(pass);
+    this.lobby = lobby;
+    this.room.onChange = () => this.announce();
     this.room.broadcastRoom();
+    this.listed = listed; // ('busy': open, but not in the list)
     return this.code;
+  }
+
+  // the room's line in the room list (sent only when it changed)
+  announce() {
+    const r = this.room;
+    if (!this.lobby || !this.code) return;
+    this.lobby.update({ code: this.code, name: r.name, players: r.members.size, max: MAX_MEMBERS, locked: !!this.pass, live: !!r.world.m.live && !r.ended });
+  }
+
+  closeListing() {
+    if (this.lobby) this.lobby.close();
+    this.lobby = null;
+    if (this.room) this.room.onChange = null;
   }
 
   // Close the room to others but play on: the guests are sent back to their
@@ -157,8 +193,10 @@ export class HostSession {
       g.sendText(JSON.stringify({ t: 'error', text: 'The host closed the room' }));
       this.drop(g);
     }
+    this.closeListing();
     this.peer = null;
     this.code = null;
+    this.pass = '';
     setTimeout(() => { try { peer.destroy(); } catch { /* ignore */ } }, 200);
     this.room.code = '';
     this.room.broadcastRoom();
@@ -195,8 +233,14 @@ export class HostSession {
       },
     };
     conn.on('open', () => {
-      if (this.closed || this.room.members.size >= MAX_MEMBERS) {
-        client.sendText(JSON.stringify({ t: 'error', text: this.closed ? 'Room closed' : 'Room is full' }));
+      const given = conn.metadata && typeof conn.metadata.pass === 'string' ? cleanPass(conn.metadata.pass) : '';
+      const wrongPass = !!this.pass && given !== this.pass;
+      const why = this.closed ? 'Room closed'
+        : this.room.members.size >= MAX_MEMBERS ? 'Room is full'
+        : wrongPass ? (given ? 'Wrong password' : 'This room has a password')
+        : this.lobby && this.lobby.full ? 'Online play is full right now – try again in a little while' : '';
+      if (why) {
+        client.sendText(JSON.stringify({ t: 'error', text: why, pass: wrongPass || undefined }));
         setTimeout(() => conn.close(), 300);
         return;
       }
@@ -253,6 +297,7 @@ export class HostSession {
   destroy() {
     if (this.closed) return;
     this.closed = true;
+    this.closeListing();
     if (this.worker) this.worker.terminate();
     clearInterval(this.interval);
     for (const g of [...this.guests]) {
@@ -307,9 +352,10 @@ export class LocalNet extends Transport {
 // ---------------------------------------------------------------- guest
 
 export class PeerNet extends Transport {
-  constructor(code) {
+  constructor(code, pass = '') {
     super('webrtc p2p');
     this.code = String(code).toUpperCase();
+    this.pass = cleanPass(pass);
     this.done = false;
     this.lastRecv = 0;
   }
@@ -318,12 +364,18 @@ export class PeerNet extends Transport {
     try {
       const Peer = await loadPeer();
       this.peer = await openPeer(Peer, guestId(this.code));
-      const conn = this.peer.connect(PEER_PREFIX + this.code, { reliable: true, serialization: 'raw' });
+      const conn = this.peer.connect(PEER_PREFIX + this.code, { reliable: true, serialization: 'raw', metadata: this.pass ? { pass: this.pass } : undefined });
       this.conn = conn;
-      const timer = setTimeout(() => this.fail('Could not reach the host (a strict firewall can block peer-to-peer).'), 20000);
+      let timer = setTimeout(() => this.fail('Could not reach the host (a strict firewall can block peer-to-peer).'), 20000);
+      // connected – but in only once the host lets us in (its welcome);
+      // turned away (room full, password, online play full) we stay where we were
       conn.on('open', () => {
         clearTimeout(timer);
         this.dc = openGameChannel(conn.peerConnection, (ab) => this.onBinary(ab));
+        timer = setTimeout(() => this.fail('The host did not answer'), 10000);
+      });
+      const admitted = () => {
+        clearTimeout(timer);
         this.connected = true;
         this.lastRecv = performance.now();
         this.emit('open');
@@ -331,12 +383,16 @@ export class PeerNet extends Transport {
         this.watchdog = setInterval(() => {
           if (performance.now() - this.lastRecv > 8000) this.fail('Lost connection to the host');
         }, 1000);
-      });
+      };
       conn.on('data', (d) => {
         if (typeof d !== 'string') return;
         this.bytesIn += d.length;
         let msg;
         try { msg = JSON.parse(d); } catch { return; }
+        if (!this.connected) {
+          if (msg.t === 'error') { this.fail(msg.text, msg.pass); return; }
+          if (msg.t === 'welcome') admitted();
+        }
         this.emit('msg', msg);
       });
       conn.on('close', () => this.closed());
@@ -355,9 +411,10 @@ export class PeerNet extends Transport {
     super.onBinary(ab);
   }
 
-  fail(text) {
+  // pass: the host wants (the right) password
+  fail(text, pass = false) {
     if (this.done) return;
-    this.emit('msg', { t: 'error', text });
+    this.emit('msg', { t: 'error', text, pass: pass || undefined, code: this.code });
     this.closed();
   }
 

@@ -64,6 +64,37 @@ label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--t
 #roomList .rm { font-size: 12px; color: var(--muted); }
 #roomList li.info { display: block; line-height: 1.55; font-size: 13px; }
 #friendsStatus { color: var(--accent); }
+#listBtn { padding: 9px; }
+.row input.pass { flex: 0 0 96px; min-width: 0; }
+
+/* ---------------- room list */
+.sheet.rooms { width: 780px; display: flex; flex-direction: column; gap: 12px; }
+.roomsHead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding-bottom: 8px; border-bottom: 2px solid var(--accent); }
+.roomsHead h2 { margin: 0; }
+#roomsCount { margin-left: auto; }
+#roomsFull { color: var(--danger); }
+.roomsBody { display: flex; gap: 14px; min-height: 0; }
+.roomsTable { flex: 1; min-width: 0; max-height: min(52vh, 440px); overflow: auto; }
+.roomsTable table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+.roomsTable col.cp { width: 68px; } .roomsTable col.cl { width: 52px; } .roomsTable col.cd { width: 96px; }
+.roomsTable th { position: sticky; top: 0; background: #121c22; text-align: left; font-weight: 600; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.roomsTable td { padding: 8px; border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.roomsTable tr[data-code] { cursor: pointer; }
+.roomsTable tr[data-code]:hover { background: rgba(255,255,255,.05); }
+.roomsTable tr.sel { background: rgba(182,243,106,.14); }
+.roomsTable tr.full td { color: var(--muted); }
+.roomsTable .live { font-size: 10px; padding: 1px 5px; border-radius: 4px; background: rgba(255,106,92,.2); color: var(--a); margin-right: 6px; }
+#roomsNote:not(:empty) { padding: 14px 8px; }
+.roomsSide { display: flex; flex-direction: column; gap: 8px; width: 150px; }
+.roomsPass { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.roomsPass input { flex: 1; min-width: 120px; }
+.roomsFilters { display: flex; gap: 16px; flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .roomsBody { flex-direction: column; }
+  .roomsSide { width: auto; flex-direction: row; }
+  .roomsSide button { flex: 1; }
+  .roomsTable col.cd { width: 80px; }
+}
 #friendsStatus:empty { display: none; }
 #iosHint { grid-column: 1 / -1; }
 .row { display: flex; gap: 8px; margin-top: 8px; }
@@ -231,30 +262,26 @@ input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); backgr
 #touch .tb b { font-size: clamp(18px, 6vmin, 30px); font-weight: 700; }
 #touch .tb i { font-style: normal; font-size: clamp(8px, 2.2vmin, 11px); opacity: .75; margin-top: 2px; }
 #touch .tb.on { background: rgba(255,255,255,.32); border-color: #fff; }
-#touch .tbars { position: absolute; right: calc(12px + env(safe-area-inset-right)); bottom: calc(12px + env(safe-area-inset-bottom));
-  display: flex; gap: 1.6vmin; height: min(58vmin, 300px); }
-#touch .tbar { position: relative; pointer-events: auto; touch-action: none; width: 12.5vmin; max-width: 66px; height: 100%; padding: 0;
-  border-radius: 16px; color: #fff; background: rgba(10,18,14,.42); border: 2px solid rgba(255,255,255,.3); backdrop-filter: blur(2px);
-  display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1;
-  background-image: linear-gradient(transparent calc(33.3% - 1px), rgba(255,255,255,.16) 33.3%, transparent calc(33.3% + 1px),
-    transparent calc(66.6% - 1px), rgba(255,255,255,.16) 66.6%, transparent calc(66.6% + 1px)); }
-#touch .tbar b { font-size: clamp(12px, 3.6vmin, 17px); font-weight: 700; color: var(--c); }
-#touch .tbar i { font-style: normal; font-size: clamp(7px, 2vmin, 10px); opacity: .7; margin-top: 3px; }
-#touch .tbar .lv { position: absolute; left: 0; right: 0; height: 33.3%; display: flex; align-items: center; justify-content: center;
-  font-size: clamp(7px, 1.9vmin, 10px); opacity: .45; text-transform: uppercase; letter-spacing: .04em; }
-#touch .tbar .lv.h { top: 0; align-items: flex-start; padding-top: 6px; }
-#touch .tbar .lv.m { top: 33.3%; opacity: 0; }
-#touch .tbar .lv.g { bottom: 0; align-items: flex-end; padding-bottom: 6px; }
-#touch .tbar.on { border-color: var(--c); }
-#touch .tbar[data-h="2"] .lv.h, #touch .tbar[data-h="1"] .lv.m, #touch .tbar[data-h="0"] .lv.g { opacity: 1; background: color-mix(in srgb, var(--c) 45%, transparent); border-radius: 14px; }
-/* defending: no heights, the bars are tackles / presses */
-#touch:not([data-mode="attack"]) .tbar .lv { opacity: 0 !important; background: none !important; }
-#touch:not([data-mode="attack"]) .tbar { border-style: dashed; background-image: none; }
-#touch:not([data-mode="attack"]) .tbar b { font-size: clamp(11px, 3.1vmin, 15px); }
-#touch[data-mode="block"] .tbar b { color: #fff; }
-#touch .tbar.run { --c: #69e09a; } #touch .tbar.mate { --c: #7fb2ff; } #touch .tbar.goal { --c: #ff9fd6; } #touch .tbar.self { --c: #ffd36b; }
+/* the eight buttons – Q W E R over A S D F, round like an arcade cabinet's */
+#touch .tpad { --tk: min(15.5vmin, 72px); --tg: 1.8vmin; position: absolute; right: calc(12px + env(safe-area-inset-right));
+  bottom: calc(12px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: repeat(4, var(--tk)); gap: var(--tg); }
+#touch .tk { position: relative; width: var(--tk); height: var(--tk); padding: 0; border-radius: 50%; pointer-events: auto; touch-action: none;
+  display: flex; align-items: center; justify-content: center; line-height: 1; color: #fff; backdrop-filter: blur(2px);
+  background: radial-gradient(circle at 38% 30%, color-mix(in srgb, var(--c) 62%, transparent), rgba(10,18,14,.55) 72%);
+  border: 2px solid color-mix(in srgb, var(--c) 75%, transparent); box-shadow: 0 3px 0 rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.25); }
+#touch .tk b { font-size: clamp(9px, 2.7vmin, 13px); font-weight: 700; text-align: center; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+#touch .tk u { position: absolute; top: 11%; left: 50%; transform: translateX(-50%); text-decoration: none;
+  font-size: clamp(7px, 1.9vmin, 10px); font-weight: 700; opacity: .6; }
+#touch .tk.on { transform: translateY(2px); box-shadow: 0 1px 0 rgba(0,0,0,.4); border-color: #fff;
+  background: radial-gradient(circle at 38% 30%, var(--c), color-mix(in srgb, var(--c) 35%, rgba(10,18,14,.6)) 75%); }
+#touch .tk.dim { opacity: .38; }
+/* slid up / down for a level higher / lower */
+#touch .tk[data-lv]:not([data-lv=""])::after { position: absolute; bottom: 9%; left: 50%; transform: translateX(-50%); font-size: clamp(8px, 2.2vmin, 11px); font-weight: 700; }
+#touch .tk[data-lv="up"]::after { content: '▲'; } #touch .tk[data-lv="up2"]::after { content: '▲▲'; } #touch .tk[data-lv="down"]::after { content: '▼'; }
+#touch .tk.run { --c: #69e09a; } #touch .tk.mate { --c: #7fb2ff; } #touch .tk.goal { --c: #ff9fd6; }
+#touch .tk.self { --c: #ffd36b; } #touch .tk.ctrl { --c: #8fe3dc; } #touch .tk.trick { --c: #c9a2ff; }
 #touch .tshoulder { position: absolute; right: calc(12px + env(safe-area-inset-right));
-  bottom: calc(22px + min(58vmin, 300px) + env(safe-area-inset-bottom)); display: flex; gap: 8px; align-items: flex-end; }
+  bottom: calc(22px + 2 * min(15.5vmin, 72px) + 1.8vmin + env(safe-area-inset-bottom)); display: flex; gap: 8px; align-items: flex-end; }
 #touch .tshoulder .tb { position: static; width: 15vmin; height: 15vmin; max-width: 72px; max-height: 72px; border-radius: 14px; }
 #touch .tshoulder .tb.small { width: 11vmin; height: 11vmin; max-width: 54px; max-height: 54px; }
 #touch .tshoulder .tb b { font-size: clamp(13px, 4vmin, 20px); }
