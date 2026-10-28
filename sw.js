@@ -5,7 +5,7 @@
 // with a flaky connection). The deploy workflow stamps VERSION, so every
 // release starts a fresh cache and old ones are dropped.
 
-const VERSION = '235452d.10281101';
+const VERSION = 'db94576.10281432';
 const CACHE = `caput-${VERSION}`;
 const SHELL = ['./', './index.html', './manifest.webmanifest', './client/style.css', './client/main.js', './client/icons/icon-192.png'];
 
@@ -32,7 +32,7 @@ self.addEventListener('fetch', (e) => {
   // only our own files; the version probe always goes to the network untouched
   if (req.method !== 'GET' || url.origin !== self.location.origin || url.pathname.endsWith('/version.json')) return;
   // audio streams in ranges (206 partial responses can't be cached): let the browser handle it
-  if (req.headers.has('range') || url.pathname.endsWith('.mp3')) return;
+  if (req.headers.has('range') || /\.(mp3|m4a)$/.test(url.pathname)) return;
   e.respondWith((async () => {
     try {
       // revalidate with the server every time (cheap 304s when nothing changed)
