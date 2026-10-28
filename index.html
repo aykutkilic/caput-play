@@ -52,6 +52,9 @@
         <div class="muted"><span id="codeBit">Code <b id="roomCode">----</b> · </span><span id="roomStatus">Warm-up</span></div>
       </div>
       <div class="hbtns">
+        <button id="fsBtn" class="ghost icon" title="Fullscreen" aria-label="Fullscreen" hidden>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path class="fs-on" d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/><path class="fs-off" d="M6 2v4H2M14 6h-4V2M10 14v-4h4M2 10h4v4"/></svg>
+        </button>
         <button id="minBtn" class="ghost icon" title="Minimize (Esc)" aria-label="Minimize room panel">–</button>
       </div>
     </header>
@@ -195,7 +198,6 @@
       <label class="check"><input id="aiKeysChk" type="checkbox"> AI keys (over their heads)</label>
       <button id="statsBtn" class="ghost small" hidden>Players online (stats)</button>
       <label class="check"><input id="touchChk" type="checkbox"> Touch controls</label>
-      <button id="fsBtn" class="ghost small">Fullscreen</button>
       <button id="installBtn" class="primary small" hidden>⬇ Install app</button>
       <div id="iosHint" class="muted small" hidden>Install on your phone/tablet: tap <b>Share</b> → <b>Add to Home Screen</b></div>
     </div>

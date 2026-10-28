@@ -204,6 +204,9 @@ body.touchui #ctxHint { display: none; }
 #panel header { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
 #panel .hbtns { display: flex; gap: 6px; flex-shrink: 0; }
 button.icon { width: 34px; padding: 6px 0; font-size: 18px; line-height: 1; font-weight: 700; }
+button.icon svg { width: 16px; height: 16px; display: block; margin: 0 auto; }
+#fsBtn .fs-off { display: none; }
+:fullscreen #fsBtn .fs-on { display: none; } :fullscreen #fsBtn .fs-off { display: inline; }
 #panelPill {
   position: fixed; top: 14px; right: 14px; display: flex; align-items: center; gap: 8px;
   background: rgba(8,14,12,.78); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px;
@@ -299,33 +302,34 @@ input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); backgr
   background: rgba(255,255,255,.35); border: 2px solid rgba(255,255,255,.6); }
 #touch .tb { position: absolute; pointer-events: auto; touch-action: none; border-radius: 50%; padding: 0;
   display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1;
-  background: rgba(10,18,14,.42); border: 2px solid rgba(255,255,255,.32); color: #fff; backdrop-filter: blur(2px); }
-#touch .tb b { font-size: clamp(18px, 6vmin, 30px); font-weight: 700; }
+  background: rgba(10,18,14,.24); border: 2px solid rgba(255,255,255,.24); color: #fff; backdrop-filter: blur(2px); }
+#touch .tb b { font-size: clamp(14px, 4.6vmin, 24px); font-weight: 700; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
 #touch .tb i { font-style: normal; font-size: clamp(8px, 2.2vmin, 11px); opacity: .75; margin-top: 2px; }
 #touch .tb.on { background: rgba(255,255,255,.32); border-color: #fff; }
-/* the eight buttons – Q W E R over A S D F, round like an arcade cabinet's */
-#touch .tpad { --tk: min(15.5vmin, 72px); --tg: 1.8vmin; position: absolute; right: calc(12px + env(safe-area-inset-right));
-  bottom: calc(12px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: repeat(4, var(--tk)); gap: var(--tg); }
+/* the eight buttons – Q W E R over A S D F, round like an arcade cabinet's;
+   small and see-through enough to leave the pitch in view */
+#touch .tpad { --tk: min(12vmin, 54px); --tg: 1.2vmin; position: absolute; right: calc(10px + env(safe-area-inset-right));
+  bottom: calc(10px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: repeat(4, var(--tk)); gap: var(--tg); }
 #touch .tk { position: relative; width: var(--tk); height: var(--tk); padding: 0; border-radius: 50%; pointer-events: auto; touch-action: none;
   display: flex; align-items: center; justify-content: center; line-height: 1; color: #fff; backdrop-filter: blur(2px);
-  background: radial-gradient(circle at 38% 30%, color-mix(in srgb, var(--c) 62%, transparent), rgba(10,18,14,.55) 72%);
-  border: 2px solid color-mix(in srgb, var(--c) 75%, transparent); box-shadow: 0 3px 0 rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.25); }
-#touch .tk b { font-size: clamp(9px, 2.7vmin, 13px); font-weight: 700; text-align: center; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
-#touch .tk u { position: absolute; top: 11%; left: 50%; transform: translateX(-50%); text-decoration: none;
-  font-size: clamp(7px, 1.9vmin, 10px); font-weight: 700; opacity: .6; }
+  background: radial-gradient(circle at 38% 30%, color-mix(in srgb, var(--c) 38%, transparent), rgba(10,18,14,.26) 72%);
+  border: 2px solid color-mix(in srgb, var(--c) 55%, transparent); box-shadow: 0 2px 0 rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.18); }
+#touch .tk b { font-size: clamp(8px, 2.3vmin, 12px); font-weight: 700; text-align: center; text-shadow: 0 1px 2px rgba(0,0,0,.75); }
+#touch .tk u { position: absolute; top: 9%; left: 50%; transform: translateX(-50%); text-decoration: none;
+  font-size: clamp(6px, 1.6vmin, 9px); font-weight: 700; opacity: .6; }
 #touch .tk.on { transform: translateY(2px); box-shadow: 0 1px 0 rgba(0,0,0,.4); border-color: #fff;
   background: radial-gradient(circle at 38% 30%, var(--c), color-mix(in srgb, var(--c) 35%, rgba(10,18,14,.6)) 75%); }
-#touch .tk.dim { opacity: .38; }
+#touch .tk.dim { opacity: .3; }
 /* slid up / down for a level higher / lower */
-#touch .tk[data-lv]:not([data-lv=""])::after { position: absolute; bottom: 9%; left: 50%; transform: translateX(-50%); font-size: clamp(8px, 2.2vmin, 11px); font-weight: 700; }
+#touch .tk[data-lv]:not([data-lv=""])::after { position: absolute; bottom: 7%; left: 50%; transform: translateX(-50%); font-size: clamp(7px, 1.9vmin, 10px); font-weight: 700; }
 #touch .tk[data-lv="up"]::after { content: '▲'; } #touch .tk[data-lv="up2"]::after { content: '▲▲'; } #touch .tk[data-lv="down"]::after { content: '▼'; }
 #touch .tk.run { --c: #69e09a; } #touch .tk.mate { --c: #7fb2ff; } #touch .tk.goal { --c: #ff9fd6; }
 #touch .tk.self { --c: #ffd36b; } #touch .tk.ctrl { --c: #8fe3dc; } #touch .tk.trick { --c: #c9a2ff; }
-#touch .tshoulder { position: absolute; right: calc(12px + env(safe-area-inset-right));
-  bottom: calc(22px + 2 * min(15.5vmin, 72px) + 1.8vmin + env(safe-area-inset-bottom)); display: flex; gap: 8px; align-items: flex-end; }
-#touch .tshoulder .tb { position: static; width: 15vmin; height: 15vmin; max-width: 72px; max-height: 72px; border-radius: 14px; }
-#touch .tshoulder .tb.small { width: 11vmin; height: 11vmin; max-width: 54px; max-height: 54px; }
-#touch .tshoulder .tb b { font-size: clamp(13px, 4vmin, 20px); }
+#touch .tshoulder { position: absolute; right: calc(10px + env(safe-area-inset-right));
+  bottom: calc(16px + 2 * min(12vmin, 54px) + 1.2vmin + env(safe-area-inset-bottom)); display: flex; gap: 6px; align-items: flex-end; }
+#touch .tshoulder .tb { position: static; width: 11vmin; height: 11vmin; max-width: 52px; max-height: 52px; border-radius: 12px; }
+#touch .tshoulder .tb.small { width: 8.5vmin; height: 8.5vmin; max-width: 40px; max-height: 40px; }
+#touch .tshoulder .tb b { font-size: clamp(11px, 3.2vmin, 16px); }
 
 body.touchui #hint, body.touchui #quick { display: none; }
 body.touchui #quickToggle { display: block; }
