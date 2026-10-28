@@ -25,6 +25,7 @@
 import {
   createWorld, addPlayer, removePlayer, updatePlayerSpec, step, startMatch, stopMatch, startKickoff, pById, goalTicks,
 } from './sim.js';
+import { cleanPlayerName } from './names.js';
 import { SNAP_EVERY, ROLE, PHASE, autoPitch, MAX_PLAYERS, TEAM_NAMES, QUICK_CHAT, GOAL_SIZE_DEFAULT, KIT_NAMES, KITS_DEFAULT, GAME_SPEEDS, GAME_SPEED_DEFAULT } from './constants.js';
 import {
   worldBytes, encodeFuture, fullSnapshot, deltaSnapshot, patchSnapshotHeader, readWorld, decodeInputs,
@@ -38,7 +39,11 @@ const clampInt = (v, lo, hi, d) => { const n = Math.round(Number(v)); return Num
 const hex = (v, d) => (typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v) ? v : d);
 export function sanitizeProfile(p) {
   const a = (p && p.avatar) || {};
-  const name = String((p && p.name) || 'Player').replace(/[^\p{L}\p{N} _.\-]/gu, '').trim().slice(0, 16) || 'Player';
+  // (a name that isn't allowed – see names.js – becomes PlayerNNN, the same for the same name)
+  const raw = String((p && p.name) || '');
+  let h = 7;
+  for (const c of raw) h = (h * 31 + c.codePointAt(0)) >>> 0;
+  const name = cleanPlayerName(raw) || `Player${100 + (h % 900)}`;
   const sex = clampInt(a.sex, 0, 1, 0); // 0: man, 1: woman (looks only – the body sliders set the attributes)
   return {
     name,

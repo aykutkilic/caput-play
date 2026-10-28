@@ -65,7 +65,38 @@ label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--t
 #roomList li.info { display: block; line-height: 1.55; font-size: 13px; }
 #friendsStatus { color: var(--accent); }
 #listBtn { padding: 9px; }
-.row input.pass { flex: 0 0 96px; min-width: 0; }
+#createRow { display: flex; flex-direction: column; gap: 8px; }
+#createRow .row { margin-top: 0; }
+#createRow .row .primary { flex: 1; }
+#createRow select { flex: 0 0 auto; }
+#accessRow select, #accessRow input { padding: 4px 6px; font-size: 12px; }
+#accessRow input { width: 110px; }
+.warnline { color: var(--danger); font-size: 11px; }
+
+/* ---------------- developer mode: players online */
+.sheet.stats { width: 800px; display: flex; flex-direction: column; gap: 12px; position: relative; }
+.sseg { margin-left: auto; display: flex; }
+.sseg button { padding: 4px 10px; font-size: 12px; }
+.sseg button[aria-checked="true"] { background: var(--accent); color: #10200c; font-weight: 700; }
+.stiles { display: flex; gap: 10px; }
+.stiles div { flex: 1; background: rgba(255,255,255,.04); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
+.stiles b { display: block; font-size: 22px; }
+.stiles span { font-size: 12px; color: var(--muted); }
+.schart { width: 100%; height: auto; display: block; }
+.schart .sgrid { stroke: var(--line); stroke-width: 1; }
+.schart .saxis { fill: var(--muted); font-size: 10px; }
+.schart .sbar { fill: var(--accent); }
+.schart .shit { fill: transparent; }
+.schart .scol:hover .sbar { fill: #d4ff9c; }
+.schart .scol:hover .shit { fill: rgba(255,255,255,.05); }
+.stabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.stab h4 { margin: 0 0 4px; font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); }
+.stab table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.stab td, .stab th { padding: 3px 4px; border-bottom: 1px solid var(--line); text-align: left; font-weight: 400; }
+.stab th { color: var(--muted); }
+.stab .n { text-align: right; font-variant-numeric: tabular-nums; }
+.stip { position: absolute; pointer-events: none; background: #0b1216; border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font-size: 12px; white-space: nowrap; z-index: 2; }
+@media (max-width: 640px) { .stabs { grid-template-columns: 1fr; } }
 
 /* ---------------- room list */
 .sheet.rooms { width: 780px; display: flex; flex-direction: column; gap: 12px; }

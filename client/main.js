@@ -1,7 +1,9 @@
 import { Net } from './net.js';
 import { HostSession, PeerNet, cleanPass } from './p2p.js';
 import { CLOUD_URL } from './cloud.js';
-import { fetchRooms, lobbyAvailable } from './lobby.js';
+import { fetchRooms, fetchStats, lobbyAvailable } from './lobby.js';
+import { renderStats } from './statsview.js';
+import { cleanPlayerName, nameProblem } from '../shared/names.js';
 import { NetGame } from './netgame.js';
 import { Input, DEFAULT_KEYS, ACTION_LABELS, KICK_LABELS, keyName, isTyping } from './input.js';
 import { Renderer, CAMERAS, lookFor, drawAvatarPreview, TEAM_COLORS, setKits } from './render.js';
@@ -40,7 +42,15 @@ function defaultProfile() {
 function loadProfile() {
   try {
     const p = JSON.parse(localStorage.getItem('caput.profile') || 'null');
-    if (p && p.avatar && p.avatar.phys) return p;
+    if (p && p.avatar && p.avatar.phys) {
+      // a saved name that isn't allowed (any more – see shared/names.js): a fresh one
+      if (cleanPlayerName(p.name) !== p.name) {
+        p.name = defaultProfile().name;
+        saveProfile(p);
+        setTimeout(() => toast('Your player name isn\'t allowed – you\'re ' + p.name + ' now. Pick another in the player editor.'), 1500);
+      }
+      return p;
+    }
   } catch { /* ignore */ }
   const p = defaultProfile();
   saveProfile(p);
@@ -223,10 +233,14 @@ function startSolo() {
 async function openRoom() {
   const host = state.host;
   if (!host || host.online || state.busy) return;
+  const problem = nameProblem($('newRoomName').value, 'room');
+  if (problem) { toast(`Room name: ${problem}`); $('newRoomName').focus(); return; }
+  const access = $('newRoomAccess').value, pass = cleanPass($('newRoomPass').value);
+  if (access === 'password' && !pass) { toast('Type the password'); $('newRoomPass').focus(); return; }
   state.busy = true;
   setFriendsStatus('Opening the room…');
   try {
-    await host.goOnline($('newRoomName').value.trim() || `${state.profile.name}'s room`, cleanPass($('newRoomPass').value));
+    await host.goOnline($('newRoomName').value.trim() || `${state.profile.name}'s room`, access, pass);
   } catch (e) {
     toast(e.type === 'full'
       ? `Online play is full right now${e.cap ? ` (${e.cap.toLocaleString()} players)` : ''} – try again in a little while`
@@ -237,7 +251,8 @@ async function openRoom() {
     setFriendsStatus('');
   }
   const url = `${location.origin}${location.pathname}${inviteQuery(host.code, host.pass)}`;
-  const listed = host.listed === 'ok' ? ', in the room list' : host.listed === 'busy' ? ' (not in the room list: too many rooms from your network)' : '';
+  const listed = host.access === 'private' ? ' (private: only the invite link gets in)'
+    : host.listed === 'ok' ? ', in the room list' : host.listed === 'busy' ? ' (not in the room list: too many rooms from your network)' : '';
   try { await navigator.clipboard.writeText(url); toast(`Room ${host.code} is open${listed} – link copied, or send it on WhatsApp`); } catch { toast(`Room ${host.code} is open${listed} – invite: ${url}`); }
 }
 
@@ -280,6 +295,39 @@ $('roomList').addEventListener('click', (e) => {
 });
 $('createBtn').onclick = () => { sfx.unlock(); openRoom(); $('createBtn').blur(); };
 $('newRoomName').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('createBtn').click(); });
+$('newRoomPass').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('createBtn').click(); });
+// Who can join a room: anyone, with the password, or only with the invite link
+// (the host can change it while the room is open)
+const ACCESS_WORD = { public: 'public · ', password: 'password · ', private: 'private · ' };
+const ACCESS_HINT = {
+  public: 'In the room list – anyone can join.',
+  password: 'In the room list – only people with the password (or your invite link) get in.',
+  private: 'Not in the room list – only people with your invite link get in.',
+};
+function syncCreateAccess() {
+  const a = $('newRoomAccess').value;
+  $('newRoomPass').hidden = a !== 'password';
+  $('accessHint').textContent = lobbyAvailable() ? ACCESS_HINT[a] : '';
+}
+$('newRoomAccess').onchange = () => { syncCreateAccess(); if ($('newRoomAccess').value === 'password') $('newRoomPass').focus(); };
+syncCreateAccess();
+$('roomAccess').onchange = () => {
+  const a = $('roomAccess').value, host = state.host;
+  if (!host || !host.online) return;
+  $('roomPassIn').hidden = $('roomPassSet').hidden = a !== 'password';
+  if (a === 'password') { $('roomPassIn').value = ''; $('roomPassIn').focus(); return; } // (set once it's typed)
+  host.setAccess(a);
+  toast(a === 'private' ? 'Private now: only the invite link gets in (the link has changed)' : 'Public now: anyone can join from the room list');
+};
+$('roomPassSet').onclick = () => {
+  const host = state.host, pass = cleanPass($('roomPassIn').value);
+  if (!host || !host.online) return;
+  if (!pass) { toast('Type the password'); $('roomPassIn').focus(); return; }
+  host.setAccess('password', pass);
+  $('roomPassIn').blur();
+  toast('Password set – the invite link carries it');
+};
+$('roomPassIn').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('roomPassSet').click(); });
 $('joinBtn').onclick = () => {
   sfx.unlock();
   const c = $('joinCode').value.trim().toUpperCase();
@@ -491,7 +539,8 @@ function renderPanel() {
   $('inviteRow').hidden = offline;
   $('pillName').textContent = offline ? 'Warm-up · Play with friends' : r.name;
   $('pillCode').textContent = r.code;
-  const where = !p2p ? '' : state.host ? ' · hosted in this tab – keep it open' : ' · peer-to-peer';
+  const access = state.host && state.host.online ? state.host.access : '';
+  const where = !p2p ? '' : state.host ? ` · ${ACCESS_WORD[access] || ''}hosted in this tab – keep it open` : ' · peer-to-peer';
   $('roomStatus').textContent = offline ? `${r.live ? 'Match in progress' : 'Just you'} · offline` : (r.live ? 'Match in progress' : 'Warm-up') + where;
   // play with friends: open this room to them or join theirs (from the
   // server's list or by code) – from your own warm-up
@@ -499,6 +548,12 @@ function renderPanel() {
   $('p2pInfo').hidden = !p2p;
   $('createRow').hidden = !p2p;
   $('listBtn').hidden = !p2p || !lobbyAvailable();
+  $('accessRow').hidden = !access;
+  if (access && document.activeElement !== $('roomPassIn')) {
+    $('roomAccess').value = access;
+    $('roomPassIn').hidden = $('roomPassSet').hidden = access !== 'password';
+    if (access === 'password') $('roomPassIn').value = state.host.pass;
+  }
   // leaving: closing the room you host takes it offline (you play on);
   // leaving someone else's takes you back to a warm-up of your own
   $('leaveBtn').hidden = p2p ? offline : alone;
@@ -667,7 +722,32 @@ $('netChk').onchange = () => { state.showNet = $('netChk').checked; try { localS
 function syncAiKeys() {
   aiKeys.on = devView.on && aiKeysPref;
   $('aiKeysChk').closest('label').hidden = !devView.on;
+  $('statsBtn').hidden = !devView.on || !lobbyAvailable();
+  if (!devView.on) $('stats').hidden = true;
 }
+// (developer mode) people online by hour and place
+let statsDays = 7;
+async function loadStats() {
+  for (const b of document.querySelectorAll('.sseg button')) b.setAttribute('aria-checked', String(Number(b.dataset.days) === statsDays));
+  $('statsBody').innerHTML = '<p class="muted">Loading…</p>';
+  try { renderStats($('statsBody'), await fetchStats(statsDays), statsDays); } catch { $('statsBody').innerHTML = '<p class="muted">Couldn\'t load the stats.</p>'; }
+}
+$('statsBtn').onclick = () => { $('stats').hidden = false; loadStats(); $('statsBtn').blur(); };
+$('statsClose').onclick = () => { $('stats').hidden = true; };
+$('stats').addEventListener('pointerdown', (e) => { if (e.target === $('stats')) $('stats').hidden = true; });
+document.querySelector('.sseg').onclick = (e) => { const d = Number(e.target.dataset && e.target.dataset.days); if (d) { statsDays = d; loadStats(); } };
+// a bar's tooltip
+$('statsBody').addEventListener('pointermove', (e) => {
+  const col = e.target.closest && e.target.closest('.scol'), tip = $('statsTip');
+  if (!col) { tip.hidden = true; return; }
+  const box = $('stats').querySelector('.sheet').getBoundingClientRect();
+  tip.textContent = col.dataset.tip;
+  tip.hidden = false;
+  const x = Math.min(e.clientX - box.left + 12, box.width - tip.offsetWidth - 8);
+  tip.style.left = `${Math.max(8, x)}px`;
+  tip.style.top = `${e.clientY - box.top - 34}px`;
+});
+$('statsBody').addEventListener('pointerleave', () => { $('statsTip').hidden = true; });
 $('aiKeysChk').checked = aiKeysPref;
 $('aiKeysChk').onchange = () => { aiKeysPref = $('aiKeysChk').checked; try { localStorage.setItem('caput.aikeys', aiKeysPref ? '1' : '0'); } catch { /* ignore */ } syncAiKeys(); };
 syncAiKeys();
@@ -764,6 +844,7 @@ addEventListener('keydown', (e) => {
   if (isTyping(e)) return;
   if (e.code === 'Escape') {
     if (!$('rooms').hidden) { closeRoomList(); return; }
+    if (!$('stats').hidden) { $('stats').hidden = true; return; }
     if (!$('editor').hidden) { closeEditor(); return; }
     if (!$('controls').hidden) { toggleControls(false); return; }
     if (state.inRoom) showPanel($('panel').hidden);
@@ -808,6 +889,7 @@ function openEditor() {
   draft = JSON.parse(JSON.stringify(state.profile));
   const a = draft.avatar;
   $('edName').value = draft.name;
+  checkName();
   $('edNum').value = a.number;
   swatches($('edSkin'), SKINS, () => a.skin, (v) => { a.skin = v; });
   swatches($('edHairCol'), HAIR_COLS, () => a.hairColor, (v) => { a.hairColor = v; });
@@ -858,7 +940,14 @@ function updatePhys() {
 }
 $('edH').oninput = updatePhys;
 $('edB').oninput = updatePhys;
-$('edName').oninput = () => { draft.name = $('edName').value; };
+$('edName').oninput = () => { draft.name = $('edName').value; checkName(); };
+// what's wrong with the name, as it's typed (Save waits until it's fine)
+function checkName() {
+  const problem = nameProblem($('edName').value);
+  $('edNameWarn').textContent = problem;
+  $('edNameWarn').hidden = !problem;
+  $('edSave').disabled = !!problem;
+}
 $('edNum').oninput = () => { draft.avatar.number = Math.max(1, Math.min(99, Number($('edNum').value) || 1)); };
 document.querySelector('.kitswitch').onclick = (e) => {
   if (e.target.dataset.kit === undefined) return;
@@ -868,7 +957,8 @@ document.querySelector('.kitswitch').onclick = (e) => {
 function closeEditor() { $('editor').hidden = true; draft = null; }
 $('edCancel').onclick = closeEditor;
 $('edSave').onclick = () => {
-  draft.name = (draft.name || '').trim().slice(0, 16) || 'Player';
+  if (nameProblem(draft.name)) return;
+  draft.name = cleanPlayerName(draft.name);
   state.profile = draft;
   saveProfile(draft);
   send({ t: 'profile', profile: draft });

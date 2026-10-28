@@ -15,13 +15,17 @@
 //    rollback netcode is unchanged.
 //  * The host's simulation is clocked from a Web Worker, because page timers
 //    are throttled hard in background tabs while worker timers are not.
-//  * A room open to others is in the public room list while it's open
-//    (lobby.js), and may have a password: guests send it with their
+//  * Who can join a room open to others (the host can change it while it's
+//    open): anyone – it's in the public room list (lobby.js); people with its
+//    password – listed as locked; or only people with the invite link, which
+//    carries a random key – private, never listed (it still counts towards
+//    the cap on people online). Guests send the password or key with their
 //    connection request and the host lets them in or turns them away before
 //    they leave their own warm-up. So does online play being full.
 
 import { Transport } from './net.js';
 import { Room, sanitizeProfile, MAX_MEMBERS } from '../shared/room.js';
+import { cleanRoomName } from '../shared/names.js';
 import { MSG, encodePong } from '../shared/protocol.js';
 import { TICK_RATE } from '../shared/constants.js';
 import { signallingUrl, cloudEndpoint } from './cloud.js';
@@ -100,8 +104,14 @@ function toView(b) {
 
 // ---------------------------------------------------------------- host
 
-const cleanName = (n) => String(n).replace(/[<>]/g, '').slice(0, 28);
+const cleanName = (n) => cleanRoomName(n) || 'Room';
 export const cleanPass = (p) => String(p || '').trim().slice(0, 20);
+// a private room's key (in its invite link)
+function newKey() {
+  const b = new Uint8Array(10);
+  crypto.getRandomValues(b);
+  return Array.from(b, (x) => 'abcdefghijkmnpqrstuvwxyz23456789'[x & 31]).join('');
+}
 
 export class HostSession {
   constructor() {
@@ -111,7 +121,8 @@ export class HostSession {
     this.guests = new Set();
     this.nextId = 2; // 1 is the host's own client
     this.closed = false;
-    this.pass = '';    // the room's password ('' none)
+    this.access = 'public'; // who can join: 'public', 'password' or 'private' (invite link only)
+    this.pass = '';    // the password, or the private room's key ('' none)
     this.lobby = null; // its place in the room list while it's open
     this.local = new LocalNet(this);
   }
@@ -133,7 +144,7 @@ export class HostSession {
   // Open the room to others, keeping what's on the pitch: it gets a code,
   // becomes reachable through the broker and is listed – unless online play
   // is full, then it stays as it was.
-  async goOnline(roomName, pass = '') {
+  async goOnline(roomName, access = 'public', pass = '') {
     const lobby = new LobbyLink();
     const listed = await lobby.open();
     if (listed === 'full') {
@@ -163,19 +174,30 @@ export class HostSession {
     peer.on('error', (e) => console.warn('[host] peer error:', e.type));
     this.room.code = this.code;
     if (roomName) this.room.name = cleanName(roomName);
-    this.pass = cleanPass(pass);
     this.lobby = lobby;
     this.room.onChange = () => this.announce();
-    this.room.broadcastRoom();
+    this.setAccess(access, pass); // (announces the room)
     this.listed = listed; // ('busy': open, but not in the list)
     return this.code;
   }
 
-  // the room's line in the room list (sent only when it changed)
+  // Who can join: anyone ('public'), with the password ('password'), or only
+  // with the invite link ('private': its key, kept while the room stays private).
+  setAccess(access, pass = '') {
+    const was = this.access;
+    pass = cleanPass(pass);
+    this.access = access === 'private' || (access === 'password' && pass) ? access : 'public';
+    this.pass = this.access === 'password' ? pass : this.access === 'private' ? (was === 'private' && this.pass) || newKey() : '';
+    this.room.broadcastRoom();
+  }
+
+  // the room's line in the room list (sent only when it changed; a private
+  // room only counts its people)
   announce() {
     const r = this.room;
     if (!this.lobby || !this.code) return;
-    this.lobby.update({ code: this.code, name: r.name, players: r.members.size, max: MAX_MEMBERS, locked: !!this.pass, live: !!r.world.m.live && !r.ended });
+    const hidden = this.access === 'private';
+    this.lobby.update({ code: this.code, name: hidden ? '' : r.name, players: r.members.size, max: MAX_MEMBERS, locked: this.access === 'password', live: !!r.world.m.live && !r.ended, hidden });
   }
 
   closeListing() {
@@ -196,6 +218,7 @@ export class HostSession {
     this.closeListing();
     this.peer = null;
     this.code = null;
+    this.access = 'public';
     this.pass = '';
     setTimeout(() => { try { peer.destroy(); } catch { /* ignore */ } }, 200);
     this.room.code = '';
@@ -237,10 +260,11 @@ export class HostSession {
       const wrongPass = !!this.pass && given !== this.pass;
       const why = this.closed ? 'Room closed'
         : this.room.members.size >= MAX_MEMBERS ? 'Room is full'
+        : wrongPass && this.access === 'private' ? 'This room is private – only its invite link gets in'
         : wrongPass ? (given ? 'Wrong password' : 'This room has a password')
         : this.lobby && this.lobby.full ? 'Online play is full right now – try again in a little while' : '';
       if (why) {
-        client.sendText(JSON.stringify({ t: 'error', text: why, pass: wrongPass || undefined }));
+        client.sendText(JSON.stringify({ t: 'error', text: why, pass: (wrongPass && this.access === 'password') || undefined }));
         setTimeout(() => conn.close(), 300);
         return;
       }

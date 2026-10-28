@@ -61,15 +61,35 @@
       <button id="shareBtn" class="ghost small" title="Share the invite link" hidden>Share…</button>
       <button id="copyLink" class="ghost small" title="Copy the invite link">Copy link</button>
     </div>
+    <div class="invite" id="accessRow" hidden>
+      <span class="muted small">Who can join</span>
+      <select id="roomAccess" class="small" aria-label="Who can join">
+        <option value="public">Anyone (public)</option>
+        <option value="password">With the password</option>
+        <option value="private">Invite link only</option>
+      </select>
+      <input id="roomPassIn" class="small" placeholder="Password" maxlength="20" autocomplete="off" hidden>
+      <button id="roomPassSet" class="small" hidden>Set</button>
+    </div>
     <div class="section friends" id="friends" hidden>
       <h4>Play with friends</h4>
       <p class="muted small" id="p2pInfo">Create a room and send the invite link – friends join this game, right where it is.</p>
       <ul id="roomList"></ul>
       <button id="listBtn" hidden>Room list – find a game</button>
-      <div class="row" id="createRow">
-        <input id="newRoomName" placeholder="Room name (optional)" maxlength="28">
-        <input id="newRoomPass" class="pass" placeholder="Password" maxlength="20" autocomplete="off" title="Optional: only people with the password (or your invite link) get in">
-        <button id="createBtn" class="primary">Create room</button>
+      <div id="createRow">
+        <div class="row">
+          <input id="newRoomName" placeholder="Room name (optional)" maxlength="28">
+          <select id="newRoomAccess" title="Who can join" aria-label="Who can join">
+            <option value="public">Public</option>
+            <option value="password">Password</option>
+            <option value="private">Private</option>
+          </select>
+        </div>
+        <div class="row">
+          <input id="newRoomPass" placeholder="Password" maxlength="20" autocomplete="off" hidden>
+          <button id="createBtn" class="primary">Create room</button>
+        </div>
+        <div id="accessHint" class="muted small"></div>
       </div>
       <div class="row">
         <input id="joinCode" placeholder="Room code" maxlength="4" style="text-transform:uppercase">
@@ -172,6 +192,7 @@
       </label>
       <label class="check"><input id="netChk" type="checkbox"> Net stats</label>
       <label class="check"><input id="aiKeysChk" type="checkbox"> AI keys (over their heads)</label>
+      <button id="statsBtn" class="ghost small" hidden>Players online (stats)</button>
       <label class="check"><input id="touchChk" type="checkbox"> Touch controls</label>
       <button id="fsBtn" class="ghost small">Fullscreen</button>
       <button id="installBtn" class="primary small" hidden>⬇ Install app</button>
@@ -222,6 +243,23 @@
     </div>
   </div>
 
+  <!-- developer mode: people online by hour and place (client/statsview.js) -->
+  <div id="stats" class="modal" hidden>
+    <div class="sheet stats">
+      <header class="roomsHead"><h2>Players online</h2>
+        <div class="seg sseg" role="radiogroup" aria-label="Period">
+          <button data-days="1" role="radio" aria-checked="false">24 hours</button>
+          <button data-days="7" role="radio" aria-checked="true">7 days</button>
+          <button data-days="30" role="radio" aria-checked="false">30 days</button>
+        </div>
+        <button id="statsClose" class="ghost icon" title="Close (Esc)" aria-label="Close the stats">×</button></header>
+      <div id="statsBody"><p class="muted">Loading…</p></div>
+      <p class="muted small">Counted every 10 minutes where each room's host is (guests connect to the host, so the Worker
+        never sees them) – only counts, nothing about anyone. Times in your local time.</p>
+      <div id="statsTip" class="stip" hidden></div>
+    </div>
+  </div>
+
   <!-- avatar editor -->
   <div id="editor" class="modal" hidden>
     <div class="sheet wide">
@@ -233,7 +271,7 @@
         </div>
         <div class="fields">
           <div class="row2">
-            <label>Name <input id="edName" maxlength="16"></label>
+            <label>Name <input id="edName" maxlength="16"><span id="edNameWarn" class="warnline" hidden></span></label>
             <label>Number <input id="edNum" type="number" min="1" max="99"></label>
           </div>
           <div class="lbl">Player</div><div class="chips" id="edSex"></div>

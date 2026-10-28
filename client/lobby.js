@@ -29,6 +29,17 @@ export async function fetchRooms() {
   return res.json();
 }
 
+// (developer mode) people online by hour and place over the last `days`
+export async function fetchStats(days) {
+  const base = cloudUrl();
+  if (!base) throw new Error('no stats here');
+  const u = cloudEndpoint(base, 'stats');
+  u.searchParams.set('days', String(days));
+  const res = await fetch(u, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`stats: ${res.status}`);
+  return res.json();
+}
+
 // A hosted room's place in the list.
 export class LobbyLink {
   constructor() {
