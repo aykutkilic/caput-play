@@ -292,27 +292,21 @@ input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); backgr
 #toast { position: fixed; top: 18px; left: 50%; transform: translateX(-50%); background: #2a1515; border: 1px solid rgba(255,106,92,.5);
   padding: 8px 14px; border-radius: 10px; font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 20; }
 #toast.show { opacity: 1; }
-/* developer mode: naming a marker in a recording (Shift+1..8) */
-#markerBox { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 21; display: flex; flex-direction: column; gap: 4px;
-  background: rgba(16,20,28,.94); border: 1px solid rgba(255,214,90,.6); border-radius: 10px; padding: 10px 12px; font-size: 13px; width: min(440px, calc(100vw - 32px)); box-sizing: border-box; }
-#markerBox label { display: flex; flex-direction: column; gap: 6px; color: #ffd65a; }
-#markerBox input { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,.25); background: #0c0f15; color: #fff; }
-#markerBox .muted { font-size: 11px; }
-/* developer mode: the match recording's buttons (#recBar.off / .on / .paused) – only with the HUD */
-#recBar { position: fixed; z-index: 5; top: calc(60px + env(safe-area-inset-top)); left: calc(14px + env(safe-area-inset-left)); display: flex; align-items: center; gap: 6px;
-  background: rgba(0,0,0,.55); border-radius: 9px; padding: 3px; font: 700 11px/1 ui-monospace, Menlo, monospace; white-space: nowrap; }
-#hud[hidden] ~ #recBar { display: none; }
-#recBar button { display: flex; align-items: center; gap: 6px; height: 24px; min-width: 26px; padding: 0 8px; border-radius: 6px; font: inherit; }
-#recBar button i { display: block; flex: none; }
-#recGo i { width: 10px; height: 10px; border-radius: 50%; background: #ff5a4f; }
-#recBar.on #recGo i { width: 9px; border-radius: 0; background: none; border: solid #fff; border-width: 0 3px; }
-#recBar.paused #recGo i { width: 0; height: 0; border-radius: 0; background: none; border: solid transparent; border-width: 5px 0 5px 9px; border-left-color: #fff; }
-#recEnd i { width: 9px; height: 9px; border-radius: 1px; background: #fff; }
-#recTime { display: flex; align-items: center; gap: 5px; padding: 0 2px; }
-#recTime::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #ff5a4f; animation: blink 1s steps(2) infinite; }
-#recBar.paused #recTime::before { background: #ffd65a; animation: none; }
-#recBar:not(.off) #recGo span, #recBar.off #recTime, #recBar.off #recEnd { display: none; }
-.recRow { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+/* developer mode: marking (M) – back over the last minute, comments at a moment (above the touch controls) */
+#marking { position: fixed; z-index: 6; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(620px, calc(100vw - 32px)); box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 8px; background: rgba(12,16,22,.92); border: 1px solid rgba(255,214,90,.6); border-radius: 12px; padding: 10px 12px; font-size: 13px; }
+#marking .mkTop { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+#marking .mkTop b { color: #ffd65a; letter-spacing: 2px; }
+#mkTime { font: 700 13px ui-monospace, Menlo, monospace; }
+#mkSlider { width: 100%; margin: 0; accent-color: #ffd65a; }
+#marking .mkRow { display: flex; gap: 8px; }
+#mkText { flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,.25); background: #0c0f15; color: #fff; }
+#mkList { margin: 0; padding: 0 0 0 20px; max-height: 120px; overflow: auto; font-size: 12px; }
+#mkList:empty { display: none; }
+#mkList li { cursor: pointer; padding: 1px 0; }
+#mkList li:hover { color: #ffd65a; }
+#marking .mkKeys { font-size: 11px; }
+body.marking #radar, body.marking #ctxHint, body.marking #hint { visibility: hidden; }
 #recKeys { grid-column: 1 / -1; }
 
 /* ---------------- touch controls (phones & tablets) */
@@ -378,7 +372,6 @@ body.tp.touchui #radar { top: auto; bottom: calc(10px + env(safe-area-inset-bott
   .teamcol .btns button, .teamcol .seg button { padding: 6px 4px; }
   .teamcol .btns button { padding: 6px 2px; font-size: 11px; white-space: nowrap; }
   #netstats { top: 48px; font-size: 10px; }
-  #recBar { top: calc(46px + env(safe-area-inset-top)); left: calc(8px + env(safe-area-inset-left)); }
   .sheet { padding: 16px; }
 }
 

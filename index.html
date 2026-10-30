@@ -40,11 +40,16 @@
   </div>
 
   <!-- minimized room panel -->
-  <!-- developer mode: the match recording's buttons, over the pitch (with the HUD; above the touch controls) -->
-  <div id="recBar" class="off" hidden>
-    <button id="recGo" title="Record (Shift+0)"><i></i><span>Record</span></button>
-    <span id="recTime"></span>
-    <button id="recEnd" title="Stop &amp; save (Shift+9)"><i></i></button>
+  <!-- developer mode: marking (M) – back over the last minute, comments put down at a moment (client/marking.js) -->
+  <div id="marking" hidden>
+    <div class="mkTop"><b>MARKING</b><span id="mkTime"></span><span class="muted mkNote"></span></div>
+    <input id="mkSlider" type="range" min="0" max="0" step="1" value="0" aria-label="The moment shown">
+    <div class="mkRow">
+      <input id="mkText" type="text" maxlength="300" placeholder="What's wrong here? Enter puts it down" autocomplete="off">
+      <button id="mkDone" class="primary small" title="Esc">Done</button>
+    </div>
+    <ol id="mkList"></ol>
+    <div class="muted mkKeys">← → a frame · Shift + ← → a second · Enter puts the comment down at the moment shown · Esc: done – the match goes on, the comments are saved</div>
   </div>
   <button id="panelPill" hidden title="Room, teams &amp; settings (Esc)">
     <span id="pillName">Room</span> <b id="pillCode"></b> <span class="pillOpen">▾</span>
@@ -215,12 +220,8 @@
       <h4>Developer</h4>
       <div id="devOpts"></div>
       <label class="check"><input id="aiKeysChk" type="checkbox"> AI keys (over their heads)</label>
-      <div class="recRow">
-        <button id="recBtn" class="ghost small">● Record</button>
-        <button id="recStop" class="ghost small" disabled>■ Stop &amp; save</button>
-        <span id="recState" class="muted small">Not recording</span>
-      </div>
-      <div id="recKeys" class="muted small">Shift+0 record / pause · Shift+1–8 mark a moment · Shift+9 stop &amp; save</div>
+      <button id="markBtn" class="ghost small" title="M">Look back &amp; comment (M)</button>
+      <div id="recKeys" class="muted small">The last minute is always kept. M stops the match: go back over it (← →), type a comment, Enter puts it down; Esc goes on and saves the comments with the minute.</div>
       <button id="statsBtn" class="ghost small" hidden>Players online (stats)</button>
     </div>
     <div class="section">
