@@ -42,7 +42,7 @@
   <!-- minimized room panel -->
   <!-- developer mode: marking (M) – back over the last minute, comments put down at a moment (client/marking.js) -->
   <div id="marking" hidden>
-    <div class="mkTop"><b>MARKING</b><span id="mkTime"></span><span class="muted mkNote"></span></div>
+    <div class="mkTop"><b>MARKING</b><span id="mkTime"></span><span class="muted mkNote"></span><button id="mkLines" class="ghost small" title="Developer mode's lines over the pitch">Lines: on</button></div>
     <input id="mkSlider" type="range" min="0" max="0" step="1" value="0" aria-label="The moment shown">
     <div class="mkRow">
       <input id="mkText" type="text" maxlength="300" placeholder="What's wrong here? Enter puts it down" autocomplete="off">
@@ -218,6 +218,7 @@
     <!-- developer mode only (Cmd/Ctrl+Shift+D three times): what it draws, each on its own switch -->
     <div class="section" id="devSection" hidden>
       <h4>Developer</h4>
+      <label class="check devLines"><input id="devLinesChk" type="checkbox"> The lines over the pitch (L)</label>
       <div id="devOpts"></div>
       <label class="check"><input id="aiKeysChk" type="checkbox"> AI keys (over their heads)</label>
       <button id="markBtn" class="ghost small" title="M">Look back &amp; comment (M)</button>

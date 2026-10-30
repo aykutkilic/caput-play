@@ -297,6 +297,8 @@ input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); backgr
   display: flex; flex-direction: column; gap: 8px; background: rgba(12,16,22,.92); border: 1px solid rgba(255,214,90,.6); border-radius: 12px; padding: 10px 12px; font-size: 13px; }
 #marking .mkTop { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 #marking .mkTop b { color: #ffd65a; letter-spacing: 2px; }
+#mkLines { margin-left: auto; }
+#devSection .devLines { grid-column: 1 / -1; font-weight: 700; }
 #mkTime { font: 700 13px ui-monospace, Menlo, monospace; }
 #mkSlider { width: 100%; margin: 0; accent-color: #ffd65a; }
 #marking .mkRow { display: flex; gap: 8px; }
