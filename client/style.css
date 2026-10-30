@@ -298,6 +298,13 @@ input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); backgr
 #markerBox label { display: flex; flex-direction: column; gap: 6px; color: #ffd65a; }
 #markerBox input { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,.25); background: #0c0f15; color: #fff; }
 #markerBox .muted { font-size: 11px; }
+/* developer mode: the match recording (on, paused) */
+#recBadge { position: absolute; top: calc(60px + env(safe-area-inset-top)); left: calc(14px + env(safe-area-inset-left)); display: flex; align-items: center; gap: 6px;
+  background: rgba(0,0,0,.55); border-radius: 8px; padding: 4px 9px; font: 700 11px/1.4 ui-monospace, Menlo, monospace; white-space: nowrap; }
+#recBadge i { width: 8px; height: 8px; border-radius: 50%; background: #ff5a4f; animation: blink 1s steps(2) infinite; }
+#recBadge.paused i { background: #ffd65a; animation: none; }
+.recRow { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+#recKeys { grid-column: 1 / -1; }
 
 /* ---------------- touch controls (phones & tablets) */
 #touch { position: fixed; inset: 0; pointer-events: none; -webkit-user-select: none; user-select: none; }
@@ -362,6 +369,7 @@ body.tp.touchui #radar { top: auto; bottom: calc(10px + env(safe-area-inset-bott
   .teamcol .btns button, .teamcol .seg button { padding: 6px 4px; }
   .teamcol .btns button { padding: 6px 2px; font-size: 11px; white-space: nowrap; }
   #netstats { top: 48px; font-size: 10px; }
+  #recBadge { top: calc(46px + env(safe-area-inset-top)); left: calc(8px + env(safe-area-inset-left)); }
   .sheet { padding: 16px; }
 }
 

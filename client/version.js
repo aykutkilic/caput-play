@@ -1,1 +1,1 @@
-const e="34e1d22.10301044";export{e as VERSION};
+const e="55972f2.10301206",n="2026-10-30T12:06:33.940Z",r="1",o=e.startsWith("__");function s(){if(o)return"Local dev build";const t=new Date(n),i=Number.isNaN(t.getTime())?"":` \xB7 ${t.toLocaleString(void 0,{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}`;return`Build ${e.split(".")[0]}${i} \xB7 with uncommitted changes`}export{n as BUILT_AT,r as DIRTY,e as VERSION,s as buildText,o as isDevBuild};

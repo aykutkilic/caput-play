@@ -27,6 +27,7 @@
     </div>
     <div id="banner"><div id="bannerText"></div><div id="bannerSub"></div></div>
     <div id="replayBadge" hidden><i></i>REPLAY <small>press any button to skip</small></div>
+    <div id="recBadge" hidden><i></i><span></span></div>
     <div id="netstats"></div>
     <canvas id="radar" width="200" height="128"></canvas>
     <div id="chatbox">
@@ -209,8 +210,12 @@
       <h4>Developer</h4>
       <div id="devOpts"></div>
       <label class="check"><input id="aiKeysChk" type="checkbox"> AI keys (over their heads)</label>
-      <label class="check"><input id="recChk" type="checkbox"> Record the match (Shift+1–9 marks, Shift+0 saves)</label>
-      <button id="recBtn" class="ghost small" title="Shift+0 – and Shift+1–9 marks a moment while you play">Save recording</button>
+      <div class="recRow">
+        <button id="recBtn" class="ghost small">● Record</button>
+        <button id="recStop" class="ghost small" disabled>■ Stop &amp; save</button>
+        <span id="recState" class="muted small">Not recording</span>
+      </div>
+      <div id="recKeys" class="muted small"></div>
       <button id="statsBtn" class="ghost small" hidden>Players online (stats)</button>
     </div>
     <div class="section">
