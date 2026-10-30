@@ -27,7 +27,6 @@
     </div>
     <div id="banner"><div id="bannerText"></div><div id="bannerSub"></div></div>
     <div id="replayBadge" hidden><i></i>REPLAY <small>press any button to skip</small></div>
-    <div id="recBadge" hidden><i></i><span></span></div>
     <div id="netstats"></div>
     <canvas id="radar" width="200" height="128"></canvas>
     <div id="chatbox">
@@ -41,6 +40,12 @@
   </div>
 
   <!-- minimized room panel -->
+  <!-- developer mode: the match recording's buttons, over the pitch (with the HUD; above the touch controls) -->
+  <div id="recBar" class="off" hidden>
+    <button id="recGo" title="Record (Shift+0)"><i></i><span>Record</span></button>
+    <span id="recTime"></span>
+    <button id="recEnd" title="Stop &amp; save (Shift+9)"><i></i></button>
+  </div>
   <button id="panelPill" hidden title="Room, teams &amp; settings (Esc)">
     <span id="pillName">Room</span> <b id="pillCode"></b> <span class="pillOpen">▾</span>
   </button>
@@ -215,7 +220,7 @@
         <button id="recStop" class="ghost small" disabled>■ Stop &amp; save</button>
         <span id="recState" class="muted small">Not recording</span>
       </div>
-      <div id="recKeys" class="muted small"></div>
+      <div id="recKeys" class="muted small">Shift+0 record / pause · Shift+1–8 mark a moment · Shift+9 stop &amp; save</div>
       <button id="statsBtn" class="ghost small" hidden>Players online (stats)</button>
     </div>
     <div class="section">
