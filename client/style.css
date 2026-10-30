@@ -292,6 +292,12 @@ input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); backgr
 #toast { position: fixed; top: 18px; left: 50%; transform: translateX(-50%); background: #2a1515; border: 1px solid rgba(255,106,92,.5);
   padding: 8px 14px; border-radius: 10px; font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 20; }
 #toast.show { opacity: 1; }
+/* developer mode: naming a marker in a recording (Shift+1..9) */
+#markerBox { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 21; display: flex; flex-direction: column; gap: 4px;
+  background: rgba(16,20,28,.94); border: 1px solid rgba(255,214,90,.6); border-radius: 10px; padding: 10px 12px; font-size: 13px; width: min(440px, calc(100vw - 32px)); box-sizing: border-box; }
+#markerBox label { display: flex; flex-direction: column; gap: 6px; color: #ffd65a; }
+#markerBox input { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,.25); background: #0c0f15; color: #fff; }
+#markerBox .muted { font-size: 11px; }
 
 /* ---------------- touch controls (phones & tablets) */
 #touch { position: fixed; inset: 0; pointer-events: none; -webkit-user-select: none; user-select: none; }

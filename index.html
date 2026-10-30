@@ -148,7 +148,7 @@
       <label>Team B kit <select id="kitB" class="kitsel"></select></label>
       <label>Goals
         <select id="goalSel">
-          <option value="0">Small</option><option value="1" selected>Large</option><option value="2">Huge</option>
+          <option value="0" selected>Small</option><option value="1">Large</option><option value="2">Huge</option>
         </select>
       </label>
       <label>AI level
@@ -200,11 +200,18 @@
         </select>
       </label>
       <label class="check"><input id="netChk" type="checkbox"> Net stats</label>
-      <label class="check"><input id="aiKeysChk" type="checkbox"> AI keys (over their heads)</label>
-      <button id="statsBtn" class="ghost small" hidden>Players online (stats)</button>
       <label class="check"><input id="touchChk" type="checkbox"> Touch controls</label>
       <button id="installBtn" class="primary small" hidden>⬇ Install app</button>
       <div id="iosHint" class="muted small" hidden>Install on your phone/tablet: tap <b>Share</b> → <b>Add to Home Screen</b></div>
+    </div>
+    <!-- developer mode only (Cmd/Ctrl+Shift+D three times): what it draws, each on its own switch -->
+    <div class="section" id="devSection" hidden>
+      <h4>Developer</h4>
+      <div id="devOpts"></div>
+      <label class="check"><input id="aiKeysChk" type="checkbox"> AI keys (over their heads)</label>
+      <label class="check"><input id="recChk" type="checkbox"> Record the match (Shift+1–9 marks, Shift+0 saves)</label>
+      <button id="recBtn" class="ghost small" title="Shift+0 – and Shift+1–9 marks a moment while you play">Save recording</button>
+      <button id="statsBtn" class="ghost small" hidden>Players online (stats)</button>
     </div>
     <div class="section">
       <h4>Sound</h4>
