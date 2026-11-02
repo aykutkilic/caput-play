@@ -160,7 +160,7 @@ label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--t
 #banner { position: absolute; top: 22%; left: 50%; transform: translateX(-50%); text-align: center; pointer-events: none; opacity: 0; }
 #banner.show { animation: banner 2.4s ease forwards; }
 #bannerText { font-size: clamp(30px, 9vw, 64px); font-weight: 900; letter-spacing: 6px; text-shadow: 0 4px 24px rgba(0,0,0,.6); white-space: nowrap; }
-#bannerSub { font-size: 16px; font-weight: 600; color: #fff; opacity: .85; margin-top: 4px; text-shadow: 0 2px 8px rgba(0,0,0,.8); }
+#bannerSub { font-size: 16px; font-weight: 600; color: #fff; opacity: .85; margin-top: 4px; text-shadow: 0 2px 8px rgba(0,0,0,.8); white-space: pre-line; } /* (a goal: what kind on a second line) */
 @keyframes banner {
   0% { opacity: 0; transform: translateX(-50%) scale(.7); }
   12% { opacity: 1; transform: translateX(-50%) scale(1.05); }
