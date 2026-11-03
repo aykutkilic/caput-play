@@ -316,6 +316,13 @@ body.marking #radar, body.marking #ctxHint, body.marking #hint { visibility: hid
 #touch .tzone { position: absolute; left: 0; top: 0; bottom: 0; width: 48%; pointer-events: auto; touch-action: none; }
 #touch .tstick { position: absolute; width: 26vmin; height: 26vmin; max-width: 150px; max-height: 150px; transform: translate(-50%, -50%);
   border-radius: 50%; background: rgba(255,255,255,.08); border: 2px solid rgba(255,255,255,.28); pointer-events: none; }
+/* the skill stick: the right half round the buttons (they sit on top) – a
+   tap lifts, a flick is a trick */
+#touch .tzone2 { position: absolute; right: 0; top: 0; bottom: 0; width: 52%; pointer-events: auto; touch-action: none; }
+#touch .tskill { position: absolute; width: 16vmin; height: 16vmin; max-width: 90px; max-height: 90px; transform: translate(-50%, -50%);
+  border-radius: 50%; background: rgba(201,162,255,.10); border: 2px solid rgba(201,162,255,.45); pointer-events: none; }
+#touch .tskill .tknob { width: 46%; height: 46%; background: rgba(201,162,255,.4); border-color: rgba(201,162,255,.8); transition: transform .08s ease-out; }
+#touch .tskill.flick { border-color: #c9a2ff; }
 #touch .tknob { position: absolute; left: 50%; top: 50%; width: 42%; height: 42%; border-radius: 50%; transform: translate(-50%, -50%);
   background: rgba(255,255,255,.35); border: 2px solid rgba(255,255,255,.6); }
 /* three round buttons like an arcade cabinet's: a big Shoot in the corner,
