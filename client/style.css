@@ -56,6 +56,21 @@ label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--t
 .friends p { margin: 0; line-height: 1.5; }
 .friends .row { margin-top: 0; }
 .friends .row .primary { padding: 7px 12px; }
+/* the online rooms in the Room tab */
+#onlineRooms { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; }
+#onlineRooms[hidden] { display: none; }
+#onlineRooms .orHead { display: flex; align-items: center; gap: 8px; }
+#onlineRooms .orHead b { font-size: 13px; }
+#onlineRooms .orHead button { margin-left: auto; padding: 2px 9px; }
+#orList { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+#orList:empty { display: none; }
+#orList li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; cursor: pointer; font-size: 13px; }
+#orList li + li { border-top: 1px solid var(--line); }
+#orList li:hover { background: rgba(182,243,106,.1); }
+#orList li.full { opacity: .55; }
+#orList .orName { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#orList .orMeta { color: var(--muted); font-size: 12px; white-space: nowrap; flex-shrink: 0; }
+#orList .live { font-size: 10px; font-weight: 800; color: #fff; background: #e5483b; border-radius: 4px; padding: 1px 4px; margin-right: 6px; }
 #roomList { list-style: none; margin: 0; padding: 0; max-height: 180px; overflow: auto; }
 #roomList:empty { display: none; }
 #roomList li { display: flex; align-items: center; justify-content: space-between; padding: 9px 10px; border-radius: 10px; gap: 10px; }
@@ -79,8 +94,7 @@ label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--t
 #kickMenu .km-name { font-weight: 700; }
 #kickMenu .km-row { display: flex; gap: 6px; }
 #kickMenu .km-row button { flex: 1; }
-.teamcol li .kx, #specList .kx { background: none; border: none; color: var(--muted); padding: 0 4px; font-size: 14px; margin-left: auto; }
-#specList .sp { white-space: nowrap; }
+.teamcol li .kx { background: none; border: none; color: var(--muted); padding: 0 4px; font-size: 14px; margin-left: auto; }
 .roomsTable .kicky { font-size: 10px; padding: 1px 5px; border-radius: 4px; background: rgba(255,214,90,.18); color: #ffd65a; margin-left: 6px; }
 
 /* ---------------- developer mode: players online */
@@ -207,15 +221,30 @@ button.icon { width: 34px; padding: 6px 0; font-size: 18px; line-height: 1; font
 button.icon svg { width: 16px; height: 16px; display: block; margin: 0 auto; }
 #fsBtn .fs-off { display: none; }
 :fullscreen #fsBtn .fs-on { display: none; } :fullscreen #fsBtn .fs-off { display: inline; }
-#panelPill {
-  position: fixed; top: 14px; right: 14px; display: flex; align-items: center; gap: 8px;
+/* top right, in a match: the camera switch, then the room pill */
+#topRight { position: fixed; top: 14px; right: 14px; display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 28px); }
+#panelPill, #camBtn {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
   background: rgba(8,14,12,.78); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px;
-  font-weight: 700; backdrop-filter: blur(8px); max-width: calc(100vw - 28px);
+  font-weight: 700; backdrop-filter: blur(8px);
 }
-#panelPill:hover { background: rgba(20,32,28,.9); }
+#camBtn { gap: 5px; flex-shrink: 0; }
+#camBtn .camIco { font-size: 15px; line-height: 1; }
+#camBtn b { font-size: 13px; min-width: 8px; }
+#panelPill:hover, #camBtn:hover { background: rgba(20,32,28,.9); }
+/* the room pill stands out: an accent rim, a live dot, the way in */
+#panelPill { border-color: color-mix(in srgb, var(--accent) 55%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent), 0 4px 14px rgba(0,0,0,.35); }
+#panelPill:hover { border-color: var(--accent); }
+#panelPill .pillDot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex-shrink: 0; box-shadow: 0 0 6px var(--accent); }
+#panelPill.offline .pillDot { animation: pillPulse 2s ease-in-out infinite; }
+@keyframes pillPulse { 50% { opacity: .35; } }
+#pillOnline { font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+#pillOnline b { color: var(--text); }
+#pillOnline .ppl { display: none; }
+#pillOnline:not(:empty)::before { content: '· '; }
+#panelPill .pillOpen { color: var(--accent); font-size: 12px; }
 #panelPill #pillName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
 #panelPill b { color: var(--accent); letter-spacing: 2px; }
-#panelPill .pillOpen { color: var(--muted); font-size: 12px; }
 #roomName { font-size: 18px; font-weight: 800; }
 #roomCode { color: var(--accent); letter-spacing: 2px; }
 .teams { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -249,8 +278,53 @@ button.icon svg { width: 16px; height: 16px; display: block; margin: 0 auto; }
 .section { border-top: 1px solid var(--line); padding-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: end; }
 .section h4 { grid-column: 1 / -1; margin: 0; font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); }
 .section .primary { grid-column: 1 / -1; padding: 10px; }
-#panel footer { display: flex; gap: 8px; border-top: 1px solid var(--line); padding-top: 12px; }
-#panel footer .danger { margin-left: auto; }
+/* the panel's tabs: room, player, match, controls, view, sound, developer */
+#tabs { display: flex; gap: 2px; margin: -4px -4px 0; padding: 3px; background: rgba(0,0,0,.25); border-radius: 11px;
+  overflow-x: auto; scrollbar-width: none; flex-shrink: 0; }
+#tabs::-webkit-scrollbar { display: none; }
+#tabs button { flex: 1 0 auto; padding: 6px 5px; font-size: 12px; font-weight: 700; border: 0; background: none; color: var(--muted); border-radius: 8px; white-space: nowrap; }
+#tabs button:hover { color: var(--text); }
+#tabs button[aria-selected="true"] { background: rgba(255,255,255,.1); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+#panel section.tab { display: flex; flex-direction: column; gap: 12px; }
+#panel section.tab[hidden] { display: none; }
+#panel section.tab.section { display: grid; border-top: 0; padding-top: 0; }
+#panel section.tab[data-tab="controls"] { display: block; }
+#panel section.tab[data-tab="controls"] > * + * { margin-top: 10px; }
+#panel section.tab[data-tab="developer"] > *, #panel section.tab[data-tab="view"] .check { grid-column: 1 / -1; }
+.tabFoot { display: flex; gap: 8px; border-top: 1px solid var(--line); padding-top: 12px; }
+.tabFoot .danger { margin-left: auto; }
+.tabFoot:has(> [hidden]:only-child) { display: none; }
+/* the Player tab */
+#panel .me { display: flex; gap: 14px; align-items: center; }
+#mePreview { width: 130px; height: 165px; background: rgba(255,255,255,.03); border: 1px solid var(--line); border-radius: 12px; }
+#panel .me .meName { font-size: 18px; font-weight: 800; }
+#panel .me button { margin-top: 10px; }
+/* your side, as in PES / FIFA: three slots a row – Team A, watching, Team B */
+#sides { display: flex; flex-direction: column; gap: 8px; }
+.sideCols { display: grid; grid-template-columns: 1fr 0.62fr 1fr; gap: 8px; }
+.sidecol li { white-space: nowrap; }
+.sidecol li .pad { flex: 0 1 auto; min-width: 2.2em; }
+.sidecol li .tagx { flex: none; }
+.sidecol { min-width: 0; cursor: pointer; }
+.sidecol h3 { text-align: center; }
+.sidecol.watchcol h3 { font-size: 13px; letter-spacing: 2px; }
+.sideCols[data-hover="0"] .sidecol[data-col="0"], .sideCols[data-hover="1"] .sidecol[data-col="1"], .sideCols[data-hover="2"] .sidecol[data-col="2"] { background: rgba(255,255,255,.1); }
+.sidecol .pad { font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: var(--accent); color: #10200c; cursor: grab; touch-action: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+  -webkit-user-select: none; user-select: none; position: relative; z-index: 1; outline: none; box-shadow: 0 2px 10px rgba(0,0,0,.35); }
+.sidecol .pad:focus-visible { box-shadow: 0 0 0 2px #fff; }
+/* (on a side: that kit's colour round you – kits can be white or black, so not as the fill) */
+.sidecol[data-col="0"] .pad { box-shadow: inset 0 0 0 2px var(--a), 0 2px 10px rgba(0,0,0,.35); }
+.sidecol[data-col="2"] .pad { box-shadow: inset 0 0 0 2px var(--b), 0 2px 10px rgba(0,0,0,.35); }
+.sidecol li .tagx.pos { background: rgba(255,255,255,.14); }
+.sidesCtl { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+.posPick, .aiCount { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.posPick .seg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 9px; background: rgba(0,0,0,.2); }
+.posPick .seg button { border: none; border-radius: 7px; background: transparent; padding: 5px 9px; font-size: 12px; }
+.posPick .seg button:hover { background: rgba(255,255,255,.1); }
+.posPick .seg button[aria-checked="true"] { background: var(--accent); color: #10140f; font-weight: 700; cursor: default; }
+.aiCount button { padding: 2px 10px; font-size: 14px; line-height: 1.2; }
+.aiCount button + button { margin-left: -4px; }
+.sidesNote { text-align: center; }
 
 /* ---------------- modals */
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 10; padding: 16px; }
@@ -258,6 +332,7 @@ button.icon svg { width: 16px; height: 16px; display: block; margin: 0 auto; }
 .sheet.wide { width: 920px; }
 .sheet h2 { margin: 0 0 14px; font-size: 20px; }
 .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.actions .edRandom { margin-right: auto; }
 .edgrid { display: grid; grid-template-columns: 260px 1fr 220px; gap: 18px; }
 @media (max-width: 900px) { .edgrid { grid-template-columns: 1fr; } }
 .prev { display: flex; flex-direction: column; align-items: center; gap: 8px; background: radial-gradient(circle at 50% 70%, #2f6f42, #17301f); border-radius: 14px; padding: 8px; }
@@ -295,9 +370,37 @@ input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); backgr
 /* developer mode: marking (M) – back over the last minute, comments at a moment (above the touch controls) */
 #marking { position: fixed; z-index: 6; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(620px, calc(100vw - 32px)); box-sizing: border-box;
   display: flex; flex-direction: column; gap: 8px; background: rgba(12,16,22,.92); border: 1px solid rgba(255,214,90,.6); border-radius: 12px; padding: 10px 12px; font-size: 13px; }
-#marking .mkTop { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+#marking .mkTop { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; cursor: move; touch-action: none; user-select: none; }
+#marking { max-height: calc(100vh - 28px); overflow-y: auto; }
+#marking.dock-left, #marking.dock-right { top: 0; bottom: 0; max-height: none; transform: none; width: min(440px, 100vw); border-radius: 0; }
+#marking.dock-left { left: 0; border-width: 0 1px 0 0; }
+#marking.dock-right { left: auto; right: 0; border-width: 0 0 0 1px; }
+#marking.dock-float { transform: none; bottom: auto; }
+#marking .mkDock { display: inline-flex; gap: 2px; margin-left: auto; }
+#marking .mkDock button { font: 13px system-ui, sans-serif; padding: 0 5px; border-radius: 5px; border: 1px solid rgba(255,255,255,.2); background: transparent; color: #ccc; cursor: pointer; }
+#marking .mkDock button.on { border-color: #ffd65a; color: #ffd65a; }
+#mkMentions { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 12px; margin-top: -4px; }
+#mkMentions:empty { display: none; }
+#marking .pl { text-decoration: underline dotted rgba(255,214,90,.7); text-underline-offset: 3px; cursor: default; }
+#marking .pl:hover, #mkMentions .who:hover, #mkList li[data-pid]:hover { color: #fff3b0; text-shadow: 0 0 6px #ffd65a; }
+#mkMentions .who { background: rgba(255,214,90,.15); color: #ffd65a; border-radius: 5px; padding: 1px 6px; font-weight: 600; }
+#mkMentions .who.bad { background: rgba(255,120,100,.15); color: #ff8a75; }
+#mkMentions button.sug { font: 600 12px ui-monospace, Menlo, monospace; padding: 1px 6px; border-radius: 5px; border: 1px solid rgba(255,255,255,.25); background: #0c0f15; color: #fff; cursor: pointer; }
+#mkMentions button.sug.first { border-color: #ffd65a; }
+#mkJudge { display: flex; flex-direction: column; gap: 4px; }
+#mkJudge:empty { display: none; }
+#marking .mkAsp { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+#marking .mkAspL { min-width: 64px; color: #cfd8d2; cursor: help; }
+#marking .mkSeg { display: inline-flex; gap: 2px; flex: 1; }
+#marking .mkSeg.wrap { flex-wrap: wrap; }
+#marking .mkSeg button { flex: 1; font: 600 11px system-ui, sans-serif; padding: 3px 4px; border-radius: 5px; border: 1px solid rgba(255,255,255,.2); background: #0c0f15; color: #e8f0ea; cursor: pointer; white-space: nowrap; }
+#marking .mkSeg.wrap button { flex: 0 0 auto; }
+#marking .mkSeg button.mid { color: #9fe8b5; }
+#marking .mkSeg button.on { background: #ffd65a; color: #111; border-color: #ffd65a; }
+#marking .mkSeg button.mid.on { background: #9fe8b5; border-color: #9fe8b5; }
+#marking .mkTo { color: #ffd65a; font-weight: 600; align-self: center; margin-left: 4px; }
 #marking .mkTop b { color: #ffd65a; letter-spacing: 2px; }
-#mkLines { margin-left: auto; }
+#mkLines { margin-left: 4px; }
 #devSection .devLines { grid-column: 1 / -1; font-weight: 700; }
 #mkTime { font: 700 13px ui-monospace, Menlo, monospace; }
 #mkSlider { width: 100%; margin: 0; accent-color: #ffd65a; }
@@ -308,6 +411,17 @@ input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); backgr
 #mkList li { cursor: pointer; padding: 1px 0; }
 #mkList li:hover { color: #ffd65a; }
 #marking .mkKeys { font-size: 11px; }
+#marking .mkChart { position: relative; }
+#mkCurve { width: 100%; height: 118px; display: block; cursor: crosshair; background: rgba(255,255,255,.04); border-radius: 6px; touch-action: none; }
+#marking .mkZoom { position: absolute; top: 24px; right: 4px; display: flex; gap: 2px; opacity: .55; }
+#marking .mkZoom:hover { opacity: 1; }
+#marking .mkZoom button { font: 600 11px system-ui, sans-serif; min-width: 22px; padding: 1px 5px; border-radius: 5px; border: 1px solid rgba(255,255,255,.25); background: #0c0f15; color: #fff; cursor: pointer; }
+#marking .mkRate { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
+#marking .mkLabel { color: #ffd65a; font-weight: 700; min-width: 52px; }
+#mkStars { display: inline-flex; gap: 3px; }
+#mkStars button { font: 600 12px system-ui, sans-serif; min-width: 28px; padding: 3px 6px; border-radius: 6px; border: 1px solid rgba(255,255,255,.25); background: #0c0f15; color: #fff; cursor: pointer; }
+#mkStars button.on { background: #ffd65a; color: #111; border-color: #ffd65a; }
+#mkDec { flex: 1; min-width: 160px; font: 600 12px ui-monospace, Menlo, monospace; }
 body.marking #radar, body.marking #ctxHint, body.marking #hint { visibility: hidden; }
 #recKeys { grid-column: 1 / -1; }
 
@@ -366,7 +480,8 @@ body.tp.touchui #radar { top: auto; bottom: calc(10px + env(safe-area-inset-bott
   #scorebar .team { font-size: 10px; }
   #scorebar b { font-size: 16px; }
   #clock { font-size: 11px; padding-left: 8px; margin-left: 4px; }
-  #panelPill { top: calc(8px + env(safe-area-inset-top)); right: calc(8px + env(safe-area-inset-right)); padding: 6px 10px; }
+  #topRight { top: calc(8px + env(safe-area-inset-top)); right: calc(8px + env(safe-area-inset-right)); gap: 6px; }
+  #panelPill, #camBtn { padding: 6px 10px; }
   #panelPill .pillName, #panelPill #pillName { max-width: 120px; }
   #panel { width: 380px; padding: 12px; gap: 10px; }
   .teamcol .btns button, .teamcol .seg button { padding: 6px 4px; }
@@ -378,6 +493,8 @@ body.tp.touchui #radar { top: auto; bottom: calc(10px + env(safe-area-inset-bott
 @media (max-width: 480px) {
   #scorebar .team { font-size: 0; gap: 0; }
   #panelPill #pillName { display: none; }
+  #pillOnline:not(:empty)::before { content: none; }
+  #pillOnline .ppl { display: inline; } #pillOnline .lng { display: none; }
 }
 #rotateHint { animation: fadeHint 7s forwards; top: 112px; }
 @keyframes fadeHint { 0%, 80% { opacity: 1; } 100% { opacity: 0; } }
@@ -407,4 +524,12 @@ body.touchui #updateBtn { bottom: auto; top: calc(56px + env(safe-area-inset-top
 .section .mixer label.mix { display: grid; grid-template-columns: 74px 1fr; }
 .mixer label.mix { display: grid; grid-template-columns: 74px 1fr; align-items: center; gap: 8px; font-size: 13px; }
 .mixer input[type=range] { width: 100%; }
-
+/* developer mode: the study (its objectives and what to do) */
+#study { z-index: 30; }
+#study .sheet.study { max-width: 640px; max-height: calc(100vh - 40px); overflow-y: auto; font-size: 13.5px; line-height: 1.5; }
+#study .sheet.study h2 { font-size: 17px; }
+#study .sheet.study h4 { margin: 12px 0 4px; color: #ffd65a; }
+#study .sheet.study ul, #study .sheet.study ol { margin: 4px 0 8px; padding-left: 20px; }
+#study .sheet.study li { margin: 3px 0; }
+#study .sheet.study code { background: rgba(255,255,255,.08); padding: 0 4px; border-radius: 4px; }
+#study .hl { color: #ffd65a; }

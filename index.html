@@ -42,18 +42,26 @@
   <!-- minimized room panel -->
   <!-- developer mode: marking (M) – back over the last minute, comments put down at a moment (client/marking.js) -->
   <div id="marking" hidden>
-    <div class="mkTop"><b>MARKING</b><span id="mkTime"></span><span class="muted mkNote"></span><button id="mkLines" class="ghost small" title="Developer mode's lines over the pitch">Lines: on</button></div>
+    <div class="mkTop"><b>MARKING</b><span id="mkTime"></span><span class="muted mkNote"></span><span class="mkDock"><button id="mkHelp" title="The study: what this is for and what to do">?</button><button data-dock="left" title="Dock left">◧</button><button data-dock="bottom" title="Dock at the bottom">⬓</button><button data-dock="right" title="Dock right">◨</button></span><button id="mkLines" class="ghost small" title="Developer mode's lines over the pitch">Lines: on</button></div>
     <input id="mkSlider" type="range" min="0" max="0" step="1" value="0" aria-label="The moment shown">
+    <div class="mkChart"><canvas id="mkCurve"></canvas><div class="mkZoom"><button id="mkZoomOut" title="Zoom out (or scroll)">−</button><button id="mkZoomIn" title="Zoom in (or scroll, pinch)">+</button><button id="mkZoomAll" title="The whole recording">All</button></div></div>
+    <div class="mkRate"><span class="mkLabel">Moment</span><span id="mkStars"><button data-v="1">1</button><button data-v="2">2</button><button data-v="3">3</button><button data-v="4">4</button><button data-v="5">5</button></span><span id="mkModel" class="muted"></span></div>
+    <div class="mkRate"><span class="mkLabel">Decision</span><button id="mkPrev" class="ghost small" title="Alt+←: the previous decision">◀</button><span id="mkDec"></span><button id="mkNext" class="ghost small" title="Alt+→: the next decision">▶</button></div>
+    <div id="mkJudge"></div>
     <div class="mkRow">
-      <input id="mkText" type="text" maxlength="300" placeholder="What's wrong here? Enter puts it down" autocomplete="off">
+      <input id="mkText" type="text" maxlength="300" placeholder="What's wrong here? @A9 @teamB @all – click a man to name him · Enter puts it down" autocomplete="off" spellcheck="false">
       <button id="mkDone" class="primary small" title="Esc">Done</button>
     </div>
+    <div id="mkMentions"></div>
     <ol id="mkList"></ol>
-    <div class="muted mkKeys">← → a frame · Shift + ← → a second · Enter puts the comment down at the moment shown · Esc: done – the match goes on, the comments are saved</div>
+    <div class="muted mkKeys">← → a frame · Shift + ← → a second · chart: scroll or pinch zooms, drag pans, click an event to judge it – its choice, timing, direction, power, height (✓ praise), what instead · Alt + ← → the previous / next decision · drag the top bar to move the panel, ◧ ⬓ ◨ dock it · in a comment @A9 (click a man), @teamA, @all – Tab completes · 1–5 (comment box empty): the moment's excitement · Enter puts the comment down · Esc: done – comments and ratings are saved</div>
   </div>
-  <button id="panelPill" hidden title="Room, teams &amp; settings (Esc)">
-    <span id="pillName">Room</span> <b id="pillCode"></b> <span class="pillOpen">▾</span>
-  </button>
+  <div id="topRight">
+    <button id="camBtn" hidden title="Switch the camera (F2)"><span class="camIco">🎥</span><b id="camNum">1</b></button>
+    <button id="panelPill" hidden title="Room, teams &amp; settings (Esc)">
+      <i class="pillDot" aria-hidden="true"></i><span id="pillName">Room</span> <b id="pillCode"></b><span id="pillOnline"></span> <span class="pillOpen">▾</span>
+    </button>
+  </div>
 
   <!-- room panel -->
   <aside id="panel" hidden>
@@ -69,275 +77,164 @@
         <button id="minBtn" class="ghost icon" title="Minimize (Esc)" aria-label="Minimize room panel">–</button>
       </div>
     </header>
-    <div class="invite" id="inviteRow" hidden>
-      <span class="muted small">Invite friends</span>
-      <button id="waBtn" class="wa small" title="Send the invite link on WhatsApp">WhatsApp</button>
-      <button id="shareBtn" class="ghost small" title="Share the invite link" hidden>Share…</button>
-      <button id="copyLink" class="ghost small" title="Copy the invite link">Copy link</button>
-    </div>
-    <div class="invite" id="accessRow" hidden>
-      <span class="muted small">Who can join</span>
-      <select id="roomAccess" class="small" aria-label="Who can join">
-        <option value="public">Anyone (public)</option>
-        <option value="password">With the password</option>
-        <option value="private">Invite link only</option>
-      </select>
-      <input id="roomPassIn" class="small" placeholder="Password" maxlength="20" autocomplete="off" hidden>
-      <button id="roomPassSet" class="small" hidden>Set</button>
-    </div>
-    <div class="section friends" id="friends" hidden>
-      <h4>Play with friends</h4>
-      <p class="muted small" id="p2pInfo">Create a room and send the invite link – friends join this game, right where it is.</p>
-      <ul id="roomList"></ul>
-      <button id="listBtn" hidden>Room list – find a game</button>
-      <div id="createRow">
-        <div class="row">
-          <input id="newRoomName" placeholder="Room name (optional)" maxlength="28">
-          <select id="newRoomAccess" title="Who can join" aria-label="Who can join">
-            <option value="public">Public</option>
-            <option value="password">Password</option>
-            <option value="private">Private</option>
-          </select>
-        </div>
-        <div class="row">
-          <input id="newRoomPass" placeholder="Password" maxlength="20" autocomplete="off" hidden>
-          <button id="createBtn" class="primary">Create room</button>
-        </div>
-        <div id="accessHint" class="muted small"></div>
+    <nav id="tabs" role="tablist" aria-label="Room panel">
+      <button role="tab" data-tab="room">Room</button><button role="tab" data-tab="player">Player</button><button role="tab" data-tab="match">Match</button><button role="tab" data-tab="controls">Controls</button><button role="tab" data-tab="view">View</button><button role="tab" data-tab="sound">Sound</button><button role="tab" data-tab="developer" id="devTab" hidden>Developer</button>
+    </nav>
+    <section class="tab" data-tab="room" hidden>
+      <div class="invite" id="inviteRow" hidden>
+        <span class="muted small">Invite friends</span>
+        <button id="waBtn" class="wa small" title="Send the invite link on WhatsApp">WhatsApp</button>
+        <button id="shareBtn" class="ghost small" title="Share the invite link" hidden>Share…</button>
+        <button id="copyLink" class="ghost small" title="Copy the invite link">Copy link</button>
       </div>
-      <div class="row">
-        <input id="joinCode" placeholder="Room code" maxlength="4" style="text-transform:uppercase">
-        <button id="joinBtn">Join</button>
+      <div class="invite" id="accessRow" hidden>
+        <span class="muted small">Who can join</span>
+        <select id="roomAccess" class="small" aria-label="Who can join">
+          <option value="public">Anyone (public)</option>
+          <option value="password">With the password</option>
+          <option value="private">Invite link only</option>
+        </select>
+        <input id="roomPassIn" class="small" placeholder="Password" maxlength="20" autocomplete="off" hidden>
+        <button id="roomPassSet" class="small" hidden>Set</button>
       </div>
-      <div id="friendsStatus" class="muted small"></div>
-    </div>
-    <div class="teams">
-      <div class="teamcol" data-team="0">
-        <h3 class="a">TEAM A</h3>
-        <div class="seg" role="radiogroup" aria-label="Join Team A as">
-          <button data-act="join" data-role="0" role="radio" aria-checked="false">Play</button>
-          <button data-act="join" data-role="1" role="radio" aria-checked="false">Keeper</button>
+      <div class="section friends" id="friends" hidden>
+        <h4>Play with friends</h4>
+        <p class="muted small" id="p2pInfo">Create a room and send the invite link – friends join this game, right where it is.</p>
+        <!-- the online rooms, right here (p2p with the room list): loaded when this tab shows, refreshed while it does -->
+        <div id="onlineRooms" hidden>
+          <div class="orHead"><b>Online rooms</b><span id="orCount" class="muted small"></span><button id="orRefresh" class="ghost small" title="Refresh">↻</button></div>
+          <ul id="orList"></ul>
+          <div id="orNote" class="muted small"></div>
         </div>
-        <div class="btns">
-          <button data-act="ai" data-role="0" class="ghost">+ AI player</button>
-          <button data-act="ai" data-role="1" class="ghost">+ AI keeper</button>
-        </div>
-        <ul></ul>
-      </div>
-      <div class="teamcol" data-team="1">
-        <h3 class="b">TEAM B</h3>
-        <div class="seg" role="radiogroup" aria-label="Join Team B as">
-          <button data-act="join" data-role="0" role="radio" aria-checked="false">Play</button>
-          <button data-act="join" data-role="1" role="radio" aria-checked="false">Keeper</button>
-        </div>
-        <div class="btns">
-          <button data-act="ai" data-role="0" class="ghost">+ AI player</button>
-          <button data-act="ai" data-role="1" class="ghost">+ AI keeper</button>
-        </div>
-        <ul></ul>
-      </div>
-    </div>
-    <div class="spec">
-      <span class="muted">Spectators:</span> <span id="specList">–</span>
-      <button id="spectate" class="ghost small">Spectate</button>
-      <button id="clearBans" class="ghost small" hidden title="Let the people you banned come back">Clear bans</button>
-    </div>
-    <div class="section host">
-      <h4>Match <span class="muted" id="hostNote"></span></h4>
-      <label>Length
-        <select id="matchLen">
-          <option value="120">2 min</option><option value="240">4 min</option><option value="360">6 min</option>
-          <option value="600">10 min</option><option value="900">15 min</option>
-        </select>
-      </label>
-      <label>Pitch
-        <select id="pitchSel">
-          <option value="auto">Auto (by team size)</option><option value="0">Small</option><option value="1">Medium</option><option value="2">Large</option>
-        </select>
-      </label>
-      <label>Team A kit <select id="kitA" class="kitsel"></select></label>
-      <label>Team B kit <select id="kitB" class="kitsel"></select></label>
-      <label>Goals
-        <select id="goalSel">
-          <option value="0" selected>Small</option><option value="1">Large</option><option value="2">Huge</option>
-        </select>
-      </label>
-      <label>AI level
-        <select id="aiSel">
-          <option value="0">Casual</option><option value="1">Normal</option><option value="2">Pro</option>
-        </select>
-      </label>
-      <label>Movement
-        <select id="moveSel">
-          <option value="0" selected>Arcade</option><option value="1">Realistic</option>
-        </select>
-      </label>
-      <label>Offside
-        <select id="offsideSel">
-          <option value="0" selected>Off</option><option value="1">On</option>
-        </select>
-      </label>
-      <label>Switch players
-        <select id="switchSel">
-          <option value="1" selected>On</option><option value="0">Off</option>
-        </select>
-      </label>
-      <label>AI players
-        <select id="aiSexSel">
-          <option value="0">Mixed</option><option value="1">Men</option><option value="2">Women</option>
-        </select>
-      </label>
-      <label>Weather
-        <select id="weatherSel">
-          <option value="0">Day</option><option value="1">Night</option><option value="2">Rain</option><option value="3">Snow</option>
-        </select>
-      </label>
-      <label>Game speed
-        <select id="speedSel"></select>
-      </label>
-      <button id="startBtn" class="primary">Start match</button>
-      <div id="gkWarn" class="gkwarn" hidden role="alert">
-        <span id="gkWarnText"></span>
-        <div class="row"><button id="gkAdd" class="primary small">Add an AI keeper &amp; start</button><button id="gkAnyway" class="small">Start anyway</button><button id="gkCancel" class="ghost small">Cancel</button></div>
-      </div>
-    </div>
-    <div class="section">
-      <h4>View</h4>
-      <label>Camera <select id="camSel"></select></label>
-      <label>Zoom <input id="zoom" type="range" min="0.55" max="1.8" step="0.05" value="1"></label>
-      <label>Effects
-        <select id="fxSel">
-          <option value="auto">Auto (lighter if slow)</option><option value="full">Full</option><option value="light">Light</option>
-        </select>
-      </label>
-      <label class="check"><input id="netChk" type="checkbox"> Net stats</label>
-      <label class="check"><input id="touchChk" type="checkbox"> Touch controls</label>
-      <button id="installBtn" class="primary small" hidden>⬇ Install app</button>
-      <div id="iosHint" class="muted small" hidden>Install on your phone/tablet: tap <b>Share</b> → <b>Add to Home Screen</b></div>
-    </div>
-    <!-- developer mode only (Cmd/Ctrl+Shift+D three times): what it draws, each on its own switch -->
-    <div class="section" id="devSection" hidden>
-      <h4>Developer</h4>
-      <label class="check devLines"><input id="devLinesChk" type="checkbox"> The lines over the pitch (L)</label>
-      <div id="devOpts"></div>
-      <label class="check"><input id="aiKeysChk" type="checkbox"> AI keys (over their heads) (K)</label>
-      <button id="markBtn" class="ghost small" title="M">Look back &amp; comment (M)</button>
-      <div id="recKeys" class="muted small">The last minute is always kept. M stops the match: go back over it (← →), type a comment, Enter puts it down; Esc goes on and saves the comments with the minute.</div>
-      <button id="statsBtn" class="ghost small" hidden>Players online (stats)</button>
-    </div>
-    <div class="section">
-      <h4>Sound</h4>
-      <div class="mixer"></div>
-    </div>
-    <footer>
-      <button id="editBtn2" class="ghost">Edit player</button>
-      <button id="controlsBtn" class="ghost">Controls</button>
-      <button id="leaveBtn" class="danger">Leave</button>
-    </footer>
-  </aside>
-
-  <!-- the public room list (serverless rooms with the Worker, client/lobby.js) -->
-  <div id="rooms" class="modal" hidden>
-    <div class="sheet rooms">
-      <header class="roomsHead"><h2>Room list</h2><span id="roomsCount" class="muted"></span>
-        <button id="roomsClose" class="ghost icon" title="Close (Esc)" aria-label="Close the room list">×</button></header>
-      <div id="roomsFull" class="small" hidden></div>
-      <div class="roomsBody">
-        <div class="roomsTable">
-          <table>
-            <colgroup><col><col class="cp"><col class="cl"><col class="cd"></colgroup>
-            <thead><tr><th>Name</th><th>Players</th><th>Pass</th><th>Distance</th></tr></thead>
-            <tbody id="roomsList"></tbody>
-          </table>
-          <div id="roomsNote" class="muted small"></div>
-        </div>
-        <div class="roomsSide">
-          <button id="roomsRefresh">Refresh</button>
-          <button id="roomsJoin" class="primary" disabled>Join room</button>
-          <button id="roomsCreate">Create room</button>
-        </div>
-      </div>
-      <div class="roomsPass" id="roomsPass" hidden>
-        <span id="roomsPassFor" class="small"></span>
-        <input id="roomsPassIn" placeholder="Password" maxlength="20" autocomplete="off">
-        <button id="roomsPassGo" class="primary">Join</button>
-      </div>
-      <div class="roomsFilters">
-        <label class="check"><input type="checkbox" id="showLocked"> Show locked</label>
-        <label class="check"><input type="checkbox" id="showFull"> Show full</label>
-        <label class="check" title="Rooms with only their host in them"><input type="checkbox" id="showEmpty"> Show empty</label>
-      </div>
-    </div>
-  </div>
-
-  <!-- the host sending someone out (a player's ⋯ in the room panel) -->
-  <div id="kickMenu" hidden>
-    <div class="km-name"></div>
-    <input id="kickReason" placeholder="Reason (optional)" maxlength="28" autocomplete="off">
-    <div class="km-row"><button id="kickBtn" class="small">Kick</button><button id="banBtn" class="small danger">Ban</button></div>
-    <div class="muted small">An AI takes their place. Kicked: back in 2 min. Banned: not while the room is open – another browser gets round it.</div>
-  </div>
-
-  <!-- developer mode: people online by hour and place (client/statsview.js) -->
-  <div id="stats" class="modal" hidden>
-    <div class="sheet stats">
-      <header class="roomsHead"><h2>Players online</h2>
-        <div class="seg sseg" role="radiogroup" aria-label="Period">
-          <button data-days="1" role="radio" aria-checked="false">24 hours</button>
-          <button data-days="7" role="radio" aria-checked="true">7 days</button>
-          <button data-days="30" role="radio" aria-checked="false">30 days</button>
-        </div>
-        <button id="statsClose" class="ghost icon" title="Close (Esc)" aria-label="Close the stats">×</button></header>
-      <div id="statsBody"><p class="muted">Loading…</p></div>
-      <p class="muted small">Counted every 10 minutes where each room's host is (guests connect to the host, so the Worker
-        never sees them) – only counts, nothing about anyone. Times in your local time.</p>
-      <div id="statsTip" class="stip" hidden></div>
-    </div>
-  </div>
-
-  <!-- avatar editor -->
-  <div id="editor" class="modal" hidden>
-    <div class="sheet wide">
-      <h2>Your player</h2>
-      <div class="edgrid">
-        <div class="prev">
-          <canvas id="edPreview" width="260" height="330"></canvas>
-          <div class="kitswitch"><button data-kit="0" class="small">Team A kit</button><button data-kit="1" class="small ghost">Team B kit</button></div>
-        </div>
-        <div class="fields">
-          <div class="row2">
-            <label>Name <input id="edName" maxlength="16"><span id="edNameWarn" class="warnline" hidden></span></label>
-            <label>Number <input id="edNum" type="number" min="1" max="99"></label>
+        <ul id="roomList"></ul>
+        <button id="listBtn" hidden class="ghost small">All rooms & filters…</button>
+        <div id="createRow">
+          <div class="row">
+            <input id="newRoomName" placeholder="Room name (optional)" maxlength="28">
+            <select id="newRoomAccess" title="Who can join" aria-label="Who can join">
+              <option value="public">Public</option>
+              <option value="password">Password</option>
+              <option value="private">Private</option>
+            </select>
           </div>
-          <div class="lbl">Player</div><div class="chips" id="edSex"></div>
-          <div class="lbl">Skin</div><div class="swatches" id="edSkin"></div>
-          <div class="lbl">Hair</div><div class="chips" id="edHair"></div>
-          <div class="lbl">Hair colour</div><div class="swatches" id="edHairCol"></div>
-          <div class="lbl" id="edBeardLbl">Facial hair</div><div class="chips" id="edBeard"></div>
-          <div class="lbl">Boots</div><div class="swatches" id="edBoots"></div>
-          <div class="lbl">Height <b id="edHval"></b></div>
-          <input id="edH" type="range" min="160" max="200" step="1">
-          <div class="lbl">Build <b id="edBval"></b></div>
-          <input id="edB" type="range" min="0" max="100" step="1">
-          <div class="lbl">Stronger foot</div><div class="chips" id="edFoot"></div>
-          <div class="tradeoff muted">Tall → aerial reach, keeper reach, stride · costs acceleration, agility.<br>Heavy → tackles, shielding, shot power · costs speed, agility, jump.</div>
+          <div class="row">
+            <input id="newRoomPass" placeholder="Password" maxlength="20" autocomplete="off" hidden>
+            <button id="createBtn" class="primary">Create room</button>
+          </div>
+          <div id="accessHint" class="muted small"></div>
         </div>
-        <div class="statsbox">
-          <div class="lbl">Attributes</div>
-          <div id="edStats"></div>
+        <div class="row">
+          <input id="joinCode" placeholder="Room code" maxlength="4" style="text-transform:uppercase">
+          <button id="joinBtn">Join</button>
+        </div>
+        <div id="friendsStatus" class="muted small"></div>
+      </div>
+      <div id="roomEmpty" class="muted small" hidden>Just you, offline – open a room or join one above to play with people.</div>
+      <div class="tabFoot"><button id="leaveBtn" class="danger">Leave</button></div>
+    </section>
+    <section class="tab" data-tab="player" hidden>
+      <div class="me">
+        <canvas id="mePreview" width="130" height="165"></canvas>
+        <div>
+          <div id="meName" class="meName"></div>
+          <div id="meWhere" class="muted small"></div>
+          <button id="editBtn2" class="primary small">Edit player</button>
         </div>
       </div>
-      <div class="actions">
-        <button id="edCancel" class="ghost">Cancel</button>
-        <button id="edSave" class="primary">Save</button>
+    </section>
+    <section class="tab" data-tab="match" hidden>
+      <!-- one section for the sides, as in PES / FIFA: drag yourself (or click, or ← →) to Team A's column, Team B's, or stay in the middle and watch; each column lists who plays there -->
+      <div id="sides">
+        <div class="sideCols">
+          <div class="sidecol teamcol" data-col="0" data-team="0"><h3 class="a">TEAM A</h3><ul></ul></div>
+          <div class="sidecol teamcol watchcol" data-col="1"><h3 class="muted">Watch</h3><ul id="watchList"></ul></div>
+          <div class="sidecol teamcol" data-col="2" data-team="1"><h3 class="b">TEAM B</h3><ul></ul></div>
+        </div>
+        <div class="sidesCtl">
+          <div class="posPick"><span class="muted">Your position</span>
+            <div class="seg" role="radiogroup" aria-label="Your position">
+              <button data-pos="0" role="radio" aria-checked="false" title="Goalkeeper">GK</button>
+              <button data-pos="1" role="radio" aria-checked="false" title="Defence">DEF</button>
+              <button data-pos="2" role="radio" aria-checked="false" title="Midfield">MID</button>
+              <button data-pos="3" role="radio" aria-checked="false" title="Attack">ATT</button>
+            </div>
+          </div>
+          <div class="aiCount"><b id="playerTotal">0 players</b> <span class="muted">AI players</span>
+            <button id="aiMinus" class="small ghost" title="Remove an AI player (from the bigger team)" aria-label="Fewer AI players">−</button><button id="aiPlus" class="small ghost" title="Add an AI player (to the smaller team)" aria-label="More AI players">+</button>
+          </div>
+        </div>
+        <div class="muted small sidesNote">Drag yourself left or right – or click a side (← → move you). In the middle you watch.</div>
       </div>
-    </div>
-  </div>
-
-  <!-- controls -->
-  <div id="controls" class="modal" hidden>
-    <div class="sheet">
-      <h2>Controls</h2>
+      <div class="spec">
+                <button id="clearBans" class="ghost small" hidden title="Let the people you banned come back">Clear bans</button>
+      </div>
+      <div class="section host">
+        <h4>Match <span class="muted" id="hostNote"></span></h4>
+        <label>Length
+          <select id="matchLen">
+            <option value="120">2 min</option><option value="240">4 min</option><option value="360">6 min</option>
+            <option value="600">10 min</option><option value="900">15 min</option>
+          </select>
+        </label>
+        <label>Pitch
+          <select id="pitchSel">
+            <option value="auto">Auto (by team size)</option><option value="0">Small</option><option value="1">Medium</option><option value="2">Large</option>
+          </select>
+        </label>
+        <label>Team A kit <select id="kitA" class="kitsel"></select></label>
+        <label>Team B kit <select id="kitB" class="kitsel"></select></label>
+        <label>Goals
+          <select id="goalSel">
+            <option value="0" selected>Small</option><option value="1">Large</option><option value="2">Huge</option>
+          </select>
+        </label>
+        <label>AI level
+          <select id="aiSel">
+            <option value="0">Casual</option><option value="1">Normal</option><option value="2">Pro</option>
+          </select>
+        </label>
+        <label>Movement
+          <select id="moveSel">
+            <option value="0" selected>Arcade</option><option value="1">Realistic</option>
+          </select>
+        </label>
+        <label>Offside
+          <select id="offsideSel">
+            <option value="0" selected>Off</option><option value="1">On</option>
+          </select>
+        </label>
+        <label>Switch players
+          <select id="switchSel">
+            <option value="0" selected>Off</option><option value="1">On</option>
+          </select>
+        </label>
+        <label>AI players
+          <select id="aiSexSel">
+            <option value="0">Mixed</option><option value="1">Men</option><option value="2">Women</option>
+          </select>
+        </label>
+        <label>Time of day
+          <select id="todSel">
+            <option value="0">Day</option><option value="1" selected>Night</option>
+          </select>
+        </label>
+        <label>Weather
+          <select id="weatherSel">
+            <option value="0" selected>Clear</option><option value="1">Rain</option><option value="2">Fog</option><option value="3">Snow</option>
+          </select>
+        </label>
+        <label>Game speed
+          <select id="speedSel"></select>
+        </label>
+        <button id="startBtn" class="primary">Start match</button>
+        <div id="gkWarn" class="gkwarn" hidden role="alert">
+          <span id="gkWarnText"></span>
+          <div class="row"><button id="gkAdd" class="primary small">Add an AI keeper &amp; start</button><button id="gkAnyway" class="small">Start anyway</button><button id="gkCancel" class="ghost small">Cancel</button></div>
+        </div>
+      </div>
+    </section>
+    <section class="tab section" data-tab="controls" hidden>
+      <label class="check"><input id="touchChk" type="checkbox"> Touch controls</label>
       <p class="muted small ctrlLead">A key per kick; how long you hold it sets the <b>power</b>
         – your player winds up while you hold, so the ball is struck the moment you let go. On a ball coming to you,
         press twice to fill the gauge twice as fast, three times for full power (a big first-time clearance). Click a key to rebind it.
@@ -401,12 +298,174 @@
         <p><b>Quick chat:</b> keys 1–5 (or 💬 on touch) – Pass! · Shoot! · Nice one! · Sorry! · Good game!</p>
         <p class="small">The AI players position themselves the way real sides do – learned from SkillCorner's open broadcast tracking data (A-League matches).</p>
       </div>
-      <div class="actions">
-        <button id="ctrlReset" class="ghost">Reset keys</button>
-        <button id="ctrlClose" class="primary">Close</button>
+      <div class="tabFoot"><button id="ctrlReset" class="ghost small">Reset keys</button></div>
+    </section>
+    <section class="tab section" data-tab="view" hidden>
+      <label>Camera <select id="camSel"></select></label>
+      <label>Zoom <input id="zoom" type="range" min="0.55" max="1.8" step="0.05" value="1"></label>
+      <label>Effects
+        <select id="fxSel">
+          <option value="auto">Auto (lighter if slow)</option><option value="full">Full</option><option value="light">Light</option>
+        </select>
+      </label>
+      <label class="check"><input id="netChk" type="checkbox"> Net stats</label>
+      <button id="installBtn" class="primary small" hidden>⬇ Install app</button>
+      <div id="iosHint" class="muted small" hidden>Install on your phone/tablet: tap <b>Share</b> → <b>Add to Home Screen</b></div>
+    </section>
+    <section class="tab section" data-tab="sound" hidden>
+      <div class="mixer"></div>
+    </section>
+    <section class="tab section" data-tab="developer" hidden>
+      <label class="check devLines"><input id="devLinesChk" type="checkbox"> The lines over the pitch (L)</label>
+      <div id="devOpts"></div>
+      <label class="check"><input id="aiKeysChk" type="checkbox"> AI keys (over their heads) (K)</label>
+      <button id="markBtn" class="ghost small" title="M">Look back &amp; comment (M)</button>
+      <button id="studyBtn" class="ghost small" title="What we're working on, and what to do">The study: an AI for excitement (?)</button>
+      <div id="recKeys" class="muted small">The last minute is always kept (the whole match while you spectate). M stops the match: go back over it (← →), type a comment, Enter puts it down, rate the moments' excitement and the men's moves; Esc goes on and saves them with the recording.</div>
+      <button id="statsBtn" class="ghost small" hidden>Players online (stats)</button>
+    </section>
+  </aside>
+
+  <!-- the public room list (serverless rooms with the Worker, client/lobby.js) -->
+  <div id="rooms" class="modal" hidden>
+    <div class="sheet rooms">
+      <header class="roomsHead"><h2>Room list</h2><span id="roomsCount" class="muted"></span>
+        <button id="roomsClose" class="ghost icon" title="Close (Esc)" aria-label="Close the room list">×</button></header>
+      <div id="roomsFull" class="small" hidden></div>
+      <div class="roomsBody">
+        <div class="roomsTable">
+          <table>
+            <colgroup><col><col class="cp"><col class="cl"><col class="cd"></colgroup>
+            <thead><tr><th>Name</th><th>Players</th><th>Pass</th><th>Distance</th></tr></thead>
+            <tbody id="roomsList"></tbody>
+          </table>
+          <div id="roomsNote" class="muted small"></div>
+        </div>
+        <div class="roomsSide">
+          <button id="roomsRefresh">Refresh</button>
+          <button id="roomsJoin" class="primary" disabled>Join room</button>
+          <button id="roomsCreate">Create room</button>
+        </div>
+      </div>
+      <div class="roomsPass" id="roomsPass" hidden>
+        <span id="roomsPassFor" class="small"></span>
+        <input id="roomsPassIn" placeholder="Password" maxlength="20" autocomplete="off">
+        <button id="roomsPassGo" class="primary">Join</button>
+      </div>
+      <div class="roomsFilters">
+        <label class="check"><input type="checkbox" id="showLocked"> Show locked</label>
+        <label class="check"><input type="checkbox" id="showFull"> Show full</label>
+        <label class="check" title="Rooms with only their host in them"><input type="checkbox" id="showEmpty"> Show empty</label>
       </div>
     </div>
   </div>
+
+  <!-- the host sending someone out (a player's ⋯ in the room panel) -->
+  <div id="kickMenu" hidden>
+    <div class="km-name"></div>
+    <input id="kickReason" placeholder="Reason (optional)" maxlength="28" autocomplete="off">
+    <div class="km-row"><button id="kickBtn" class="small">Kick</button><button id="banBtn" class="small danger">Ban</button></div>
+    <div class="muted small">An AI takes their place. Kicked: back in 2 min. Banned: not while the room is open – another browser gets round it.</div>
+  </div>
+
+  <!-- developer mode: people online by hour and place (client/statsview.js) -->
+  <!-- developer mode: the study going on – its objectives, where it stands, what to do (client/main.js) -->
+  <div id="study" class="modal" hidden>
+    <div class="sheet study">
+      <header class="roomsHead"><h2>The study: an AI that plays for excitement</h2>
+        <button id="studyClose" class="ghost icon" title="Close (Esc)" aria-label="Close">×</button></header>
+      <p><b>The goal.</b> AI players that make matches <i>exciting</i> – not just ones that win. Later every AI player
+        gets a small neural network, trained by reinforcement learning with excitement as its reward (scoring still
+        counts, conceding too – so neither side gives goals away for a show).</p>
+      <p><b>Where we are – step 1 of 3: measuring excitement.</b> <span class="hl">Every AI player is still the classic,
+        hand-written AI – there are no neural players yet.</span> What's new is the measure:</p>
+      <ul>
+        <li><b>Threat</b> – each side's chance of scoring in the next 10 s, from a model learned on 1,500 AI matches.</li>
+        <li><b>Expected result</b> – A's chance of winning (a draw counts half), from the score, the time left and both threats.</li>
+        <li><b>Excitement</b> (0–100) – how fast the expected result swings: sudden swings count most.</li>
+        <li><b>Events</b> – each pass, shot, tackle, save, dive… valued by what it did to his side's threat and result.</li>
+      </ul>
+      <p><b>The question:</b> does the measure agree with you? Your ratings are the ground truth it gets fitted to.</p>
+      <h4>What to do</h4>
+      <ol>
+        <li><b>Spectate an AI match:</b> room panel → <i>Spectate</i>, add AI to both teams, <i>Start match</i>. Open the
+          game as <code>?p2p=1</code> so your tab hosts it and <b>M</b> stops it. While you spectate, the whole match is kept.</li>
+        <li><b>M</b> – look back. The chart shows the meter (filled), the threats (A blue, B orange) and what happened above.
+          Scroll or pinch to zoom, drag to pan.</li>
+        <li><b>Rate moments 1–5:</b> how exciting it felt. Rate the dull stretches too, not only the highlights – and
+          especially where the meter disagrees with you.</li>
+        <li><b>Judge decisions:</b> click an event on the chart (or a man on the pitch), then its choice, timing,
+          direction, power, height – ✓ is praise – and what he could have done instead (to whom: click him).
+          <b>Alt+←/→</b> steps through them.</li>
+        <li><b>Comment</b> with <code>@A9</code> (click a man), <code>@teamB</code>, <code>@all</code>: what's wrong, what's
+          good. Hover a name and he glows.</li>
+        <li><b>Esc</b> saves a <code>.caputrec.gz</code> file – send me its path.</li>
+      </ol>
+      <p><b>Aim:</b> 30–50 rated moments and decisions over a few matches.</p>
+      <h4>What happens with it</h4>
+      <p>I fit the meter to your ratings (<code>scripts/learn/rate-excitement.mjs --fit</code>) and check whether the
+        model's value of each decision agrees with your judgements. Then <b>step 2</b>: the classic AI copied into a
+        network – neural players you can put in a team, marked 🧠, playing as the classic ones do; and <b>step 3</b>:
+        reinforcement learning towards excitement, one neural player a team first, then more.</p>
+    </div>
+  </div>
+  <div id="stats" class="modal" hidden>
+    <div class="sheet stats">
+      <header class="roomsHead"><h2>Players online</h2>
+        <div class="seg sseg" role="radiogroup" aria-label="Period">
+          <button data-days="1" role="radio" aria-checked="false">24 hours</button>
+          <button data-days="7" role="radio" aria-checked="true">7 days</button>
+          <button data-days="30" role="radio" aria-checked="false">30 days</button>
+        </div>
+        <button id="statsClose" class="ghost icon" title="Close (Esc)" aria-label="Close the stats">×</button></header>
+      <div id="statsBody"><p class="muted">Loading…</p></div>
+      <p class="muted small">Counted every 10 minutes where each room's host is (guests connect to the host, so the Worker
+        never sees them) – only counts, nothing about anyone. Times in your local time.</p>
+      <div id="statsTip" class="stip" hidden></div>
+    </div>
+  </div>
+
+  <!-- avatar editor -->
+  <div id="editor" class="modal" hidden>
+    <div class="sheet wide">
+      <h2>Your player</h2>
+      <div class="edgrid">
+        <div class="prev">
+          <canvas id="edPreview" width="260" height="330"></canvas>
+          <div class="kitswitch"><button data-kit="0" class="small">Team A kit</button><button data-kit="1" class="small ghost">Team B kit</button></div>
+        </div>
+        <div class="fields">
+          <div class="row2">
+            <label>Name <input id="edName" maxlength="16"><span id="edNameWarn" class="warnline" hidden></span></label>
+            <label>Number <input id="edNum" type="number" min="1" max="99"></label>
+          </div>
+          <div class="lbl">Player</div><div class="chips" id="edSex"></div>
+          <div class="lbl">Skin</div><div class="swatches" id="edSkin"></div>
+          <div class="lbl">Hair</div><div class="chips" id="edHair"></div>
+          <div class="lbl">Hair colour</div><div class="swatches" id="edHairCol"></div>
+          <div class="lbl" id="edBeardLbl">Facial hair</div><div class="chips" id="edBeard"></div>
+          <div class="lbl">Boots</div><div class="swatches" id="edBoots"></div>
+          <div class="lbl">Height <b id="edHval"></b></div>
+          <input id="edH" type="range" min="160" max="200" step="1">
+          <div class="lbl">Build <b id="edBval"></b></div>
+          <input id="edB" type="range" min="0" max="100" step="1">
+          <div class="lbl">Stronger foot</div><div class="chips" id="edFoot"></div>
+          <div class="tradeoff muted">Tall → aerial reach, keeper reach, stride · costs acceleration, agility.<br>Heavy → tackles, shielding, shot power · costs speed, agility, jump.</div>
+        </div>
+        <div class="statsbox">
+          <div class="lbl">Attributes</div>
+          <div id="edStats"></div>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="edRandom" class="ghost edRandom" title="A random player – looks, number, height, build, stronger foot (your name stays)">🎲 Random</button>
+        <button id="edCancel" class="ghost">Cancel</button>
+        <button id="edSave" class="primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- controls -->
 
   <div id="toast"></div>
   <button id="updateBtn" hidden>New version ready – tap to update</button>
