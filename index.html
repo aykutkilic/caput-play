@@ -319,6 +319,11 @@
       <label class="check devLines"><input id="devLinesChk" type="checkbox"> The lines over the pitch (L)</label>
       <div id="devOpts"></div>
       <label class="check"><input id="aiKeysChk" type="checkbox"> AI keys (over their heads) (K)</label>
+      <div id="brains" class="brains" title="The network decides on the ball for this many of each side's AI outfield players (shoot, pass – to whom – or keep it); the hand-written AI does the rest. Learned by copying the hand-written AI.">
+        <span class="brainsHead">🧠 Neural AI players</span>
+        <span class="brainTeam">A <button class="small ghost" data-bt="0" data-bd="-1" aria-label="One fewer neural player in Team A">−</button><b id="brainA">0</b><span class="muted" id="brainAof">/0</span><button class="small ghost" data-bt="0" data-bd="1" aria-label="One more neural player in Team A">+</button></span>
+        <span class="brainTeam">B <button class="small ghost" data-bt="1" data-bd="-1" aria-label="One fewer neural player in Team B">−</button><b id="brainB">0</b><span class="muted" id="brainBof">/0</span><button class="small ghost" data-bt="1" data-bd="1" aria-label="One more neural player in Team B">+</button></span>
+      </div>
       <button id="markBtn" class="ghost small" title="M">Look back &amp; comment (M)</button>
       <button id="studyBtn" class="ghost small" title="What we're working on, and what to do">The study: an AI for excitement (?)</button>
       <div id="recKeys" class="muted small">The last minute is always kept (the whole match while you spectate). M stops the match: go back over it (← →), type a comment, Enter puts it down, rate the moments' excitement and the men's moves; Esc goes on and saves them with the recording.</div>

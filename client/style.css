@@ -402,6 +402,10 @@ input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); backgr
 #marking .mkTop b { color: #ffd65a; letter-spacing: 2px; }
 #mkLines { margin-left: 4px; }
 #devSection .devLines { grid-column: 1 / -1; font-weight: 700; }
+.brains { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.brains .brainsHead { flex: 1 0 100%; font-weight: 600; }
+.brains .brainTeam { display: inline-flex; align-items: center; gap: 4px; }
+.brains .brainTeam b { min-width: 1.2em; text-align: center; }
 #mkTime { font: 700 13px ui-monospace, Menlo, monospace; }
 #mkSlider { width: 100%; margin: 0; accent-color: #ffd65a; }
 #marking .mkRow { display: flex; gap: 8px; }
