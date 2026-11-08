@@ -406,6 +406,8 @@ input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); backgr
 .brains .brainsHead { flex: 1 0 100%; font-weight: 600; }
 .brains .brainTeam { display: inline-flex; align-items: center; gap: 4px; }
 .brains .brainTeam b { min-width: 1.2em; text-align: center; }
+.brains .flair { flex: 1 0 100%; display: flex; align-items: center; gap: 6px; }
+.brains .flair input { flex: 1; min-width: 0; }
 #mkTime { font: 700 13px ui-monospace, Menlo, monospace; }
 #mkSlider { width: 100%; margin: 0; accent-color: #ffd65a; }
 #marking .mkRow { display: flex; gap: 8px; }

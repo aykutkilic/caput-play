@@ -42,19 +42,20 @@
   <!-- minimized room panel -->
   <!-- developer mode: marking (M) – back over the last minute, comments put down at a moment (client/marking.js) -->
   <div id="marking" hidden>
-    <div class="mkTop"><b>MARKING</b><span id="mkTime"></span><span class="muted mkNote"></span><span class="mkDock"><button id="mkHelp" title="The study: what this is for and what to do">?</button><button data-dock="left" title="Dock left">◧</button><button data-dock="bottom" title="Dock at the bottom">⬓</button><button data-dock="right" title="Dock right">◨</button></span><button id="mkLines" class="ghost small" title="Developer mode's lines over the pitch">Lines: on</button></div>
+    <div class="mkTop"><b>MARKING</b><span id="mkTime"></span><span class="muted mkNote"></span><span class="mkDock"><button id="mkHelp" title="The study: what this is for and what to do">?</button><button data-dock="left" title="Dock left">◧</button><button data-dock="bottom" title="Dock at the bottom">⬓</button><button data-dock="right" title="Dock right">◨</button></span><button id="mkLines" class="ghost small" title="Developer mode's lines over the pitch">Lines: on</button><button id="mkCam" class="ghost small" hidden title="Back to the game's camera (drag on the pitch turns it round the man picked, or the ball; pinch comes closer)">⟲ Camera</button></div>
     <input id="mkSlider" type="range" min="0" max="0" step="1" value="0" aria-label="The moment shown">
-    <div class="mkChart"><canvas id="mkCurve"></canvas><div class="mkZoom"><button id="mkZoomOut" title="Zoom out (or scroll)">−</button><button id="mkZoomIn" title="Zoom in (or scroll, pinch)">+</button><button id="mkZoomAll" title="The whole recording">All</button></div></div>
+    <div class="mkChart"><canvas id="mkCurve"></canvas><div class="mkZoom"><button id="mkZoomOut" title="Zoom out (or pinch)">−</button><button id="mkZoomIn" title="Zoom in (or pinch) – the wheel up and down jogs the time">+</button><button id="mkZoomAll" title="The whole recording">All</button></div></div>
     <div class="mkRate"><span class="mkLabel">Moment</span><span id="mkStars"><button data-v="1">1</button><button data-v="2">2</button><button data-v="3">3</button><button data-v="4">4</button><button data-v="5">5</button></span><span id="mkModel" class="muted"></span></div>
     <div class="mkRate"><span class="mkLabel">Decision</span><button id="mkPrev" class="ghost small" title="Alt+←: the previous decision">◀</button><span id="mkDec"></span><button id="mkNext" class="ghost small" title="Alt+→: the next decision">▶</button></div>
     <div id="mkJudge"></div>
     <div class="mkRow">
       <input id="mkText" type="text" maxlength="300" placeholder="What's wrong here? @A9 @teamB @all – click a man to name him · Enter puts it down" autocomplete="off" spellcheck="false">
+      <button id="mkSave" class="ghost small" title="Every recording looked back over this session, with all your comments and ratings, as one file">Save log</button>
       <button id="mkDone" class="primary small" title="Esc">Done</button>
     </div>
     <div id="mkMentions"></div>
     <ol id="mkList"></ol>
-    <div class="muted mkKeys">← → a frame · Shift + ← → a second · chart: scroll or pinch zooms, drag pans, click an event to judge it – its choice, timing, direction, power, height (✓ praise), what instead · Alt + ← → the previous / next decision · drag the top bar to move the panel, ◧ ⬓ ◨ dock it · in a comment @A9 (click a man), @teamA, @all – Tab completes · 1–5 (comment box empty): the moment's excitement · Enter puts the comment down · Esc: done – comments and ratings are saved</div>
+    <div class="muted mkKeys">← → a frame · Shift + ← → a second · the wheel up / down jogs the time · drag on the pitch turns the camera round the man picked (or the ball), pinch comes closer · chart: pinch zooms, drag pans, click an event to judge it – its choice, timing, direction, power, height (✓ praise), what instead · Alt + ← → the previous / next decision · drag the top bar to move the panel, ◧ ⬓ ◨ dock it · in a comment @A9 (click a man), @teamA, @all – Tab completes · 1–5 (comment box empty): the moment's excitement · Enter puts the comment down · Esc: done – comments and ratings stay in the session's log (Save log: one file)</div>
   </div>
   <div id="topRight">
     <button id="camBtn" hidden title="Switch the camera (F2)"><span class="camIco">🎥</span><b id="camNum">1</b></button>
@@ -319,14 +320,17 @@
       <label class="check devLines"><input id="devLinesChk" type="checkbox"> The lines over the pitch (L)</label>
       <div id="devOpts"></div>
       <label class="check"><input id="aiKeysChk" type="checkbox"> AI keys (over their heads) (K)</label>
-      <div id="brains" class="brains" title="The network decides on the ball for this many of each side's AI outfield players (shoot, pass – to whom – or keep it); the hand-written AI does the rest. Learned by copying the hand-written AI.">
+      <div id="brains" class="brains" title="The networks play this many of each side's AI outfield players: on the ball (shoot, pass – to whom – or keep it) and where they run while a team-mate has it; with a whole side neural, they also hand out its defending jobs (who presses, marks whom, covers). The hand-written AI does the rest and presses the keys. Learned by copying the hand-written AI, then by playing.">
         <span class="brainsHead">🧠 Neural AI players</span>
         <span class="brainTeam">A <button class="small ghost" data-bt="0" data-bd="-1" aria-label="One fewer neural player in Team A">−</button><b id="brainA">0</b><span class="muted" id="brainAof">/0</span><button class="small ghost" data-bt="0" data-bd="1" aria-label="One more neural player in Team A">+</button></span>
         <span class="brainTeam">B <button class="small ghost" data-bt="1" data-bd="-1" aria-label="One fewer neural player in Team B">−</button><b id="brainB">0</b><span class="muted" id="brainBof">/0</span><button class="small ghost" data-bt="1" data-bd="1" aria-label="One more neural player in Team B">+</button></span>
+        <label class="flair" title="How Team A's network plays: only to win, or more to entertain (riskier, livelier choices – it never eases off to let you back in)">A <span class="muted small">Pragmatic</span><input id="flairA" type="range" min="0" max="10" step="1" value="0" data-ft="0" aria-label="Team A's network: pragmatic to entertaining"><span class="muted small">Entertaining</span></label>
+        <label class="flair" title="How Team B's network plays: only to win, or more to entertain (riskier, livelier choices – it never eases off to let you back in)">B <span class="muted small">Pragmatic</span><input id="flairB" type="range" min="0" max="10" step="1" value="0" data-ft="1" aria-label="Team B's network: pragmatic to entertaining"><span class="muted small">Entertaining</span></label>
       </div>
       <button id="markBtn" class="ghost small" title="M">Look back &amp; comment (M)</button>
+      <button id="saveLogBtn" class="ghost small" disabled title="Every recording looked back over this session, with all your comments and ratings, as one file – kept in memory until then">Save the log</button>
       <button id="studyBtn" class="ghost small" title="What we're working on, and what to do">The study: an AI for excitement (?)</button>
-      <div id="recKeys" class="muted small">The last minute is always kept (the whole match while you spectate). M stops the match: go back over it (← →), type a comment, Enter puts it down, rate the moments' excitement and the men's moves; Esc goes on and saves them with the recording.</div>
+      <div id="recKeys" class="muted small">The last minute is always kept (the whole match while you spectate). M stops the match: go back over it (← →, or the wheel), type a comment, Enter puts it down, rate the moments' excitement and the men's moves – drag on the pitch to turn the camera round the man picked or the ball; Esc goes on. It all stays in this session's log, one however often you look back, until Save the log writes it to one file.</div>
       <button id="statsBtn" class="ghost small" hidden>Players online (stats)</button>
     </section>
   </aside>
