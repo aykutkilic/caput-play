@@ -376,6 +376,14 @@ input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); backgr
 #marking.dock-left { left: 0; border-width: 0 1px 0 0; }
 #marking.dock-right { left: auto; right: 0; border-width: 0 0 0 1px; }
 #marking.dock-float { transform: none; bottom: auto; }
+/* full screen: the panel everywhere – the chart tall – and the match in a
+   small window top right (picture in picture: the game's own canvases,
+   shrunk, the screen's shape kept; clicks, drags and the wheel still work) */
+#marking.dock-full { inset: 0; transform: none; width: auto; max-height: none; border-radius: 0; border-width: 0; z-index: 20;
+  background: #0c0f15; padding: 14px calc(36vw + 36px) 14px 18px; overflow-y: auto; }
+#marking.dock-full #mkList { position: fixed; right: 18px; top: calc(36vh + 26px); bottom: 14px; width: 36vw; margin: 0; overflow-y: auto; }
+body.marking.mkFull canvas#game, body.marking.mkFull canvas.layer { inset: auto; top: 14px; right: 18px; width: 36vw; height: 36vh; z-index: 21; border-radius: 8px; }
+body.marking.mkFull canvas#game { box-shadow: 0 0 0 1px #ffd65a, 0 6px 24px rgba(0,0,0,.6); }
 #marking .mkDock { display: inline-flex; gap: 2px; margin-left: auto; }
 #marking .mkDock button { font: 13px system-ui, sans-serif; padding: 0 5px; border-radius: 5px; border: 1px solid rgba(255,255,255,.2); background: transparent; color: #ccc; cursor: pointer; }
 #marking .mkDock button.on { border-color: #ffd65a; color: #ffd65a; }
@@ -387,7 +395,17 @@ input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); backgr
 #mkMentions .who.bad { background: rgba(255,120,100,.15); color: #ff8a75; }
 #mkMentions button.sug { font: 600 12px ui-monospace, Menlo, monospace; padding: 1px 6px; border-radius: 5px; border: 1px solid rgba(255,255,255,.25); background: #0c0f15; color: #fff; cursor: pointer; }
 #mkMentions button.sug.first { border-color: #ffd65a; }
-#mkJudge { display: flex; flex-direction: column; gap: 4px; }
+/* judging: compact, two aspects a line where there's room */
+#mkJudge { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 3px 16px; }
+#marking #mkJudge .mkAspL { min-width: 54px; font-size: 11px; }
+#marking #mkJudge .mkSeg button { font-size: 10px; padding: 1px 3px; border-radius: 4px; }
+/* correcting the model's curves (envelopes) */
+#marking .mkEnv { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 11px; }
+#marking .mkEnv button { font: 600 11px system-ui, sans-serif; padding: 1px 7px; border-radius: 5px; border: 1px solid rgba(255,255,255,.22); background: #0c0f15; color: #e8f0ea; cursor: pointer; }
+#marking .mkEnv button.on { background: #ffd65a; color: #111; border-color: #ffd65a; }
+#marking .mkEnv button.has { border-color: #ffd65a; }
+#mkEnvOps { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+#mkEnvOps[hidden] { display: none !important; }
 #mkJudge:empty { display: none; }
 #marking .mkAsp { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 #marking .mkAspL { min-width: 64px; color: #cfd8d2; cursor: help; }
@@ -409,7 +427,19 @@ input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); backgr
 .brains .flair { flex: 1 0 100%; display: flex; align-items: center; gap: 6px; }
 .brains .flair input { flex: 1; min-width: 0; }
 #mkTime { font: 700 13px ui-monospace, Menlo, monospace; }
-#mkSlider { width: 100%; margin: 0; accent-color: #ffd65a; }
+/* the slider: lean – a thin track, a small thumb */
+#mkSlider { width: 100%; margin: 2px 0; height: 12px; background: transparent; -webkit-appearance: none; appearance: none; cursor: pointer; }
+#mkSlider::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: rgba(255,255,255,.22); }
+#mkSlider::-moz-range-track { height: 3px; border-radius: 2px; background: rgba(255,255,255,.22); }
+#mkSlider::-webkit-slider-thumb { -webkit-appearance: none; width: 10px; height: 10px; margin-top: -3.5px; border-radius: 50%; background: #ffd65a; border: none; }
+#mkSlider::-moz-range-thumb { width: 10px; height: 10px; border-radius: 50%; background: #ffd65a; border: none; }
+#marking .mkPlay { font: 600 12px system-ui, sans-serif; min-width: 26px; padding: 1px 6px; border-radius: 6px; border: 1px solid rgba(255,214,90,.6); background: transparent; color: #ffd65a; cursor: pointer; align-self: center; }
+#marking .mkPlay.on { background: #ffd65a; color: #111; }
+/* the chart's tooltip */
+#marking .mkTip { position: absolute; z-index: 2; max-width: min(420px, 90%); padding: 5px 8px; border-radius: 6px; background: rgba(8,10,14,.96); border: 1px solid rgba(255,255,255,.18); font-size: 12px; line-height: 1.35; pointer-events: none; }
+/* full screen: the chart takes the height that's left */
+#marking.dock-full .mkChart { flex: 1 1 auto; min-height: 30vh; display: flex; }
+#marking.dock-full #mkCurve { height: auto; flex: 1; }
 #marking .mkRow { display: flex; gap: 8px; }
 #mkText { flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,.25); background: #0c0f15; color: #fff; }
 #mkList { margin: 0; padding: 0 0 0 20px; max-height: 120px; overflow: auto; font-size: 12px; }
