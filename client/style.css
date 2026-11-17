@@ -200,10 +200,13 @@ label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--t
 #hint { position: absolute; right: 14px; bottom: 14px; font-size: 12px; color: var(--muted); }
 /* (on a snowy pitch: on a dark backing, to read) */
 body.snow #hint { background: rgba(10,18,14,0.72); padding: 3px 8px; border-radius: 8px; }
-#ctxHint { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); font-size: 13px; color: #e9f3ec;
+/* (over the radar, which has the bottom's middle – and clear of the keys' legend, bottom right) */
+#ctxHint { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); font-size: 13px; color: #e9f3ec; max-width: calc(100vw - 28px);
   background: rgba(10,18,14,.55); border: 1px solid rgba(255,255,255,.12); padding: 4px 10px; border-radius: 8px; white-space: nowrap; }
 #ctxHint b { color: #ffd36b; font-weight: 700; }
 body.touchui #ctxHint { display: none; }
+/* (third person: the radar is bottom right, over the legend – the hint in the middle, over the chat's buttons and short of the radar) */
+body.tp #ctxHint { bottom: 112px; max-width: calc(100vw - 380px); white-space: normal; text-align: center; }
 #mobileWarn { position: absolute; top: 60px; left: 50%; transform: translateX(-50%); background: var(--panel); padding: 8px 12px; border-radius: 8px; }
 
 /* ---------------- room panel */
